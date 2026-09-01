@@ -123,6 +123,12 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# ruff's implicit default set excludes both of these. The harness depends on them:
+# E501 makes `line-length` above actually mean something to `ruff check`, and E402
+# enforces the top-of-file import placement the conftest tasks rely on.
+extend-select = ["E402", "E501"]
 ```
 
 - [ ] **Step 2: Create the package tree**
@@ -1329,7 +1335,9 @@ def _assert_api(expect: ApiExpect, response: httpx.Response, where: str) -> None
 
 
 def _assert_contains(actual: Any, expected: dict[str, Any], where: str, path: str) -> None:
-    assert isinstance(actual, dict), f"{where}: {path}: expected an object, got {type(actual).__name__}"
+    assert isinstance(actual, dict), (
+        f"{where}: {path}: expected an object, got {type(actual).__name__}"
+    )
     for key, wanted in expected.items():
         child = f"{path}.{key}"
         assert key in actual, f"{where}: {child}: missing from the response"
