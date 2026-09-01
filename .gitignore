@@ -39,3 +39,11 @@ Thumbs.db
 
 # Claude Code local overrides
 .claude/settings.local.json
+
+# Test run artifacts (never checked-in state)
+tests/reports/*
+!tests/reports/.gitkeep
+
+# The test stack's port/credential config is committed on purpose — it holds no
+# secrets, and both the harness and a reviewer need it to boot the same stack.
+!.env.test

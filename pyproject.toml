@@ -1,0 +1,46 @@
+[project]
+name = "smarthealth"
+version = "0.1.0"
+description = "SmartHealth — healthcare operations backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "uvicorn[standard]>=0.32",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "ruff>=0.7",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-ra --strict-markers"
+markers = [
+    "unit: T0 — pure logic, no I/O",
+    "contract: T1 — API surface via ASGI transport, no containers",
+    "workflow: T2 — Temporal workflows via the SDK time-skipping environment",
+    "integration: T3 — real infrastructure from the compose test stack",
+    "journey: T4 — full-stack business journeys and chaos",
+    "meta: registry-driven contract tests that enumerate the application",
+    "docker: requires a running Docker daemon",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
