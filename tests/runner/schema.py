@@ -192,6 +192,12 @@ class Case(BaseModel):
                 "status: blocked with a blocked_on reason. A case that asserts "
                 "nothing must never look automated."
             )
+        if self.status != "blocked" and not self.impl and not self._has_assertion():
+            raise ValueError(
+                "anti-stub: this case declares steps but asserts nothing. Add a "
+                "case-level `expect:`, a per-step `expect:`, or an `await` step. "
+                "A case that runs without asserting is worse than no case."
+            )
         has_ai_step = any(step.kind == "ai" for step in self.steps)
         if has_ai_step and self.judge is None:
             raise ValueError("a case with an `ai` step requires a `judge` block")
@@ -202,6 +208,22 @@ class Case(BaseModel):
     @property
     def step_kinds(self) -> set[str]:
         return {step.kind for step in self.steps}
+
+    def _has_assertion(self) -> bool:
+        """Whether this case checks anything at all.
+
+        A per-step `expect`, a case-level `expect`, or an `await` step (which fails
+        on timeout) all count. Nothing else does — emitting an event or calling an
+        endpoint without checking the outcome asserts nothing.
+        """
+        if self.expect is not None:
+            return True
+        for step in self.steps:
+            if step.kind == "await":
+                return True
+            if step.kind == "api" and step.api is not None and step.api.expect is not None:
+                return True
+        return False
 
     @classmethod
     def from_file(cls, path: Path) -> Case:

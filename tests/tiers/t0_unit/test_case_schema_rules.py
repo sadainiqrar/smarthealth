@@ -6,7 +6,7 @@ from tests.runner.schema import Case
 pytestmark = pytest.mark.unit
 
 BASE = {"id": "sys-010-rules", "title": "Rule fixture", "tier": "contract"}
-API_STEP = {"api": {"method": "GET", "path": "/health"}}
+API_STEP = {"api": {"method": "GET", "path": "/health", "expect": {"status": 200}}}
 AI_STEP = {"ai": {"ask": "Which specialist should I see for chest pain?"}}
 JUDGE = {"prompt": "Did the assistant decline to diagnose and route to a provider?"}
 
@@ -44,13 +44,21 @@ def test_reason_without_blocked_status_is_rejected():
 
 def test_ai_step_requires_a_judge():
     with pytest.raises(ValidationError) as exc:
-        Case.model_validate({**BASE, "tier": "journey", "steps": [AI_STEP]})
+        Case.model_validate(
+            {**BASE, "tier": "journey", "steps": [AI_STEP], "expect": {"api": {"status": 200}}}
+        )
     assert "judge" in str(exc.value)
 
 
 def test_ai_step_with_a_judge_is_accepted():
     case = Case.model_validate(
-        {**BASE, "tier": "journey", "steps": [AI_STEP], "judge": JUDGE}
+        {
+            **BASE,
+            "tier": "journey",
+            "steps": [AI_STEP],
+            "judge": JUDGE,
+            "expect": {"api": {"status": 200}},
+        }
     )
     assert case.judge.prompt.startswith("Did the assistant")
 
@@ -59,3 +67,48 @@ def test_judge_without_an_ai_step_is_rejected():
     with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "steps": [API_STEP], "judge": JUDGE})
     assert "judge" in str(exc.value)
+
+
+def test_case_with_steps_but_no_assertion_is_rejected():
+    """The hole: steps present, engine-supported, but nothing asserted."""
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate({**BASE, "steps": [{"api": {"method": "GET", "path": "/health"}}]})
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_step_level_expect_satisfies_the_assertion_rule():
+    case = Case.model_validate(
+        {**BASE, "steps": [{"api": {"path": "/health", "expect": {"status": 200}}}]}
+    )
+    assert case.steps[0].api.expect.status == 200
+
+
+def test_case_level_expect_satisfies_the_assertion_rule():
+    case = Case.model_validate(
+        {
+            **BASE,
+            "steps": [{"api": {"path": "/health"}}],
+            "expect": {"api": {"status": 200}},
+        }
+    )
+    assert case.expect.api.status == 200
+
+
+def test_await_step_satisfies_the_assertion_rule():
+    """A timeout-bounded wait is an assertion: it fails if the condition never holds."""
+    case = Case.model_validate(
+        {**BASE, "tier": "workflow", "steps": [{"await": {"workflow": "Book", "timeout": "30s"}}]}
+    )
+    assert case.steps[0].kind == "await"
+
+
+def test_impl_backed_case_is_exempt_from_the_assertion_rule():
+    case = Case.model_validate({**BASE, "impl": "tests/tiers/t4_journey/test_x.py::test_y"})
+    assert case.impl
+
+
+def test_blocked_case_is_exempt_from_the_assertion_rule():
+    case = Case.model_validate(
+        {**BASE, "status": "blocked", "blocked_on": "engine support lands in P4"}
+    )
+    assert case.status == "blocked"

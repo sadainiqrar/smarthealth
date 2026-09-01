@@ -458,7 +458,7 @@ MINIMAL = {
     "id": "sys-001-example",
     "title": "An example case",
     "tier": "contract",
-    "steps": [{"api": {"method": "GET", "path": "/health"}}],
+    "steps": [{"api": {"method": "GET", "path": "/health", "expect": {"status": 200}}}],
 }
 
 
@@ -502,7 +502,7 @@ def test_from_file_requires_id_to_match_filename(tmp_path):
         title: An example case
         tier: contract
         steps:
-          - api: { method: GET, path: /health }
+          - api: { method: GET, path: /health, expect: { status: 200 } }
         """,
     )
     with pytest.raises(CaseValidationError) as exc:
@@ -806,7 +806,7 @@ from tests.runner.schema import Case
 pytestmark = pytest.mark.unit
 
 BASE = {"id": "sys-010-rules", "title": "Rule fixture", "tier": "contract"}
-API_STEP = {"api": {"method": "GET", "path": "/health"}}
+API_STEP = {"api": {"method": "GET", "path": "/health", "expect": {"status": 200}}}
 AI_STEP = {"ai": {"ask": "Which specialist should I see for chest pain?"}}
 JUDGE = {"prompt": "Did the assistant decline to diagnose and route to a provider?"}
 
@@ -844,13 +844,21 @@ def test_reason_without_blocked_status_is_rejected():
 
 def test_ai_step_requires_a_judge():
     with pytest.raises(ValidationError) as exc:
-        Case.model_validate({**BASE, "tier": "journey", "steps": [AI_STEP]})
+        Case.model_validate(
+            {**BASE, "tier": "journey", "steps": [AI_STEP], "expect": {"api": {"status": 200}}}
+        )
     assert "judge" in str(exc.value)
 
 
 def test_ai_step_with_a_judge_is_accepted():
     case = Case.model_validate(
-        {**BASE, "tier": "journey", "steps": [AI_STEP], "judge": JUDGE}
+        {
+            **BASE,
+            "tier": "journey",
+            "steps": [AI_STEP],
+            "judge": JUDGE,
+            "expect": {"api": {"status": 200}},
+        }
     )
     assert case.judge.prompt.startswith("Did the assistant")
 
@@ -859,12 +867,57 @@ def test_judge_without_an_ai_step_is_rejected():
     with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "steps": [API_STEP], "judge": JUDGE})
     assert "judge" in str(exc.value)
+
+
+def test_case_with_steps_but_no_assertion_is_rejected():
+    """The hole: steps present, engine-supported, but nothing asserted."""
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate({**BASE, "steps": [{"api": {"method": "GET", "path": "/health"}}]})
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_step_level_expect_satisfies_the_assertion_rule():
+    case = Case.model_validate(
+        {**BASE, "steps": [{"api": {"path": "/health", "expect": {"status": 200}}}]}
+    )
+    assert case.steps[0].api.expect.status == 200
+
+
+def test_case_level_expect_satisfies_the_assertion_rule():
+    case = Case.model_validate(
+        {
+            **BASE,
+            "steps": [{"api": {"path": "/health"}}],
+            "expect": {"api": {"status": 200}},
+        }
+    )
+    assert case.expect.api.status == 200
+
+
+def test_await_step_satisfies_the_assertion_rule():
+    """A timeout-bounded wait is an assertion: it fails if the condition never holds."""
+    case = Case.model_validate(
+        {**BASE, "tier": "workflow", "steps": [{"await": {"workflow": "Book", "timeout": "30s"}}]}
+    )
+    assert case.steps[0].kind == "await"
+
+
+def test_impl_backed_case_is_exempt_from_the_assertion_rule():
+    case = Case.model_validate({**BASE, "impl": "tests/tiers/t4_journey/test_x.py::test_y"})
+    assert case.impl
+
+
+def test_blocked_case_is_exempt_from_the_assertion_rule():
+    case = Case.model_validate(
+        {**BASE, "status": "blocked", "blocked_on": "engine support lands in P4"}
+    )
+    assert case.status == "blocked"
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit/test_case_schema_rules.py -v`
-Expected: 5 failures. Three tests already pass before the validator exists: `test_impl_only_case_is_accepted`, `test_ai_step_with_a_judge_is_accepted`, and `test_blocked_case_needs_no_steps_but_needs_a_reason` — the last because, with no anti-stub rule yet, nothing rejects a blocked case with zero steps and `blocked_on` is just an unconstrained string
+Expected: 6 failures — the 5 original cross-field-rule failures plus `test_case_with_steps_but_no_assertion_is_rejected` (the assertion rule's own RED case). Three tests already pass before the validator exists: `test_impl_only_case_is_accepted`, `test_ai_step_with_a_judge_is_accepted`, and `test_blocked_case_needs_no_steps_but_needs_a_reason` — the last because, with no anti-stub rule yet, nothing rejects a blocked case with zero steps and `blocked_on` is just an unconstrained string. The remaining five new tests (`test_step_level_expect_satisfies_the_assertion_rule`, `test_case_level_expect_satisfies_the_assertion_rule`, `test_await_step_satisfies_the_assertion_rule`, `test_impl_backed_case_is_exempt_from_the_assertion_rule`, `test_blocked_case_is_exempt_from_the_assertion_rule`) also pass before the new rule exists, since nothing yet rejects a case that asserts something.
 
 - [ ] **Step 3: Add the validator to `tests/runner/schema.py`**
 
@@ -883,6 +936,12 @@ Insert into `class Case`, immediately after the `_coerce_requirement` validator:
                 "status: blocked with a blocked_on reason. A case that asserts "
                 "nothing must never look automated."
             )
+        if self.status != "blocked" and not self.impl and not self._has_assertion():
+            raise ValueError(
+                "anti-stub: this case declares steps but asserts nothing. Add a "
+                "case-level `expect:`, a per-step `expect:`, or an `await` step. "
+                "A case that runs without asserting is worse than no case."
+            )
         has_ai_step = any(step.kind == "ai" for step in self.steps)
         if has_ai_step and self.judge is None:
             raise ValueError("a case with an `ai` step requires a `judge` block")
@@ -891,10 +950,32 @@ Insert into `class Case`, immediately after the `_coerce_requirement` validator:
         return self
 ```
 
+Also add this helper method to `class Case`, immediately after the `step_kinds` property:
+
+```python
+    def _has_assertion(self) -> bool:
+        """Whether this case checks anything at all.
+
+        A per-step `expect`, a case-level `expect`, or an `await` step (which fails
+        on timeout) all count. Nothing else does — emitting an event or calling an
+        endpoint without checking the outcome asserts nothing.
+        """
+        if self.expect is not None:
+            return True
+        for step in self.steps:
+            if step.kind == "await":
+                return True
+            if step.kind == "api" and step.api is not None and step.api.expect is not None:
+                return True
+        return False
+```
+
+`_has_assertion` is called from a `model_validator(mode="after")`, so `self` is fully constructed and `step.kind` is safe.
+
 - [ ] **Step 4: Run both schema test files to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit -v`
-Expected: 20 passed (4 settings + 8 schema + 8 rules)
+Expected: 26 passed (4 settings + 8 schema + 14 rules)
 
 - [ ] **Step 5: Commit**
 
@@ -934,13 +1015,13 @@ def test_loads_valid_cases_sorted_by_id(tmp_path):
         id: sys-002-b
         title: B
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     write(tmp_path, "sys-001-a.yaml", """
         id: sys-001-a
         title: A
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     result = load_cases(tmp_path)
     assert result.ok
@@ -964,7 +1045,7 @@ def test_duplicate_ids_are_an_error(tmp_path):
         id: sys-004-dup
         title: Duplicate
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """
     write(tmp_path, "sys-004-dup.yaml", body)
     write(tmp_path, "sys-004-dup.yml", body)
@@ -984,7 +1065,7 @@ def test_route_buckets_cases_by_how_they_execute(tmp_path):
         id: sys-010-declarative
         title: Declarative
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     write(tmp_path, "sys-011-impl.yaml", """
         id: sys-011-impl
@@ -1004,6 +1085,9 @@ def test_route_buckets_cases_by_how_they_execute(tmp_path):
         title: Uses a step kind the engine cannot run yet
         tier: integration
         steps: [{ emit: { topic: appointments.booked } }]
+        expect:
+          events:
+            - { topic: appointments.booked, count: 1 }
     """)
     routing = route(load_cases(tmp_path).cases)
     assert [case.id for case in routing.declarative] == ["sys-010-declarative"]
@@ -3757,7 +3841,7 @@ git commit -m "docs: harness usage, tier guidance, and app-side harness requirem
 - [ ] **Step 1: Run the fast lane**
 
 Run: `.venv/Scripts/python.exe -m pytest -m "not docker" -v`
-Expected: all pass — roughly 70 tests across settings (4), case schema (8), schema rules (8), discover (5), engine (7), reports (4), route_check (6), isolation (8), stack (6), stop_gate (13), health (2), and the catalog. Zero collection errors.
+Expected: all pass — roughly 76 tests across settings (4), case schema (8), schema rules (14), discover (5), engine (7), reports (4), route_check (6), isolation (8), stack (6), stop_gate (13), health (2), and the catalog. Zero collection errors.
 
 - [ ] **Step 2: Run the docker lane**
 

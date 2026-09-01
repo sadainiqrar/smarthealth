@@ -16,13 +16,13 @@ def test_loads_valid_cases_sorted_by_id(tmp_path):
         id: sys-002-b
         title: B
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     write(tmp_path, "sys-001-a.yaml", """
         id: sys-001-a
         title: A
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     result = load_cases(tmp_path)
     assert result.ok
@@ -46,7 +46,7 @@ def test_duplicate_ids_are_an_error(tmp_path):
         id: sys-004-dup
         title: Duplicate
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """
     write(tmp_path, "sys-004-dup.yaml", body)
     write(tmp_path, "sys-004-dup.yml", body)
@@ -66,7 +66,7 @@ def test_route_buckets_cases_by_how_they_execute(tmp_path):
         id: sys-010-declarative
         title: Declarative
         tier: contract
-        steps: [{ api: { path: /health } }]
+        steps: [{ api: { path: /health, expect: { status: 200 } } }]
     """)
     write(tmp_path, "sys-011-impl.yaml", """
         id: sys-011-impl
@@ -86,6 +86,9 @@ def test_route_buckets_cases_by_how_they_execute(tmp_path):
         title: Uses a step kind the engine cannot run yet
         tier: integration
         steps: [{ emit: { topic: appointments.booked } }]
+        expect:
+          events:
+            - { topic: appointments.booked, count: 1 }
     """)
     routing = route(load_cases(tmp_path).cases)
     assert [case.id for case in routing.declarative] == ["sys-010-declarative"]

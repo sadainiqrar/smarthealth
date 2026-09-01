@@ -214,6 +214,12 @@ of a legacy catalog to absorb.
 - `id` is kebab-case and equals the filename stem; duplicates are an error.
 - A case with neither `steps` nor `impl`, and no `blocked_on`, is a **hard validation error**.
   This is the anti-stub rule; it is the single most important line in the schema.
+- **A case must also assert something.** Declaring `steps` is not enough: a case with
+  an `api` step and no `expect` anywhere would execute a real request and check
+  nothing. At least one of a case-level `expect`, a per-step `expect`, or an `await`
+  step (which fails on timeout) is required. `impl`-backed and `blocked` cases are
+  exempt — the first asserts in Python, the second honestly asserts nothing and is
+  reported as skipped.
 - `status: blocked` requires `blocked_on: "<reason>"`, and such cases are reported as skipped
   *with the reason*, never as passes.
 - `judge` is required for any case whose tier is `journey` and whose steps include an `ai:`

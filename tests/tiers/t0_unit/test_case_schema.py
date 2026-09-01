@@ -11,7 +11,7 @@ MINIMAL = {
     "id": "sys-001-example",
     "title": "An example case",
     "tier": "contract",
-    "steps": [{"api": {"method": "GET", "path": "/health"}}],
+    "steps": [{"api": {"method": "GET", "path": "/health", "expect": {"status": 200}}}],
 }
 
 
@@ -55,7 +55,7 @@ def test_from_file_requires_id_to_match_filename(tmp_path):
         title: An example case
         tier: contract
         steps:
-          - api: { method: GET, path: /health }
+          - api: { method: GET, path: /health, expect: { status: 200 } }
         """,
     )
     with pytest.raises(CaseValidationError) as exc:
