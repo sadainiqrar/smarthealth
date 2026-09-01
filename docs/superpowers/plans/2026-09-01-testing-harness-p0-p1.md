@@ -363,6 +363,17 @@ import httpx
 import pytest
 
 from app.main import app
+from app.settings import get_settings
+
+
+@pytest.fixture(autouse=True)
+def _reset_settings_cache():
+    """`get_settings` is an lru_cache singleton, so one test's env would otherwise
+    leak into every later test in the same process. Reset around every test rather
+    than trusting each test to remember."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture
