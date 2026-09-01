@@ -2210,7 +2210,26 @@ def test_env_maps_every_resource_setting():
     assert env["SMARTHEALTH_RESOURCE_PREFIX"] == isolation.resource_prefix
     assert env["SMARTHEALTH_POSTGRES_DB"] == isolation.postgres_db
     assert isinstance(env["SMARTHEALTH_REDIS_DB"], str)
+
+
+def test_atypical_worker_ids_are_rejected_rather_than_colliding():
+    """A silent collision would put two workers on one Redis database."""
+    for worker_id in ("gw01", "worker-3", "gw1x2", "gw", "gw1_0"):
+        with pytest.raises(ValueError, match=re.escape("expected 'master' or 'gw<N>'")):
+            make_isolation(run_id="ab12cd34", worker_id=worker_id)
+
+
+def test_worker_beyond_the_redis_database_limit_is_rejected():
+    with pytest.raises(ValueError, match="beyond the default limit"):
+        make_isolation(run_id="ab12cd34", worker_id="gw15")
+    # gw14 -> 15 is the last usable slot.
+    assert make_isolation(run_id="ab12cd34", worker_id="gw14").redis_db == 15
 ```
+
+Note: `re.fullmatch(r"gw(0|[1-9]\d*)", ...)` rejects leading zeros so `gw01` does not
+silently collapse onto `gw1`'s database — both would otherwise map to index 2. The
+`match=` argument to `pytest.raises` is itself a regex, so the literal message needs
+`re.escape`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -2246,12 +2265,29 @@ def _slug(value: str) -> str:
     return _UNSAFE.sub("_", value.lower()).strip("_") or "x"
 
 
+MAX_REDIS_DB = 15  # Redis ships with 16 logical databases, indices 0-15.
+
+
 def _worker_index(worker_id: str) -> int:
-    """`master` -> 0, `gw0` -> 1, `gw1` -> 2 … so no two workers share a Redis database."""
+    """`master` -> 0, `gw0` -> 1, `gw1` -> 2 ... so no two workers share a Redis database.
+
+    Anchored to the exact `gw<N>` form pytest-xdist emits. Anything else is rejected
+    rather than silently coerced: `gw01` and `gw1` must not collapse onto one database.
+    """
     if worker_id == "master":
         return 0
-    digits = "".join(character for character in worker_id if character.isdigit())
-    return int(digits) + 1 if digits else 0
+    match = re.fullmatch(r"gw(0|[1-9]\d*)", worker_id)
+    if match is None:
+        raise ValueError(
+            f"unrecognised worker id {worker_id!r}: expected 'master' or 'gw<N>'"
+        )
+    index = int(match.group(1)) + 1
+    if index > MAX_REDIS_DB:
+        raise ValueError(
+            f"worker {worker_id} maps to Redis database {index}, beyond the default "
+            f"limit of {MAX_REDIS_DB}. Reduce parallelism or raise Redis's `databases`."
+        )
+    return index
 
 
 @dataclass(frozen=True)
@@ -2309,7 +2345,7 @@ def make_isolation(run_id: str | None = None, worker_id: str = "master") -> RunI
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit/test_isolation.py -v`
-Expected: 8 passed
+Expected: 10 passed
 
 - [ ] **Step 5: Expose it as a fixture**
 
@@ -2628,7 +2664,16 @@ def test_unhealthy_services_are_reported(monkeypatch):
     stack = TestStack()
     monkeypatch.setattr(stack, "_run", lambda *args, **kwargs: PS_JSON_LINES)
     assert [status.service for status in stack.unhealthy()] == ["kafka", "redis"]
+
+
+def test_run_wraps_a_timeout_in_a_runtime_error():
+    stack = TestStack()
+    with pytest.raises(RuntimeError, match="timed out after"):
+        stack._run("ps", timeout=0)
 ```
+
+`timeout=0` reliably triggers `subprocess.TimeoutExpired` on this platform (verified),
+so the test uses it directly rather than monkeypatching `subprocess.run`.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -2720,16 +2765,22 @@ class TestStack:
         ]
 
     def _run(self, *args: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> str:
-        completed = subprocess.run(
-            self.compose_command(*args),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        command = self.compose_command(*args)
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"`{' '.join(command)}` could not run: docker is not on PATH ({exc})"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"`{' '.join(command)}` timed out after {timeout}s"
+            ) from exc
         if completed.returncode != 0:
             raise RuntimeError(
-                f"`{' '.join(self.compose_command(*args))}` failed "
+                f"`{' '.join(command)}` failed "
                 f"({completed.returncode}):\n{completed.stderr.strip()}"
             )
         return completed.stdout
@@ -2772,7 +2823,7 @@ class TestStack:
 - [ ] **Step 4: Run the unit test to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit/test_stack.py -v`
-Expected: 6 passed
+Expected: 7 passed
 
 - [ ] **Step 5: Add the session fixture**
 
@@ -3114,19 +3165,22 @@ Create `.claude/hooks/feature_test_stop.py`:
 
 ```python
 #!/usr/bin/env python
-"""Claude Code `Stop` hook — the enforcement spine of the feature-test flow.
+"""Claude Code `Stop` hook - the enforcement spine of the feature-test flow.
 
 Contract with Claude Code:
     exit 0  -> allow the stop (no-op / satisfied / waived / peripheral)
     exit 2  -> BLOCK the stop; stderr is shown to the model and the user
 
-Only the final step ever exits 2. Every other path — including any unexpected
-internal error — exits 0. A Stop hook that blocks when it should not is the number
+Only the final step ever exits 2. Every other path - including any unexpected
+internal error - exits 0. A Stop hook that blocks when it should not is the number
 one reason a hook gets deleted, so this one fails open everywhere else.
 
 Written in Python rather than bash so it behaves identically on Windows and POSIX.
 The decision logic lives in `tests/runner/stop_gate.py` and is unit-tested; this
 script only gathers inputs.
+
+All output is ASCII: stderr is rendered by Claude Code, and a non-ASCII byte from a
+cp1252 console does not round-trip as UTF-8.
 """
 
 from __future__ import annotations
@@ -3139,6 +3193,28 @@ from pathlib import Path
 
 ALLOW, BLOCK = 0, 2
 REPO_NAME = "SmartHealth"
+
+# route_check's documented exit codes.
+ROUTE_CHECK_OK = 0
+ROUTE_CHECK_INVALID = 1
+ROUTE_CHECK_GATE_ERROR = 2
+
+
+def project_python(repo_root: Path) -> str:
+    """The interpreter that has the harness's dependencies.
+
+    Claude Code invokes this hook with the ambient `python`, which generally does not
+    have pydantic/PyYAML installed. The project venv does. Falling back to
+    sys.executable keeps the hook working when no venv exists.
+    """
+    candidates = (
+        repo_root / ".venv" / "Scripts" / "python.exe",  # Windows
+        repo_root / ".venv" / "bin" / "python",          # POSIX
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
 
 
 def run_git(*args: str, cwd: Path | None = None) -> str | None:
@@ -3173,8 +3249,11 @@ def read_waiver(repo_root: Path) -> str | None:
         return env_waiver
     waive_file = repo_root / ".e2e-waive"
     if waive_file.is_file():
-        first_line = waive_file.read_text(encoding="utf-8").splitlines()
-        return (first_line[0].strip() if first_line else "") or "(no reason given)"
+        try:
+            lines = waive_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            lines = []
+        return (lines[0].strip() if lines else "") or "(no reason given)"
     return None
 
 
@@ -3189,25 +3268,31 @@ def log_waiver(repo_root: Path, reason: str, changed_files: list[str]) -> None:
         pass  # a waiver must never turn into a block
 
 
-def dependencies_available() -> bool:
+def dependencies_available(python: str) -> bool:
     """The dry-run needs pydantic and PyYAML. Without them, fail open."""
-    probe = subprocess.run(
-        [sys.executable, "-c", "import pydantic, yaml"],
-        capture_output=True, text=True, timeout=60, check=False,
-    )
+    try:
+        probe = subprocess.run(
+            [python, "-c", "import pydantic, yaml"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
     return probe.returncode == 0
 
 
-def route_check_passes(repo_root: Path) -> bool:
-    completed = subprocess.run(
-        [sys.executable, "-m", "tests.runner.route_check", "--quiet"],
-        cwd=repo_root, capture_output=True, text=True, timeout=120, check=False,
-    )
-    return completed.returncode == 0
+def route_check_exit_code(repo_root: Path, python: str) -> int:
+    try:
+        completed = subprocess.run(
+            [python, "-m", "tests.runner.route_check", "--quiet"],
+            cwd=repo_root, capture_output=True, text=True, timeout=120, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ROUTE_CHECK_GATE_ERROR
+    return completed.returncode
 
 
 def main() -> int:
-    # Step 0 — guard. This hook may be wired globally; it must no-op everywhere else.
+    # Step 0 - guard. This hook may be wired globally; it must no-op everywhere else.
     repo_root = resolve_repo_root()
     if repo_root is None or not (repo_root / "tests" / "cases").is_dir():
         return ALLOW
@@ -3215,33 +3300,43 @@ def main() -> int:
     sys.path.insert(0, str(repo_root))
     from tests.runner.stop_gate import decide, load_globs, parse_porcelain
 
+    python = project_python(repo_root)
+
     porcelain = run_git("status", "--porcelain", "-z", cwd=repo_root)
     changed_files = parse_porcelain(porcelain or "")
 
-    # Step 1 — waiver: an audited escape, never a silent one.
+    # Step 1 - waiver: an audited escape, never a silent one.
     waiver = read_waiver(repo_root)
     if waiver:
         log_waiver(repo_root, waiver, changed_files)
         return ALLOW
 
-    # Step 2 — relevance.
+    # Step 2 - relevance.
     core_globs = load_globs(repo_root / "tests" / "core-paths.txt")
 
-    # Step 3 — satisfied? Missing dependencies fail open: a broken venv must not block.
+    # Step 3 - satisfied? A broken gate fails open; only an invalid case blocks.
     has_changed_case = any(
         path.startswith("tests/cases/") and path.endswith((".yaml", ".yml"))
         for path in changed_files
     )
     route_ok = True
     if core_globs and has_changed_case:
-        if not dependencies_available():
+        if not dependencies_available(python):
             print(
                 "[feature-test-stop] pydantic/PyYAML unavailable; skipping catalog "
                 "validation and allowing the stop.",
                 file=sys.stderr,
             )
         else:
-            route_ok = route_check_passes(repo_root)
+            code = route_check_exit_code(repo_root, python)
+            if code == ROUTE_CHECK_GATE_ERROR:
+                print(
+                    "[feature-test-stop] route_check could not run (exit 2); "
+                    "allowing the stop rather than blocking on a broken gate.",
+                    file=sys.stderr,
+                )
+            else:
+                route_ok = code == ROUTE_CHECK_OK
 
     decision = decide(
         changed_files=changed_files,
@@ -3258,7 +3353,7 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except Exception as error:  # noqa: BLE001 — fail open on anything unexpected
+    except Exception as error:  # noqa: BLE001 - fail open on anything unexpected
         print(f"[feature-test-stop] internal error, allowing stop: {error}", file=sys.stderr)
         sys.exit(ALLOW)
 ```
@@ -3948,7 +4043,7 @@ git commit -m "docs: harness usage, tier guidance, and app-side harness requirem
 - [ ] **Step 1: Run the fast lane**
 
 Run: `.venv/Scripts/python.exe -m pytest -m "not docker" -v`
-Expected: all pass — roughly 76 tests across settings (4), case schema (8), schema rules (14), discover (5), engine (7), reports (4), route_check (6), isolation (8), stack (6), stop_gate (13), health (2), and the catalog. Zero collection errors.
+Expected: all pass — roughly 79 tests across settings (4), case schema (8), schema rules (14), discover (5), engine (7), reports (4), route_check (6), isolation (10), stack (7), stop_gate (13), health (2), and the catalog. Zero collection errors.
 
 - [ ] **Step 2: Run the docker lane**
 

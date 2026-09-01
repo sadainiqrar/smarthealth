@@ -22,12 +22,29 @@ def _slug(value: str) -> str:
     return _UNSAFE.sub("_", value.lower()).strip("_") or "x"
 
 
+MAX_REDIS_DB = 15  # Redis ships with 16 logical databases, indices 0-15.
+
+
 def _worker_index(worker_id: str) -> int:
-    """`master` -> 0, `gw0` -> 1, `gw1` -> 2 … so no two workers share a Redis database."""
+    """`master` -> 0, `gw0` -> 1, `gw1` -> 2 ... so no two workers share a Redis database.
+
+    Anchored to the exact `gw<N>` form pytest-xdist emits. Anything else is rejected
+    rather than silently coerced: `gw01` and `gw1` must not collapse onto one database.
+    """
     if worker_id == "master":
         return 0
-    digits = "".join(character for character in worker_id if character.isdigit())
-    return int(digits) + 1 if digits else 0
+    match = re.fullmatch(r"gw(0|[1-9]\d*)", worker_id)
+    if match is None:
+        raise ValueError(
+            f"unrecognised worker id {worker_id!r}: expected 'master' or 'gw<N>'"
+        )
+    index = int(match.group(1)) + 1
+    if index > MAX_REDIS_DB:
+        raise ValueError(
+            f"worker {worker_id} maps to Redis database {index}, beyond the default "
+            f"limit of {MAX_REDIS_DB}. Reduce parallelism or raise Redis's `databases`."
+        )
+    return index
 
 
 @dataclass(frozen=True)

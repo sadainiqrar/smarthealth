@@ -34,6 +34,23 @@ ROUTE_CHECK_INVALID = 1
 ROUTE_CHECK_GATE_ERROR = 2
 
 
+def project_python(repo_root: Path) -> str:
+    """The interpreter that has the harness's dependencies.
+
+    Claude Code invokes this hook with the ambient `python`, which generally does not
+    have pydantic/PyYAML installed. The project venv does. Falling back to
+    sys.executable keeps the hook working when no venv exists.
+    """
+    candidates = (
+        repo_root / ".venv" / "Scripts" / "python.exe",  # Windows
+        repo_root / ".venv" / "bin" / "python",          # POSIX
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return sys.executable
+
+
 def run_git(*args: str, cwd: Path | None = None) -> str | None:
     try:
         completed = subprocess.run(
@@ -66,7 +83,10 @@ def read_waiver(repo_root: Path) -> str | None:
         return env_waiver
     waive_file = repo_root / ".e2e-waive"
     if waive_file.is_file():
-        lines = waive_file.read_text(encoding="utf-8").splitlines()
+        try:
+            lines = waive_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            lines = []
         return (lines[0].strip() if lines else "") or "(no reason given)"
     return None
 
@@ -82,11 +102,11 @@ def log_waiver(repo_root: Path, reason: str, changed_files: list[str]) -> None:
         pass  # a waiver must never turn into a block
 
 
-def dependencies_available() -> bool:
+def dependencies_available(python: str) -> bool:
     """The dry-run needs pydantic and PyYAML. Without them, fail open."""
     try:
         probe = subprocess.run(
-            [sys.executable, "-c", "import pydantic, yaml"],
+            [python, "-c", "import pydantic, yaml"],
             capture_output=True, text=True, timeout=60, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -94,10 +114,10 @@ def dependencies_available() -> bool:
     return probe.returncode == 0
 
 
-def route_check_exit_code(repo_root: Path) -> int:
+def route_check_exit_code(repo_root: Path, python: str) -> int:
     try:
         completed = subprocess.run(
-            [sys.executable, "-m", "tests.runner.route_check", "--quiet"],
+            [python, "-m", "tests.runner.route_check", "--quiet"],
             cwd=repo_root, capture_output=True, text=True, timeout=120, check=False,
         )
     except (OSError, subprocess.SubprocessError):
@@ -113,6 +133,8 @@ def main() -> int:
 
     sys.path.insert(0, str(repo_root))
     from tests.runner.stop_gate import decide, load_globs, parse_porcelain
+
+    python = project_python(repo_root)
 
     porcelain = run_git("status", "--porcelain", "-z", cwd=repo_root)
     changed_files = parse_porcelain(porcelain or "")
@@ -133,14 +155,14 @@ def main() -> int:
     )
     route_ok = True
     if core_globs and has_changed_case:
-        if not dependencies_available():
+        if not dependencies_available(python):
             print(
                 "[feature-test-stop] pydantic/PyYAML unavailable; skipping catalog "
                 "validation and allowing the stop.",
                 file=sys.stderr,
             )
         else:
-            code = route_check_exit_code(repo_root)
+            code = route_check_exit_code(repo_root, python)
             if code == ROUTE_CHECK_GATE_ERROR:
                 print(
                     "[feature-test-stop] route_check could not run (exit 2); "

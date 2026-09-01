@@ -57,3 +57,9 @@ def test_unhealthy_services_are_reported(monkeypatch):
     stack = TestStack()
     monkeypatch.setattr(stack, "_run", lambda *args, **kwargs: PS_JSON_LINES)
     assert [status.service for status in stack.unhealthy()] == ["kafka", "redis"]
+
+
+def test_run_wraps_a_timeout_in_a_runtime_error():
+    stack = TestStack()
+    with pytest.raises(RuntimeError, match="timed out after"):
+        stack._run("ps", timeout=0)

@@ -78,16 +78,22 @@ class TestStack:
         ]
 
     def _run(self, *args: str, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> str:
-        completed = subprocess.run(
-            self.compose_command(*args),
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        command = self.compose_command(*args)
+        try:
+            completed = subprocess.run(
+                command, capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"`{' '.join(command)}` could not run: docker is not on PATH ({exc})"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"`{' '.join(command)}` timed out after {timeout}s"
+            ) from exc
         if completed.returncode != 0:
             raise RuntimeError(
-                f"`{' '.join(self.compose_command(*args))}` failed "
+                f"`{' '.join(command)}` failed "
                 f"({completed.returncode}):\n{completed.stderr.strip()}"
             )
         return completed.stdout

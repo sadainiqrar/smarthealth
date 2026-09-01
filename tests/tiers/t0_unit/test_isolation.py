@@ -60,3 +60,17 @@ def test_env_maps_every_resource_setting():
     assert env["SMARTHEALTH_RESOURCE_PREFIX"] == isolation.resource_prefix
     assert env["SMARTHEALTH_POSTGRES_DB"] == isolation.postgres_db
     assert isinstance(env["SMARTHEALTH_REDIS_DB"], str)
+
+
+def test_atypical_worker_ids_are_rejected_rather_than_colliding():
+    """A silent collision would put two workers on one Redis database."""
+    for worker_id in ("gw01", "worker-3", "gw1x2", "gw", "gw1_0"):
+        with pytest.raises(ValueError, match=re.escape("expected 'master' or 'gw<N>'")):
+            make_isolation(run_id="ab12cd34", worker_id=worker_id)
+
+
+def test_worker_beyond_the_redis_database_limit_is_rejected():
+    with pytest.raises(ValueError, match="beyond the default limit"):
+        make_isolation(run_id="ab12cd34", worker_id="gw15")
+    # gw14 -> 15 is the last usable slot.
+    assert make_isolation(run_id="ab12cd34", worker_id="gw14").redis_db == 15
