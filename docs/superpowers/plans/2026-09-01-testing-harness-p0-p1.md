@@ -864,7 +864,7 @@ def test_judge_without_an_ai_step_is_rejected():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit/test_case_schema_rules.py -v`
-Expected: 6 failures (`test_impl_only_case_is_accepted` and `test_ai_step_with_a_judge_is_accepted` already pass)
+Expected: 5 failures. Three tests already pass before the validator exists: `test_impl_only_case_is_accepted`, `test_ai_step_with_a_judge_is_accepted`, and `test_blocked_case_needs_no_steps_but_needs_a_reason` — the last because, with no anti-stub rule yet, nothing rejects a blocked case with zero steps and `blocked_on` is just an unconstrained string
 
 - [ ] **Step 3: Add the validator to `tests/runner/schema.py`**
 
