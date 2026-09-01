@@ -1,5 +1,17 @@
 {
   "enabledPlugins": {
     "mattpocock-skills@claude-plugins-official": true
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/feature_test_stop.py\""
+          }
+        ]
+      }
+    ]
   }
 }

@@ -1,0 +1,17 @@
+# Globs (repo-root-relative) that make the Stop hook relevant. A change touching
+# any of these is "feature work" and must arrive with a validated test case.
+#
+# DELIBERATELY EMPTY until Week 1 lands application code. With no globs the hook
+# fails open and never blocks - that is correct, not a gap.
+#
+# Note: these are fnmatch globs, and fnmatch's `*` crosses directory separators.
+# `app/**` matches at any depth under app/ and does NOT match `application/...`.
+# Avoid bare patterns like `*.py`, which would match at every depth in the repo.
+#
+# Uncomment as each module appears:
+# app/api/**
+# app/domain/**
+# app/services/**
+# app/workflows/**
+# app/consumers/**
+# app/tasks/**
