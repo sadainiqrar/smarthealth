@@ -13,6 +13,7 @@ import pytest
 
 from app.main import app
 from app.settings import get_settings
+from tests.harness.isolation import RunIsolation, make_isolation
 
 
 @pytest.fixture(autouse=True)
@@ -31,3 +32,10 @@ async def api_client() -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         yield client
+
+
+@pytest.fixture(scope="session")
+def isolation(request) -> RunIsolation:
+    """This run's private slice of the shared test stack."""
+    worker_id = getattr(request.config, "workerinput", {}).get("workerid", "master")
+    return make_isolation(worker_id=worker_id)
