@@ -4,9 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository status
 
-**No application code exists yet.** This repository currently contains only the assignment
-requirements. The build/test/run commands below do not exist until the corresponding scaffolding
-is created — do not invent them, and update this file when they land.
+**No feature code exists yet.** The repository holds the assignment requirements and the
+testing harness spine (`tests/`, `docker-compose.infra.yml`, `.claude/`). Application
+modules land week by week — do not invent build/run commands for services that do not
+exist, and update this file when they do.
+
+Commands that work today:
+
+| Command | Purpose |
+| --- | --- |
+| `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract |
+| `python -m pytest -m docker` | tests needing the compose test stack |
+| `python -m tests.runner.route_check` | validate and route the case catalog |
 
 ## What this project is
 
@@ -74,3 +83,35 @@ These are the requirements most likely to be violated by an obvious implementati
 - A PRD is a required deliverable for both parts, with traceability from features to
   deliverables. Design decisions, assumptions, and tradeoffs belong in `docs/`, not only in
   code comments.
+
+## Testing
+
+Design: `docs/superpowers/specs/2026-09-01-testing-harness-design.md`. Practice:
+`tests/README.md`.
+
+Five tiers — `unit`, `contract`, `workflow`, `integration`, `journey` — selected by pytest
+marker. **Choose the cheapest tier that can prove the property.** Most reliability
+invariants (appointment confirms only after the workflow succeeds; partial failure leaves
+no orphaned slot) belong in `workflow`, which runs against the Temporal SDK's time-skipping
+environment in about a second — not in `journey`.
+
+Cases are YAML under `tests/cases/`, authored with the **smarthealth-testcase** skill.
+`tests/runner/schema.py` is the single validation authority. A case that asserts nothing is
+a hard error, never a silent skip — and declaring `steps` is not sufficient: a case must
+carry a case-level `expect`, a per-step `expect`, or an `await` step.
+
+A `Stop` hook blocks the session when a path in `tests/core-paths.txt` changes without a
+validated case. Waive with `E2E_WAIVE="<reason>"` — logged to `tests/waivers.log`, not
+silent.
+
+**Harness requirements on application code** — honour these as modules land:
+
+1. Topic, queue, and task-queue names come from `Settings.topic()/queue()/task_queue()`,
+   never string literals — the isolation layer namespaces a shared stack through them.
+2. LLM and embedding clients come from a provider factory keyed on `Settings.llm_mode`.
+3. Kafka consumers, Temporal workflows, and Celery tasks register in enumerable registries
+   so meta-tests can discover them.
+4. Consumers take an explicit idempotency key.
+5. The OpenTelemetry tracer provider stays swappable.
+6. Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline.
+7. Every service exposes a readiness endpoint.
