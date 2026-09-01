@@ -44,3 +44,9 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# ruff's implicit default set excludes both of these. The harness depends on them:
+# E501 makes `line-length` above actually mean something to `ruff check`, and E402
+# enforces the top-of-file import placement the conftest tasks rely on.
+extend-select = ["E402", "E501"]
