@@ -180,6 +180,25 @@ class Case(BaseModel):
     def _coerce_requirement(cls, value: Any) -> Any:
         return [value] if isinstance(value, str) else value
 
+    @model_validator(mode="after")
+    def _cross_field_rules(self) -> Case:
+        if self.status == "blocked" and not self.blocked_on:
+            raise ValueError("status 'blocked' requires blocked_on: '<reason>'")
+        if self.blocked_on and self.status != "blocked":
+            raise ValueError("blocked_on may only be set when status is 'blocked'")
+        if self.status != "blocked" and not self.steps and not self.impl:
+            raise ValueError(
+                "anti-stub: a case must declare `steps` or `impl`, or be "
+                "status: blocked with a blocked_on reason. A case that asserts "
+                "nothing must never look automated."
+            )
+        has_ai_step = any(step.kind == "ai" for step in self.steps)
+        if has_ai_step and self.judge is None:
+            raise ValueError("a case with an `ai` step requires a `judge` block")
+        if self.judge is not None and not has_ai_step:
+            raise ValueError("a `judge` block is only meaningful on a case with an `ai` step")
+        return self
+
     @property
     def step_kinds(self) -> set[str]:
         return {step.kind for step in self.steps}
