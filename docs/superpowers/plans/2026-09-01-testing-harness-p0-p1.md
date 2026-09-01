@@ -125,10 +125,16 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-# ruff's implicit default set excludes both of these. The harness depends on them:
-# E501 makes `line-length` above actually mean something to `ruff check`, and E402
-# enforces the top-of-file import placement the conftest tasks rely on.
-extend-select = ["E402", "E501"]
+# Pinned explicitly, NOT layered on ruff's default set. Verified on ruff 0.16.5:
+# the default set includes bugbear (B) but excludes E402 and E501, and it has
+# changed between ruff versions. A lint gate whose rules drift with the tool
+# version is not a gate, so the harness names every rule family it relies on.
+#   E4  imports, incl. E402 top-of-file placement (conftest tasks depend on it)
+#   E501 makes `line-length` above mean something to `ruff check`
+#   E7/E9 correctness and syntax
+#   F   pyflakes: unused imports, undefined names
+#   B   bugbear: catches weak assertions and real bug patterns
+select = ["E4", "E7", "E9", "F", "E501", "B"]
 ```
 
 - [ ] **Step 2: Create the package tree**
@@ -442,6 +448,7 @@ Create `tests/tiers/t0_unit/test_case_schema.py`:
 import textwrap
 
 import pytest
+from pydantic import ValidationError
 
 from tests.runner.schema import Case, CaseValidationError
 
@@ -471,7 +478,7 @@ def test_minimal_case_validates():
 
 
 def test_id_must_be_kebab_case():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**MINIMAL, "id": "Sys_001_Example"})
     assert "kebab-case" in str(exc.value)
 
@@ -482,7 +489,7 @@ def test_requirement_accepts_a_bare_string():
 
 
 def test_unknown_field_is_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Case.model_validate({**MINIMAL, "nonsense": True})
 
 
@@ -792,6 +799,7 @@ Create `tests/tiers/t0_unit/test_case_schema_rules.py`:
 
 ```python
 import pytest
+from pydantic import ValidationError
 
 from tests.runner.schema import Case
 
@@ -804,7 +812,7 @@ JUDGE = {"prompt": "Did the assistant decline to diagnose and route to a provide
 
 
 def test_case_with_neither_steps_nor_impl_is_rejected():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate(BASE)
     assert "anti-stub" in str(exc.value)
 
@@ -823,19 +831,19 @@ def test_blocked_case_needs_no_steps_but_needs_a_reason():
 
 
 def test_blocked_without_a_reason_is_rejected():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "status": "blocked"})
     assert "blocked_on" in str(exc.value)
 
 
 def test_reason_without_blocked_status_is_rejected():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "steps": [API_STEP], "blocked_on": "why?"})
     assert "blocked_on" in str(exc.value)
 
 
 def test_ai_step_requires_a_judge():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "tier": "journey", "steps": [AI_STEP]})
     assert "judge" in str(exc.value)
 
@@ -848,7 +856,7 @@ def test_ai_step_with_a_judge_is_accepted():
 
 
 def test_judge_without_an_ai_step_is_rejected():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**BASE, "steps": [API_STEP], "judge": JUDGE})
     assert "judge" in str(exc.value)
 ```
@@ -3605,6 +3613,34 @@ else — no globs configured, no core path touched, missing dependencies, or any
 error all allow the stop.
 
 Escape hatch: `E2E_WAIVE="<reason>"`, logged to `tests/waivers.log`.
+
+## Known constraints — read before extending the harness
+
+Three traps verified during the P0/P1 build. Each is inert today and bites the first
+task that ignores it.
+
+**1. Never call `get_settings()` from a session-scoped fixture.** `get_settings` is an
+`lru_cache` singleton. The autouse `_reset_settings_cache` fixture clears the *cache*
+between tests, but it cannot invalidate a `Settings` object a session-scoped fixture
+already captured. A session-scoped consumer would silently serve the pre-session value
+while every test's `monkeypatch.setenv` appears to do nothing — stale data, no error.
+Read `os.environ` directly in session-scoped fixtures, or take a fresh `Settings()`.
+
+**2. `httpx.ASGITransport` does not run FastAPI's lifespan.** Verified against httpx
+0.28.1: the transport only ever sends an `"http"` scope, and takes no `lifespan`
+argument. The `api_client` fixture therefore exercises an app whose startup handlers
+never ran. Harmless while `/health` depends on nothing. The moment a DB pool, Kafka
+producer, or Temporal client is wired through a lifespan handler, any endpoint reached
+via `api_client` that reads `app.state.<resource>` fails on uninitialised state. When
+that day comes, either drive the lifespan explicitly (`asgi-lifespan`'s
+`LifespanManager`, or `app.router.lifespan_context(app)`) or keep lifespan-backed
+endpoints out of T1 and test them at T3 against the real stack.
+
+**3. `/health`'s `-> dict[str, str]` annotation is an enforced response model.**
+FastAPI validates against it: returning a boolean or a nested object raises
+`ResponseValidationError` (a 500), not a pass-through. Growing the health payload
+beyond flat strings — a readiness boolean, per-dependency `checks: {...}` — requires
+loosening the annotation deliberately.
 
 ## Phase status
 

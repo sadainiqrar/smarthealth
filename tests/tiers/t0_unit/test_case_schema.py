@@ -1,6 +1,7 @@
 import textwrap
 
 import pytest
+from pydantic import ValidationError
 
 from tests.runner.schema import Case, CaseValidationError
 
@@ -30,7 +31,7 @@ def test_minimal_case_validates():
 
 
 def test_id_must_be_kebab_case():
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValidationError) as exc:
         Case.model_validate({**MINIMAL, "id": "Sys_001_Example"})
     assert "kebab-case" in str(exc.value)
 
@@ -41,7 +42,7 @@ def test_requirement_accepts_a_bare_string():
 
 
 def test_unknown_field_is_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(ValidationError):
         Case.model_validate({**MINIMAL, "nonsense": True})
 
 

@@ -46,7 +46,13 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-# ruff's implicit default set excludes both of these. The harness depends on them:
-# E501 makes `line-length` above actually mean something to `ruff check`, and E402
-# enforces the top-of-file import placement the conftest tasks rely on.
-extend-select = ["E402", "E501"]
+# Pinned explicitly, NOT layered on ruff's default set. Verified on ruff 0.16.5:
+# the default set includes bugbear (B) but excludes E402 and E501, and it has
+# changed between ruff versions. A lint gate whose rules drift with the tool
+# version is not a gate, so the harness names every rule family it relies on.
+#   E4  imports, incl. E402 top-of-file placement (conftest tasks depend on it)
+#   E501 makes `line-length` above mean something to `ruff check`
+#   E7/E9 correctness and syntax
+#   F   pyflakes: unused imports, undefined names
+#   B   bugbear: catches weak assertions and real bug patterns
+select = ["E4", "E7", "E9", "F", "E501", "B"]
