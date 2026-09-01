@@ -60,6 +60,10 @@ def load_cases(cases_dir: Path = CASES_DIR) -> LoadResult:
     if not cases_dir.is_dir():
         return result
     seen: dict[str, Path] = {}
+    # Sorted by filename, so ties break deterministically: `.yaml` sorts before `.yml`,
+    # making the `.yaml` file canonical and the `.yml` the one reported as the duplicate.
+    # The only way to reach the duplicate branch at all is the same stem under both
+    # extensions, since `Case.from_file` already requires id == filename stem.
     paths = sorted([*cases_dir.glob("*.yaml"), *cases_dir.glob("*.yml")], key=lambda p: p.name)
     for path in paths:
         try:
@@ -87,7 +91,13 @@ def unsupported_kinds(case: Case) -> set[str]:
 
 
 def route(cases: list[Case]) -> Routing:
-    """Bucket cases by execution strategy, in precedence order."""
+    """Bucket cases by execution strategy; every case lands in exactly one bucket.
+
+    Precedence is blocked -> unsupported -> impl_backed -> declarative. `blocked` is
+    checked first so a case a human has already flagged is not additionally reported
+    as needing engine support: it does not run either way, and one honest reason beats
+    two competing ones.
+    """
     routing = Routing()
     for case in cases:
         if case.status == "blocked":
