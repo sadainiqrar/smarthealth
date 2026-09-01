@@ -1327,6 +1327,7 @@ async def test_unsupported_step_kind_fails_loudly():
     case = Case.model_validate({
         "id": "sys-025-emit", "title": "Emit", "tier": "integration",
         "steps": [{"emit": {"topic": "appointments.booked"}}],
+        "expect": {"events": [{"topic": "appointments.booked", "count": 1}]},
     })
     async with make_client(lambda r: httpx.Response(200)) as client:
         with pytest.raises(NotImplementedError) as exc:
@@ -1621,7 +1622,7 @@ CASES = [
     Case.model_validate({
         "id": "sys-001-health", "title": "Health responds", "tier": "contract",
         "priority": "P0", "requirement": ["PART-A-OBS-1"],
-        "steps": [{"api": {"path": "/health"}}],
+        "steps": [{"api": {"path": "/health", "expect": {"status": 200}}}],
     }),
     Case.model_validate({
         "id": "apt-002-waitlist", "title": "Waitlist promotion", "tier": "journey",
@@ -1658,7 +1659,7 @@ def test_traceability_groups_cases_by_requirement():
 def test_traceability_flags_cases_with_no_requirement():
     orphan = Case.model_validate({
         "id": "sys-002-orphan", "title": "No requirement", "tier": "contract",
-        "steps": [{"api": {"path": "/health"}}],
+        "steps": [{"api": {"path": "/health", "expect": {"status": 200}}}],
     })
     markdown = render_traceability([*CASES, orphan])
     assert "sys-002-orphan" in markdown
