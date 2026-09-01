@@ -16,6 +16,7 @@ import pytest
 
 from tests.runner.discover import load_cases, route, unsupported_kinds
 from tests.runner.engine import CaseContext, run_case
+from tests.runner.reports import render_catalog
 from tests.runner.schema import Case
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -35,6 +36,17 @@ def test_catalog_has_no_validation_errors():
     """A malformed case must break the suite, not disappear from it."""
     assert not _LOAD.errors, "invalid case files:\n" + "\n".join(
         f"  {error}" for error in _LOAD.errors
+    )
+
+
+def test_committed_catalog_matches_the_current_cases():
+    """A generated artifact that silently drifts is worse than no artifact."""
+    catalog_path = REPO_ROOT / "tests" / "cases" / "CATALOG.md"
+    assert catalog_path.is_file(), "CATALOG.md is missing — regenerate it"
+    expected = render_catalog(_ROUTING)
+    assert catalog_path.read_text(encoding="utf-8") == expected, (
+        "tests/cases/CATALOG.md is out of date. Regenerate it:\n"
+        "  python -m tests.runner.route_check --write-catalog"
     )
 
 

@@ -3,6 +3,10 @@
 Both files are generated, never hand-edited. `traceability.md` answers the
 assignment's "traceability between features and deliverables" requirement from
 test data rather than a hand-maintained table.
+
+`bucket_of` is the single classification authority for "which execution bucket is
+this case in" — both the catalog renderer below and the CLI table in `route_check`
+call it, so there is one answer, not two that can drift apart.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ GENERATED_BANNER = (
 )
 
 
-def _bucket_of(case: Case, routing: Routing) -> str:
+def bucket_of(case: Case, routing: Routing) -> str:
     if case in routing.blocked:
         return "blocked"
     if case in routing.unsupported:
@@ -62,7 +66,7 @@ def render_catalog(routing: Routing) -> str:
     for case in cases:
         requirement = ", ".join(case.requirement) or "—"
         lines.append(
-            f"| {case.id} | {case.tier} | {case.priority} | {_bucket_of(case, routing)} "
+            f"| {case.id} | {case.tier} | {case.priority} | {bucket_of(case, routing)} "
             f"| {requirement} | {case.title} |"
         )
 

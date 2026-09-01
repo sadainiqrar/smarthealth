@@ -56,6 +56,8 @@ def parse_ps_output(raw: str) -> list[ServiceStatus]:
 class TestStack:
     """Brings the shared infrastructure stack up, reports on it, and tears it down."""
 
+    __test__ = False  # not a pytest test class despite the name
+
     def __init__(
         self,
         project: str = DEFAULT_PROJECT,

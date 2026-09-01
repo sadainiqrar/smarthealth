@@ -66,3 +66,30 @@ def test_reports_are_not_written_when_validation_fails(tmp_path):
     write(tmp_path, "sys-031-invalid.yaml", INVALID)
     assert main(["--cases-dir", str(tmp_path), "--write-catalog"]) == 1
     assert not (tmp_path / "CATALOG.md").exists()
+
+
+def test_gate_error_when_cases_dir_is_missing(tmp_path, capsys):
+    missing = tmp_path / "does-not-exist"
+    assert main(["--cases-dir", str(missing)]) == 2
+    out = capsys.readouterr().out
+    assert "gate error" in out
+    assert str(missing) in out
+
+
+def test_gate_error_when_cases_dir_is_a_file(tmp_path, capsys):
+    a_file = tmp_path / "not-a-directory"
+    a_file.write_text("not a directory", encoding="utf-8")
+    assert main(["--cases-dir", str(a_file)]) == 2
+    out = capsys.readouterr().out
+    assert "gate error" in out
+    assert str(a_file) in out
+
+
+def test_gate_error_when_traceability_parent_is_unwritable(tmp_path, capsys):
+    write(tmp_path, "sys-030-valid.yaml", VALID)
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    unwritable = blocker / "reports" / "traceability.md"
+    assert main(["--cases-dir", str(tmp_path), "--write-traceability", str(unwritable)]) == 2
+    out = capsys.readouterr().out
+    assert "gate error" in out

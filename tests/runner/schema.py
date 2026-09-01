@@ -229,7 +229,11 @@ class Case(BaseModel):
     def from_file(cls, path: Path) -> Case:
         """Load and validate one case file. Raises `CaseValidationError` on any problem."""
         try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            text = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise CaseValidationError(f"cannot read case file: {exc}") from exc
+        try:
+            raw = yaml.safe_load(text)
         except yaml.YAMLError as exc:
             raise CaseValidationError(f"invalid YAML: {exc}") from exc
         if not isinstance(raw, dict):

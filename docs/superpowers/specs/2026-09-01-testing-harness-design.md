@@ -328,6 +328,14 @@ Algorithm, four steps, every path except step 3 fails **open**:
    with: *"Feature code changed in <files> but no validated test case. Run /feature-test to
    author one, or set E2E_WAIVE=<reason> to skip with a logged reason."*
 
+   `route_check`'s exit code is three-way, not binary: `0` valid, `1` at least one case is
+   invalid, `2` the gate itself could not run (missing/invalid `--cases-dir`, bad flags, an
+   unwritable report path, or any unexpected internal failure). Only `0` satisfies step 3 and
+   only `1` blocks; exit `2` is treated as **fail-open with a printed note** — the hook allows
+   the stop but tells the model and user that the gate tool itself is broken and needs
+   attention, consistent with the rule that every path except the intended block (step 3's `1`)
+   fails open.
+
 No model, no network, no container in the gate. Gating logic is deterministic or it is not a
 gate.
 
