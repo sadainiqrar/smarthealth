@@ -1,0 +1,13 @@
+id: sys-001-health-endpoint-responds
+title: "Health endpoint reports the service as ready"
+requirement: [PART-A-OBS-1]
+tier: contract
+priority: P0
+status: ready
+steps:
+  - api:
+      method: GET
+      path: /health
+      expect:
+        status: 200
+        json_contains: { status: ok }
