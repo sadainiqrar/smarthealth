@@ -81,3 +81,28 @@ def test_allows_when_a_valid_case_accompanies_the_change():
                       core_globs=["app/**"], has_changed_case=True, route_check_ok=True)
     assert decision.allow
     assert decision.reason == "covered by a validated case"
+
+
+def test_block_messages_are_pure_ascii():
+    """The hook writes these to stderr for Claude Code to render.
+
+    A U+2026 ellipsis encodes to cp1252 byte 0x85, which is not valid UTF-8, so a
+    non-ASCII character here silently corrupts the one message that must be readable
+    when the gate fires.
+    """
+    from tests.runner.stop_gate import BLOCK_TEMPLATE, INVALID_CASE_TEMPLATE
+
+    for template in (BLOCK_TEMPLATE, INVALID_CASE_TEMPLATE):
+        offenders = [character for character in template if ord(character) > 127]
+        assert not offenders, f"non-ASCII in a block message: {offenders}"
+
+    truncated = decide(
+        changed_files=[f"app/mod{index}.py" for index in range(7)],
+        core_globs=["app/**"],
+        has_changed_case=False,
+        route_check_ok=True,
+    )
+    offenders = [character for character in truncated.message if ord(character) > 127]
+    assert not offenders, f"non-ASCII in the truncated message: {offenders}"
+    assert truncated.message.count("app/mod") == 5
+    assert len(truncated.matched) == 7

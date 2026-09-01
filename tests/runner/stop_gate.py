@@ -96,7 +96,9 @@ def decide(
     if not matched:
         return Decision(True, "no core path changed")
 
-    files = ", ".join(matched[:5]) + (" …" if len(matched) > 5 else "")
+    # ASCII only: this message is written to stderr for Claude Code to display, and a
+    # U+2026 ellipsis encodes to cp1252 byte 0x85, which is not valid UTF-8.
+    files = ", ".join(matched[:5]) + (" ..." if len(matched) > 5 else "")
     if not has_changed_case:
         return Decision(
             False, "core change with no case",
