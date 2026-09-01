@@ -9,6 +9,7 @@ Four buckets, four behaviours:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -55,7 +56,11 @@ def test_impl_pointer_resolves(case: Case):
     target = REPO_ROOT / file_part
     assert target.is_file(), f"case '{case.id}': impl file {file_part} does not exist"
     source = target.read_text(encoding="utf-8")
-    assert f"def {function}" in source, (
+    # Anchored at line start and followed by `(`, so a pointer to `test_confirms` is
+    # NOT satisfied by `def test_confirms_something_else`. A substring match would be
+    # a false pass in the one check whose job is catching broken case->impl links.
+    signature = re.compile(rf"^\s*(?:async\s+)?def\s+{re.escape(function)}\s*\(", re.MULTILINE)
+    assert signature.search(source), (
         f"case '{case.id}': {file_part} has no test function named '{function}'"
     )
 
