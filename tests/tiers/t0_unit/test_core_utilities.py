@@ -92,3 +92,48 @@ def test_configure_logging_installs_the_json_formatter():
     root = logging.getLogger()
     assert root.level == logging.WARNING
     assert any(isinstance(h.formatter, JsonFormatter) for h in root.handlers)
+
+
+def test_configure_logging_is_idempotent():
+    """It runs inside the app lifespan, so it fires on every contract test."""
+    configure_logging()
+    configure_logging()
+    configure_logging()
+    json_handlers = [
+        handler
+        for handler in logging.getLogger().handlers
+        if isinstance(handler.formatter, JsonFormatter)
+    ]
+    assert len(json_handlers) == 1
+
+
+def test_configure_logging_leaves_other_handlers_alone():
+    """A blanket handlers.clear() would remove pytest's caplog capture handler."""
+    root = logging.getLogger()
+    sentinel = logging.NullHandler()
+    root.addHandler(sentinel)
+    try:
+        configure_logging()
+        assert sentinel in root.handlers
+    finally:
+        root.removeHandler(sentinel)
+
+
+def test_caplog_still_captures_after_configure_logging(caplog):
+    """The concrete regression: Task 11 calls this from the lifespan, and a test that
+    then asserts on log output must not silently see nothing."""
+    configure_logging(level="INFO")
+    with caplog.at_level(logging.INFO):
+        logging.getLogger("app.probe").info("after configuration")
+    assert "after configuration" in caplog.text
+
+
+def test_json_formatter_includes_stack_info():
+    formatter = JsonFormatter()
+    record = logging.LogRecord(
+        name="app.test", level=logging.WARNING, pathname=__file__, lineno=1,
+        msg="suspicious", args=(), exc_info=None,
+    )
+    record.stack_info = "Stack (most recent call last):\n  probe"
+    payload = json.loads(formatter.format(record))
+    assert "probe" in payload["stack_info"]
