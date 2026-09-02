@@ -1069,6 +1069,7 @@ class UserRole(str, enum.Enum):
 role_column = Enum(
     UserRole,
     native_enum=False,
+    create_constraint=True,
     length=20,
     values_callable=lambda enum_class: [member.value for member in enum_class],
 )
@@ -1434,7 +1435,7 @@ def test_a_department_belongs_to_one_clinic():
     """Cardiology at Riverside is a different unit from Cardiology at Northgate."""
     assert not Department.__table__.c.clinic_id.nullable
     names = {c.name for c in Department.__table__.constraints}
-    assert "uq_departments_clinic_id" in names
+    assert "uq_departments_clinic_id_name" in names
 
 
 def test_providers_and_departments_are_many_to_many():
@@ -1543,6 +1544,7 @@ class SlotStatus(str, enum.Enum):
 slot_status_column = Enum(
     SlotStatus,
     native_enum=False,
+    create_constraint=True,
     length=16,
     values_callable=lambda enum_class: [member.value for member in enum_class],
 )
@@ -1568,7 +1570,11 @@ class Department(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(200))
 
-    __table_args__ = (UniqueConstraint("clinic_id", "name"),)
+    # Named explicitly: the naming convention interpolates only column_0_name, so the
+    # default would be `uq_departments_clinic_id` for a constraint covering both.
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "name", name="uq_departments_clinic_id_name"),
+    )
 
 
 class Provider(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -1810,9 +1816,16 @@ class WaitlistStatus(str, enum.Enum):
 
 
 def _enum_column(enum_class: type[enum.Enum], length: int) -> Enum:
+    """VARCHAR + CHECK, not a native enum.
+
+    `create_constraint=True` is required: SQLAlchemy 2.0 defaults it to False, which
+    emits a bare VARCHAR that accepts any string — the exact validation this choice
+    exists to preserve.
+    """
     return Enum(
         enum_class,
         native_enum=False,
+        create_constraint=True,
         length=length,
         values_callable=lambda cls: [member.value for member in cls],
     )

@@ -146,8 +146,11 @@ registries the harness's meta-tests will enumerate in Week 3.
 
 Ten tables. Conventions: UUID primary keys (stable across event payloads, no sequence
 contention); `DateTime(timezone=True)` throughout with `created_at`/`updated_at` on every
-table; status columns as `Enum(..., native_enum=False)`, i.e. `VARCHAR` + `CHECK`, because
-native Postgres enums are painful to alter in migrations.
+table; status columns as `Enum(..., native_enum=False, create_constraint=True)`, i.e. `VARCHAR`
++ `CHECK`, because native Postgres enums are painful to alter in migrations.
+`create_constraint=True` is not optional: SQLAlchemy 2.0 defaults it to `False`, which
+emits a bare `VARCHAR` accepting any string — keeping the migration-friendliness while
+silently discarding the validation.
 
 | Table | Key columns | Notes |
 |---|---|---|
