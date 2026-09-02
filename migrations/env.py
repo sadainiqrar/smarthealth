@@ -20,6 +20,41 @@ from app.settings import Settings
 config = context.config
 target_metadata = Base.metadata
 
+#: Objects Alembic cannot diff reliably, excluded from autogenerate comparison.
+#:
+#: The Enum CHECKs: SQLAlchemy's metadata renders them as an unexpanded post-compile
+#: placeholder (`role IN (__[POSTCOMPILE_param_1])`) while Postgres stores
+#: `(role)::text = ANY (ARRAY[...])`. Alembic cannot match the two textual forms and
+#: proposes dropping them on every run - verified to happen even for a database built
+#: by `Base.metadata.create_all()` with no migration involved.
+#:
+#: The partial index: a `WHERE`-clause index has no SQLAlchemy metadata equivalent, so
+#: autogenerate always sees it as unmanaged.
+#:
+#: Each of these is covered by an integration test that proves the database actually
+#: enforces it, so excluding them from the diff loses no real coverage - and keeps
+#: `alembic check` meaningful for everything else.
+UNMANAGED_CHECK_CONSTRAINTS = frozenset(
+    {
+        "ck_users_userrole",
+        "ck_provider_slots_slotstatus",
+        "ck_appointments_appointmentstatus",
+        "ck_visits_visitstatus",
+        "ck_waitlist_entries_waitliststatus",
+    }
+)
+
+UNMANAGED_INDEXES = frozenset({"ux_appointments_live_slot"})
+
+
+def include_object(object_, name, type_, reflected, compare_to) -> bool:
+    """Exclude objects autogenerate cannot compare, so real drift stays visible."""
+    if type_ == "check_constraint" and name in UNMANAGED_CHECK_CONSTRAINTS:
+        return False
+    if type_ == "index" and name in UNMANAGED_INDEXES:
+        return False
+    return True
+
 
 def _database_url() -> str:
     return Settings().postgres_dsn
@@ -32,6 +67,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -39,7 +75,10 @@ def run_migrations_offline() -> None:
 
 def _run(connection: Connection) -> None:
     context.configure(
-        connection=connection, target_metadata=target_metadata, compare_type=True
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
