@@ -175,6 +175,13 @@ native Postgres enums are painful to alter in migrations.
 
 `version` is an optimistic-concurrency counter for the Week 2 workflow.
 
+**`updated_at` needs a database trigger, not the ORM default.** Verified against the
+live database: `onupdate=func.now()` fires on an ORM flush but **not** on a raw
+`text("UPDATE ...")`. Since §3.2's atomic slot claim is exactly such a raw conditional
+update, the baseline migration installs a `BEFORE UPDATE` trigger on every table
+carrying `updated_at`. A trigger also covers hand-written statements and data
+migrations, which a coding convention cannot.
+
 **Refinement from the approved sketch:** slots do **not** carry `appointment_id`. Having both
 `slots.appointment_id` and `appointments.slot_id` is a circular reference with two sources of
 truth that can disagree. The link lives on `appointments.slot_id`, guarded by a partial unique

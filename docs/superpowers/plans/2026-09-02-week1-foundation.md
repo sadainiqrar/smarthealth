@@ -2097,6 +2097,34 @@ At the **end** of `upgrade()`:
         """
     )
 
+    # `onupdate=func.now()` is a SQLAlchemy-level construct: verified against the live
+    # database, it fires for an ORM flush but NOT for a raw `text("UPDATE ...")`. Week
+    # 2's booking activity claims a slot with exactly such a raw conditional UPDATE, so
+    # without this trigger `updated_at` would go silently stale on the single most
+    # important write in the system. A trigger also covers every future hand-written
+    # statement and data migration, which a convention cannot.
+    op.execute(
+        """
+        CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
+        BEGIN
+            NEW.updated_at = now();
+            RETURN NEW;
+        END;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    for table in (
+        "users", "patients", "providers", "clinics", "departments",
+        "provider_slots", "appointments", "visits", "waitlist_entries",
+    ):
+        op.execute(
+            f"""
+            CREATE TRIGGER trg_{table}_updated_at
+            BEFORE UPDATE ON {table}
+            FOR EACH ROW EXECUTE FUNCTION set_updated_at()
+            """
+        )
+
     # At most one *live* appointment may hold a slot. This makes the invariant a
     # database guarantee rather than a consequence of the booking activity being
     # written correctly.
@@ -2112,6 +2140,12 @@ At the **end** of `upgrade()`:
 At the **start** of `downgrade()`:
 
 ```python
+    for table in (
+        "users", "patients", "providers", "clinics", "departments",
+        "provider_slots", "appointments", "visits", "waitlist_entries",
+    ):
+        op.execute(f"DROP TRIGGER IF EXISTS trg_{table}_updated_at ON {table}")
+    op.execute("DROP FUNCTION IF EXISTS set_updated_at()")
     op.execute("DROP INDEX IF EXISTS ux_appointments_live_slot")
     op.execute(
         "ALTER TABLE provider_slots DROP CONSTRAINT IF EXISTS ck_provider_slots_no_overlap"
@@ -3013,6 +3047,35 @@ async def test_a_cancelled_appointment_frees_the_slot_for_a_new_one(db_session):
     await db_session.flush()  # must not raise
 
 
+async def test_a_raw_update_still_bumps_updated_at(db_session):
+    """`onupdate=func.now()` does not fire for raw SQL - verified against the live
+    database. Week 2's booking activity claims a slot with a raw conditional UPDATE,
+    so a trigger, not the ORM default, is what keeps updated_at honest."""
+    clinic, provider = await _clinic_and_provider(db_session)
+    slot = ProviderSlot(
+        provider_id=provider.id, clinic_id=clinic.id,
+        starts_at=BASE_TIME, ends_at=BASE_TIME + timedelta(minutes=30),
+    )
+    db_session.add(slot)
+    await db_session.flush()
+    before = (
+        await db_session.execute(
+            text("SELECT updated_at FROM provider_slots WHERE id = :id"), {"id": slot.id}
+        )
+    ).scalar_one()
+
+    await db_session.execute(
+        text("UPDATE provider_slots SET status = 'held' WHERE id = :id"), {"id": slot.id}
+    )
+    after = (
+        await db_session.execute(
+            text("SELECT updated_at FROM provider_slots WHERE id = :id"), {"id": slot.id}
+        )
+    ).scalar_one()
+
+    assert after > before, "the BEFORE UPDATE trigger did not fire on a raw UPDATE"
+
+
 async def test_an_appointment_defaults_to_pending(db_session):
     """Confirmed is reachable only after the workflow succeeds; the database default
     must never be 'confirmed'."""
@@ -3056,7 +3119,7 @@ async def test_the_atomic_slot_claim_returns_zero_rows_when_already_held(db_sess
 - [ ] **Step 2: Run against the live stack**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t3_integration/test_schema.py -v`
-Expected: 10 passed. First run creates and migrates a per-run database, so it takes a few
+Expected: 11 passed. First run creates and migrates a per-run database, so it takes a few
 seconds longer.
 
 If `test_overlapping_slots_for_one_provider_are_rejected` fails with *no* IntegrityError,
