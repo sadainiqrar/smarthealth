@@ -42,8 +42,9 @@ Kafka + Schema Registry · Temporal
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e ".[dev]"       # Windows
-# source .venv/bin/activate && pip install -e ".[dev]"    # POSIX
+source .venv/Scripts/activate     # Windows (Git Bash);  .venv\Scripts\Activate.ps1 in PowerShell
+# source .venv/bin/activate       # POSIX
+pip install -e ".[dev]"
 
 python -m pytest -m "not docker"    # fast tests, no containers
 

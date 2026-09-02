@@ -31,6 +31,12 @@ StepHandler = Callable[[Step, CaseContext, str], Awaitable[None]]
 async def _run_api_step(step: Step, ctx: CaseContext, where: str) -> None:
     spec = step.api
     assert spec is not None
+    if spec.role is not None:
+        raise NotImplementedError(
+            f"{where}: `as: {spec.role}` has no engine support yet - the request would "
+            f"be sent unauthenticated, so an authz case would pass without testing "
+            f"authz. Implement role-based auth in the engine, or drop `as:` from the case."
+        )
     response = await ctx.api.request(
         spec.method, spec.path, json=spec.body, headers=spec.headers
     )

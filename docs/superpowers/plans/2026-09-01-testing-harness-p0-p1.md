@@ -602,6 +602,10 @@ class ApiExpect(BaseModel):
     status: int | None = None
     json_contains: dict[str, Any] | None = None
 
+    def asserts_something(self) -> bool:
+        """A status code or a non-empty body check. `{}` declares nothing."""
+        return self.status is not None or bool(self.json_contains)
+
 
 class ApiStep(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -657,6 +661,9 @@ class DbExpect(BaseModel):
     count: int | None = None
     where: dict[str, Any] | None = None
 
+    def asserts_something(self) -> bool:
+        return self.count is not None or bool(self.where)
+
 
 class EventExpect(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -698,6 +705,18 @@ class Expect(BaseModel):
         # `type(self).model_fields` — accessing model_fields on an instance is
         # deprecated in pydantic 2.11+.
         return {name for name in type(self).model_fields if getattr(self, name) is not None}
+
+    def asserts_something(self) -> bool:
+        """Whether this block declares at least one real check.
+
+        `expect: {}` and `expect: { api: {} }` are syntactically valid but assert
+        nothing - the anti-stub rule must not accept them.
+        """
+        if self.api is not None and self.api.asserts_something():
+            return True
+        if self.db and any(entry.asserts_something() for entry in self.db.values()):
+            return True
+        return bool(self.events or self.traces or self.metrics or self.invariants)
 
 
 class Judge(BaseModel):
@@ -961,25 +980,35 @@ Also add this helper method to `class Case`, immediately after the `step_kinds` 
         """Whether this case checks anything at all.
 
         A per-step `expect`, a case-level `expect`, or an `await` step (which fails
-        on timeout) all count. Nothing else does — emitting an event or calling an
-        endpoint without checking the outcome asserts nothing.
+        on timeout) all count - but only if the expectation actually declares a
+        check. An empty `expect: {}` looks like an assertion and is not one.
         """
-        if self.expect is not None:
+        if self.expect is not None and self.expect.asserts_something():
             return True
         for step in self.steps:
             if step.kind == "await":
                 return True
-            if step.kind == "api" and step.api is not None and step.api.expect is not None:
+            if (
+                step.kind == "api"
+                and step.api is not None
+                and step.api.expect is not None
+                and step.api.expect.asserts_something()
+            ):
                 return True
         return False
 ```
 
-`_has_assertion` is called from a `model_validator(mode="after")`, so `self` is fully constructed and `step.kind` is safe.
+`_has_assertion` is called from a `model_validator(mode="after")`, so `self` is fully constructed and `step.kind` is safe. It relies on `ApiExpect.asserts_something()`, `DbExpect.asserts_something()`, and `Expect.asserts_something()` (defined on those classes in Task 4) so that an expectation which is present but empty — `expect: {}`, `expect: { api: {} }`, a per-step `expect: {}`, or `json_contains: {}` — does not satisfy the anti-stub rule. Discovered in a later holistic review: `_has_assertion` originally checked only `self.expect is not None` / `step.api.expect is not None`, so a case with `expect: { api: {} }` validated, routed declarative, executed a real HTTP request, and asserted nothing — the exact hole the anti-stub rule exists to close. Tests for this live in `tests/tiers/t0_unit/test_case_schema_rules.py` (`test_an_empty_case_level_expect_does_not_count_as_an_assertion` and five siblings).
 
 - [ ] **Step 4: Run both schema test files to verify they pass**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit -v`
-Expected: 26 passed (4 settings + 8 schema + 14 rules)
+Expected: 33 passed (4 settings + 8 schema + 21 rules). The 21 rules tests are the
+original 14 plus 7 added by a later holistic-review fix for the "declares no check"
+hole: 5 new rejection cases (empty case-level `expect`, empty `api` expect, empty
+per-step `expect`, empty `json_contains`, and a `db` expectation with no predicate)
+and 2 new acceptance cases (a real `db` expectation, a real `events` expectation) —
+see `tests/tiers/t0_unit/test_case_schema_rules.py`.
 
 - [ ] **Step 5: Commit**
 
@@ -1395,6 +1424,12 @@ StepHandler = Callable[[Step, CaseContext, str], Awaitable[None]]
 async def _run_api_step(step: Step, ctx: CaseContext, where: str) -> None:
     spec = step.api
     assert spec is not None
+    if spec.role is not None:
+        raise NotImplementedError(
+            f"{where}: `as: {spec.role}` has no engine support yet - the request would "
+            f"be sent unauthenticated, so an authz case would pass without testing "
+            f"authz. Implement role-based auth in the engine, or drop `as:` from the case."
+        )
     response = await ctx.api.request(
         spec.method, spec.path, json=spec.body, headers=spec.headers
     )
@@ -1460,13 +1495,39 @@ def _assert_contains(actual: Any, expected: dict[str, Any], where: str, path: st
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t0_unit/test_engine.py -v`
-Expected: 7 passed
+Expected: 8 passed (7 original plus `test_role_on_a_step_fails_loudly_until_auth_is_implemented`,
+added by a later holistic-review fix — see below)
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add tests/runner/engine.py tests/tiers/t0_unit/test_engine.py
 git commit -m "feat: declarative case step engine with dispatch registries"
+```
+
+- [ ] **Step 6 (later holistic-review fix): guard `as: <role>` until auth exists**
+
+`ApiStep.role` (aliased `as:`) is schema-legal — the design spec's own example uses
+`as: patient` — but `_run_api_step` above never read it, only forwarding `method`,
+`path`, `body`, `headers`. Once Week 1 adds role-based auth, a case written
+`as: patient` would silently send an **unauthenticated** request and likely still
+pass, manufacturing false confidence that authz is covered. Fixed by the `if
+spec.role is not None: raise NotImplementedError(...)` guard already folded into
+`_run_api_step` above — same fail-loudly pattern as an unsupported step/expectation
+kind. Add to `tests/tiers/t0_unit/test_engine.py`:
+
+```python
+async def test_role_on_a_step_fails_loudly_until_auth_is_implemented():
+    """`as: patient` must not silently send an unauthenticated request."""
+    case = Case.model_validate({
+        "id": "sys-027-role", "title": "Role", "tier": "contract",
+        "steps": [{"api": {"path": "/health", "as": "patient",
+                           "expect": {"status": 200}}}],
+    })
+    async with make_client(lambda request: httpx.Response(200, json={})) as client:
+        with pytest.raises(NotImplementedError) as exc:
+            await run_case(case, CaseContext(api=client))
+    assert "as: patient" in str(exc.value)
 ```
 
 ---
@@ -3846,6 +3907,10 @@ Design: [`docs/superpowers/specs/2026-09-01-testing-harness-design.md`](../docs/
 
 ## Running
 
+All commands assume the project virtualenv is active (`source .venv/Scripts/activate` on
+Windows in Git Bash, `source .venv/bin/activate` on POSIX). Without it the ambient
+interpreter may lack pytest and PyYAML.
+
 ```bash
 python -m pytest -m "not docker"          # fast lane: T0, T1, meta — no containers
 python -m pytest -m docker                # T3/T4 — needs the compose test stack
@@ -3878,7 +3943,10 @@ metadata, self-validates, and picks the tier.
 Rules worth knowing before writing one:
 
 - A case must declare `steps` or `impl`, or be `status: blocked` with a `blocked_on`
-  reason. A case that asserts nothing is a hard validation error, never a silent skip.
+  reason. A case that asserts nothing is a hard validation error, never a silent skip —
+  and "asserts nothing" is checked on substance, not presence: `expect: {}` and
+  `expect: { api: {} }` are syntactically valid but declare no check, so they are
+  rejected the same as a missing `expect` (a later holistic-review fix; see Task 5).
 - `id` must equal the filename stem.
 - `requirement` should always be filled in — `tests/reports/traceability.md` is generated
   from it and is a graded deliverable.
@@ -3955,8 +4023,9 @@ application implementation starts with Week 1.
 
 ```bash
 python -m venv .venv
-.venv/Scripts/python.exe -m pip install -e ".[dev]"       # Windows
-# source .venv/bin/activate && pip install -e ".[dev]"    # POSIX
+source .venv/Scripts/activate     # Windows (Git Bash);  .venv\Scripts\Activate.ps1 in PowerShell
+# source .venv/bin/activate       # POSIX
+pip install -e ".[dev]"
 
 python -m pytest -m "not docker"    # fast tests, no containers
 
@@ -3966,6 +4035,16 @@ python -m pytest -m docker          # tests that need infrastructure
 
 See [`tests/README.md`](tests/README.md) for the tier model and how to author a test case.
 ````
+
+**Later holistic-review fix:** the original block above documented bare
+`.venv/Scripts/python.exe -m pip install ...` for Windows setup but then dropped to
+unqualified `python` for every later command, and gave a venv-activation line only for
+POSIX. On Windows the ambient `python` is commonly Miniconda or a system install with
+neither `pytest` nor `PyYAML`, so a reader following the README literally hit
+`No module named pytest` on the first documented command. Fixed by adding the Windows
+Git-Bash activation line (`source .venv/Scripts/activate`) so every later command in the
+block runs against the venv's interpreter, matching what `tests/README.md`'s `## Running`
+section now also states explicitly.
 
 Also add two rows to the documentation table:
 

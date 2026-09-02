@@ -43,6 +43,10 @@ class ApiExpect(BaseModel):
     status: int | None = None
     json_contains: dict[str, Any] | None = None
 
+    def asserts_something(self) -> bool:
+        """A status code or a non-empty body check. `{}` declares nothing."""
+        return self.status is not None or bool(self.json_contains)
+
 
 class ApiStep(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
@@ -98,6 +102,9 @@ class DbExpect(BaseModel):
     count: int | None = None
     where: dict[str, Any] | None = None
 
+    def asserts_something(self) -> bool:
+        return self.count is not None or bool(self.where)
+
 
 class EventExpect(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -139,6 +146,18 @@ class Expect(BaseModel):
         # `type(self).model_fields` — accessing model_fields on an instance is
         # deprecated in pydantic 2.11+.
         return {name for name in type(self).model_fields if getattr(self, name) is not None}
+
+    def asserts_something(self) -> bool:
+        """Whether this block declares at least one real check.
+
+        `expect: {}` and `expect: { api: {} }` are syntactically valid but assert
+        nothing - the anti-stub rule must not accept them.
+        """
+        if self.api is not None and self.api.asserts_something():
+            return True
+        if self.db and any(entry.asserts_something() for entry in self.db.values()):
+            return True
+        return bool(self.events or self.traces or self.metrics or self.invariants)
 
 
 class Judge(BaseModel):
@@ -213,15 +232,20 @@ class Case(BaseModel):
         """Whether this case checks anything at all.
 
         A per-step `expect`, a case-level `expect`, or an `await` step (which fails
-        on timeout) all count. Nothing else does — emitting an event or calling an
-        endpoint without checking the outcome asserts nothing.
+        on timeout) all count - but only if the expectation actually declares a
+        check. An empty `expect: {}` looks like an assertion and is not one.
         """
-        if self.expect is not None:
+        if self.expect is not None and self.expect.asserts_something():
             return True
         for step in self.steps:
             if step.kind == "await":
                 return True
-            if step.kind == "api" and step.api is not None and step.api.expect is not None:
+            if (
+                step.kind == "api"
+                and step.api is not None
+                and step.api.expect is not None
+                and step.api.expect.asserts_something()
+            ):
                 return True
         return False
 

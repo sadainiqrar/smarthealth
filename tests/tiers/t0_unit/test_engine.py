@@ -99,6 +99,19 @@ async def test_unsupported_step_kind_fails_loudly():
     assert "emit" in str(exc.value)
 
 
+async def test_role_on_a_step_fails_loudly_until_auth_is_implemented():
+    """`as: patient` must not silently send an unauthenticated request."""
+    case = Case.model_validate({
+        "id": "sys-027-role", "title": "Role", "tier": "contract",
+        "steps": [{"api": {"path": "/health", "as": "patient",
+                           "expect": {"status": 200}}}],
+    })
+    async with make_client(lambda request: httpx.Response(200, json={})) as client:
+        with pytest.raises(NotImplementedError) as exc:
+            await run_case(case, CaseContext(api=client))
+    assert "as: patient" in str(exc.value)
+
+
 async def test_case_level_expect_api_is_asserted_against_the_last_response():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "ok"})

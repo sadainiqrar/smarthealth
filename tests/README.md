@@ -4,6 +4,10 @@ Design: [`docs/superpowers/specs/2026-09-01-testing-harness-design.md`](../docs/
 
 ## Running
 
+All commands assume the project virtualenv is active (`source .venv/Scripts/activate` on
+Windows in Git Bash, `source .venv/bin/activate` on POSIX). Without it the ambient
+interpreter may lack pytest and PyYAML.
+
 ```bash
 python -m pytest -m "not docker"          # fast lane: T0, T1, meta — no containers
 python -m pytest -m docker                # T3/T4 — needs the compose test stack
@@ -40,7 +44,9 @@ Two rules keep the catalog honest, and both are hard validation errors:
 1. A case must declare `steps` or `impl`, or be `status: blocked` with a `blocked_on` reason.
 2. **A case must assert something** — a case-level `expect`, a per-step `expect`, or an
    `await` step. Declaring `steps` is not enough: an `api` step with no `expect` fires a
-   real request and checks nothing, so a 500 response would pass.
+   real request and checks nothing, so a 500 response would pass. The expectation must
+   also declare a real check, not merely be present — `expect: {}` and `expect: { api: {} }`
+   validate as a shape but assert nothing, and are rejected the same as a missing `expect`.
 
 Also:
 
@@ -59,13 +65,14 @@ The engine implements the `api` step kind and the `api` expectation kind. `emit`
 expectations are authorable now and raise `NotImplementedError` when run, until their phase
 lands.
 
-Two sharp edges in `json_contains` worth knowing:
+Two sharp edges worth knowing:
 
 - A **list-valued** expectation is an exact-equality check, not a subset check. Expecting
   `{"items": [{"id": 1}]}` fails against `[{"id": 1}, {"id": 2}]`. It fails loudly and
   clearly, but it is not "contains".
-- An **empty-dict** expectation (`{"meta": {}}`) asserts only that the value is an object —
-  no field is checked. Avoid it; it looks like an assertion and is not one.
+- An **empty expectation** — `expect: {}`, `expect: { api: {} }`, a per-step `expect: {}`,
+  or `json_contains: {}` — is rejected by the schema. An expectation that declares no
+  check looks like an assertion and is not one.
 
 ## Isolation
 

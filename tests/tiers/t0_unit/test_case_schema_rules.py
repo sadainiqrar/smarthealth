@@ -112,3 +112,77 @@ def test_blocked_case_is_exempt_from_the_assertion_rule():
         {**BASE, "status": "blocked", "blocked_on": "engine support lands in P4"}
     )
     assert case.status == "blocked"
+
+
+def test_an_empty_case_level_expect_does_not_count_as_an_assertion():
+    """`expect: {}` is syntactically valid and declares nothing."""
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate(
+            {**BASE, "steps": [{"api": {"path": "/health"}}], "expect": {}}
+        )
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_an_empty_api_expect_does_not_count_as_an_assertion():
+    """The exact shape a reviewer proved would execute a real request and check nothing."""
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate(
+            {**BASE, "steps": [{"api": {"path": "/health"}}], "expect": {"api": {}}}
+        )
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_an_empty_per_step_expect_does_not_count_as_an_assertion():
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate(
+            {**BASE, "steps": [{"api": {"path": "/health", "expect": {}}}]}
+        )
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_an_empty_json_contains_does_not_count_as_an_assertion():
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate(
+            {
+                **BASE,
+                "steps": [{"api": {"path": "/health", "expect": {"json_contains": {}}}}],
+            }
+        )
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_a_db_expectation_with_no_predicate_does_not_count():
+    with pytest.raises(ValidationError) as exc:
+        Case.model_validate(
+            {
+                **BASE,
+                "tier": "integration",
+                "steps": [{"api": {"path": "/health"}}],
+                "expect": {"db": {"appointments": {}}},
+            }
+        )
+    assert "asserts nothing" in str(exc.value)
+
+
+def test_a_real_db_expectation_counts():
+    case = Case.model_validate(
+        {
+            **BASE,
+            "tier": "integration",
+            "steps": [{"api": {"path": "/health"}}],
+            "expect": {"db": {"appointments": {"count": 1}}},
+        }
+    )
+    assert case.expect.db["appointments"].count == 1
+
+
+def test_a_non_empty_events_expectation_counts():
+    case = Case.model_validate(
+        {
+            **BASE,
+            "tier": "integration",
+            "steps": [{"api": {"path": "/health"}}],
+            "expect": {"events": [{"topic": "appointments.booked", "count": 1}]},
+        }
+    )
+    assert case.expect.events[0].topic == "appointments.booked"
