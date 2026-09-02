@@ -7,17 +7,17 @@ from app.settings import Settings
 pytestmark = pytest.mark.unit
 
 
-def test_mongo_client_is_built_without_connecting():
-    """Motor connects lazily; the T1 lane must not require a running Mongo."""
+async def test_mongo_client_is_built_without_connecting():
+    """PyMongo's async client connects lazily; the T1 lane must not require a running Mongo."""
     settings = Settings(mongo_host="203.0.113.1", mongo_port=1, mongo_db="sh_test")
     client = create_mongo_client(settings)
     try:
         assert client is not None
     finally:
-        client.close()
+        await client.close()
 
 
-def test_audit_collection_is_selected_from_the_configured_database():
+async def test_audit_collection_is_selected_from_the_configured_database():
     settings = Settings(mongo_db="sh_run_db")
     client = create_mongo_client(settings)
     try:
@@ -25,7 +25,7 @@ def test_audit_collection_is_selected_from_the_configured_database():
         assert collection.name == AUDIT_COLLECTION
         assert collection.database.name == "sh_run_db"
     finally:
-        client.close()
+        await client.close()
 
 
 def test_redis_client_is_built_without_connecting():

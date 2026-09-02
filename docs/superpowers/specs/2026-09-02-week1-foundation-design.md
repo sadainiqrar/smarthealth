@@ -210,6 +210,31 @@ processing" — expressed in the schema rather than left to a service method.
 Rescheduling inserts a **new** row with `rescheduled_from_id` pointing at the old one, which
 moves to `rescheduled`. History is preserved; the audit trail and analytics both need it.
 
+## 5.3 What the database cannot enforce — Week 2's contract
+
+Composite foreign keys make a slot claim *coherent* (the slot's provider and clinic must
+match the appointment's). Three further invariants have no schema expression and must be
+upheld by the booking, cancellation, and visit workflows. They are recorded here because
+an invariant nobody wrote down is an invariant nobody maintains.
+
+**1. Releasing a slot is a paired write.** `provider_slots.status` and appointment
+liveness are two independently-writable facts. Verified: moving an appointment to
+`rescheduled` frees it from the partial unique index — a second appointment may then
+claim that `slot_id` — but the slot's own `status` stays `booked`, so it never reappears
+in the `status = 'free'` query that booking actually uses. Every cancel, reschedule,
+no-show and completion path must flip the appointment status **and** release the slot in
+one transaction. This deserves an explicit integration test, not a convention.
+
+**2. A slot in the past is still bookable.** Nothing stops an appointment claiming a slot
+whose `starts_at` has already passed. A `CHECK (starts_at > now())` is not available —
+Postgres requires check constraints to be immutable, and `now()` is not. The booking
+activity must reject past slots itself.
+
+**3. The optimistic-concurrency counter is not self-maintaining.** `provider_slots.version`
+exists but nothing increments it. The atomic claim must be
+`SET status = 'held', version = version + 1 WHERE id = :id AND status = 'free'`, not a
+status flip alone, or the column is decoration.
+
 ## 6. Tooling
 
 | Concern | Choice | Why |
