@@ -16,7 +16,10 @@ from app.settings import Settings
 pytestmark = pytest.mark.unit
 
 SETTINGS = Settings(jwt_secret="unit-test-secret", jwt_expiry_minutes=30)
-NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+#: Anchored to the real clock, not a fixed date. `decode_access_token` validates
+#: `exp` against wall-clock time, so a hardcoded NOW makes every token-validity test
+#: depend on what time of day the suite happens to run — and eventually fail forever.
+NOW = datetime.now(UTC)
 
 
 def test_password_hash_round_trips():
@@ -95,3 +98,22 @@ def test_user_roles_are_exactly_the_four_the_requirements_name():
     assert {role.value for role in UserRole} == {
         "patient", "provider", "front_desk", "admin"
     }
+
+
+def test_a_naive_now_is_rejected():
+    """`datetime.timestamp()` reads a naive value as local time, silently shifting
+    the token's lifetime by the machine's UTC offset."""
+    with pytest.raises(ValueError, match="timezone-aware"):
+        create_access_token(
+            subject="u1", role=UserRole.PATIENT, settings=SETTINGS,
+            now=datetime(2026, 9, 2, 12, 0),
+        )
+
+
+def test_an_unparseable_stored_hash_is_a_failed_login_not_a_crash():
+    """A corrupted column must not turn a login into a 500 that leaks a stack trace."""
+    assert verify_password("anything", "not-a-hash") is False
+
+
+def test_an_empty_stored_hash_is_a_failed_login():
+    assert verify_password("anything", "") is False

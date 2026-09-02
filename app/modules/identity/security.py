@@ -6,16 +6,19 @@ implicit clock — so expiry and tampering can be tested without patching anythi
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 from app.modules.identity.models import UserRole
 from app.settings import Settings
 
 _password_hash = PasswordHash.recommended()
+_logger = logging.getLogger(__name__)
 
 
 class InvalidToken(Exception):
@@ -33,7 +36,18 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return _password_hash.verify(password, hashed)
+    """Check a password against a stored hash.
+
+    An unparseable stored hash counts as a failed verification, not an exception: a
+    corrupted column must not turn a login into a 500 that leaks a stack trace and
+    signals to an attacker that this account differs from the others. The corruption
+    is logged so it stays visible.
+    """
+    try:
+        return _password_hash.verify(password, hashed)
+    except UnknownHashError:
+        _logger.warning("stored password hash is unparseable; treating as a failed login")
+        return False
 
 
 def create_access_token(
@@ -44,6 +58,11 @@ def create_access_token(
     now: datetime,
     expires_in: timedelta | None = None,
 ) -> str:
+    if now.tzinfo is None:
+        raise ValueError(
+            "`now` must be timezone-aware: datetime.timestamp() reads a naive value as "
+            "local time, which silently shifts the token's lifetime by the UTC offset"
+        )
     lifetime = expires_in or timedelta(minutes=settings.jwt_expiry_minutes)
     payload = {
         "sub": subject,
@@ -57,9 +76,10 @@ def create_access_token(
 def decode_access_token(token: str, *, settings: Settings) -> TokenClaims:
     try:
         # verify_iat=False: PyJWT checks "iat" against the real wall clock with zero
-        # leeway, which would make every test that mints a token from a fixed `now`
-        # flaky against clock skew between the issuer and the machine running the
-        # test. Expiry (which matters for real security) is still enforced via "exp".
+        # leeway. That's fragile against ordinary clock skew between the machine that
+        # issued the token and the machine validating it — a few seconds of drift
+        # would reject a perfectly good token. Token lifetime is controlled by "exp",
+        # not "iat", and "exp" is still fully enforced below.
         payload = jwt.decode(
             token,
             settings.jwt_secret,
