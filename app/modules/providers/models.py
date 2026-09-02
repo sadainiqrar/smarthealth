@@ -37,9 +37,12 @@ class SlotStatus(str, enum.Enum):
     BLOCKED = "blocked"
 
 
+#: VARCHAR + CHECK, not a native enum. `create_constraint=True` is required —
+#: SQLAlchemy 2.0 defaults it to False, leaving a bare VARCHAR that accepts anything.
 slot_status_column = Enum(
     SlotStatus,
     native_enum=False,
+    create_constraint=True,
     length=16,
     values_callable=lambda enum_class: [member.value for member in enum_class],
 )
@@ -65,7 +68,9 @@ class Department(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     name: Mapped[str] = mapped_column(String(200))
 
-    __table_args__ = (UniqueConstraint("clinic_id", "name"),)
+    __table_args__ = (
+        UniqueConstraint("clinic_id", "name", name="uq_departments_clinic_id_name"),
+    )
 
 
 class Provider(Base, UUIDPrimaryKeyMixin, TimestampMixin):

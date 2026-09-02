@@ -5,6 +5,7 @@ from app.modules.providers.models import (
     Clinic,
     Department,
     Provider,
+    ProviderSlot,
     provider_departments,
 )
 
@@ -30,7 +31,7 @@ def test_a_department_belongs_to_one_clinic():
     """Cardiology at Riverside is a different unit from Cardiology at Northgate."""
     assert not Department.__table__.c.clinic_id.nullable
     names = {c.name for c in Department.__table__.constraints}
-    assert "uq_departments_clinic_id" in names
+    assert "uq_departments_clinic_id_name" in names
 
 
 def test_providers_and_departments_are_many_to_many():
@@ -49,3 +50,28 @@ def test_tables_are_named_as_expected():
     assert Clinic.__tablename__ == "clinics"
     assert Department.__tablename__ == "departments"
     assert Provider.__tablename__ == "providers"
+
+
+def _ddl(table) -> str:
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.schema import CreateTable
+
+    return str(CreateTable(table).compile(dialect=postgresql.dialect()))
+
+
+def test_slot_status_is_constrained_at_the_database_level():
+    """`native_enum=False` alone emits a bare VARCHAR: SQLAlchemy 2.0 defaults
+    create_constraint to False, so without it the database accepts any string."""
+    ddl = _ddl(ProviderSlot.__table__)
+    assert "CHECK" in ddl
+    for value in ("free", "held", "booked", "blocked"):
+        assert f"'{value}'" in ddl
+
+
+def test_user_role_is_constrained_at_the_database_level():
+    from app.modules.identity.models import User
+
+    ddl = _ddl(User.__table__)
+    assert "CHECK" in ddl
+    for value in ("patient", "provider", "front_desk", "admin"):
+        assert f"'{value}'" in ddl

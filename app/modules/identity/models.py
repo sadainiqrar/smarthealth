@@ -24,9 +24,12 @@ class UserRole(str, enum.Enum):
 
 #: VARCHAR + CHECK rather than a native Postgres enum: adding a value to a native
 #: enum requires ALTER TYPE, which cannot run inside a transactional migration.
+#: `create_constraint=True` is required — SQLAlchemy 2.0 defaults it to False, which
+#: would leave a bare VARCHAR accepting any string.
 role_column = Enum(
     UserRole,
     native_enum=False,
+    create_constraint=True,
     length=20,
     values_callable=lambda enum_class: [member.value for member in enum_class],
 )
