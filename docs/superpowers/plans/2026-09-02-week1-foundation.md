@@ -145,10 +145,26 @@ def test_postgres_admin_url_targets_the_maintenance_database():
     )
 
 
-def test_credentials_with_reserved_characters_are_url_encoded():
-    """An unencoded '@' or '/' in a password silently corrupts the DSN's authority."""
-    settings = Settings(postgres_user="a/b", postgres_password="p@ss word")
-    assert "a%2Fb:p%40ss+word@" in settings.postgres_dsn
+def test_credentials_round_trip_through_a_url_parser():
+    """Assert on what a parser reads back, not on an encoded substring.
+
+    Asserting the literal text `p%40ss+word` would codify a bug: `quote_plus` encodes
+    a space as `+`, and a URL parser reads that back as a literal plus, silently
+    yielding a different password.
+    """
+    from sqlalchemy.engine import make_url
+
+    for password in ("p@ss word", "p/ss", "p:ss", "p#ss", "p?ss", "pa+ss", "pässword"):
+        settings = Settings(postgres_user="a/b", postgres_password=password)
+        url = make_url(settings.postgres_dsn)
+        assert url.username == "a/b"
+        assert url.password == password, f"password corrupted: {url.password!r}"
+
+
+def test_an_ipv6_host_is_bracketed():
+    """An unbracketed IPv6 literal makes the authority unparseable."""
+    settings = Settings(postgres_host="::1", postgres_port=15432)
+    assert "[::1]:15432" in settings.postgres_dsn
 
 
 def test_mongo_and_redis_urls():
@@ -191,7 +207,25 @@ Expected: FAIL — `Settings` has no `postgres_host` (extra inputs are permitted
 Add these imports at the top (after the existing ones):
 
 ```python
-from urllib.parse import quote_plus
+from urllib.parse import quote
+```
+
+Add these two module-level helpers just below the `LlmMode` definition:
+
+```python
+def _encode_credential(value: str) -> str:
+    """Percent-encode a URI userinfo component.
+
+    `quote_plus` is wrong here: it encodes a space as `+`, a query-string convention.
+    URI parsers unquote only `%XX`, so the `+` survives literally and the credential
+    silently becomes a different string. `quote(safe="")` encodes a space as `%20`.
+    """
+    return quote(value, safe="")
+
+
+def _format_host(host: str) -> str:
+    """Bracket an IPv6 literal, as RFC 3986 requires."""
+    return f"[{host}]" if ":" in host else host
 ```
 
 Add these fields to `Settings`, after `llm_mode`:
@@ -226,14 +260,10 @@ Add these properties after `task_queue`:
 ```python
     @property
     def _postgres_authority(self) -> str:
-        """user:password@host:port, with credentials percent-encoded.
-
-        An unencoded `@` or `/` in a password silently corrupts the URL's authority
-        section, producing a confusing connection failure rather than a clear one.
-        """
-        user = quote_plus(self.postgres_user)
-        password = quote_plus(self.postgres_password)
-        return f"{user}:{password}@{self.postgres_host}:{self.postgres_port}"
+        """user:password@host:port, with credentials percent-encoded."""
+        user = _encode_credential(self.postgres_user)
+        password = _encode_credential(self.postgres_password)
+        return f"{user}:{password}@{_format_host(self.postgres_host)}:{self.postgres_port}"
 
     @property
     def postgres_dsn(self) -> str:
@@ -252,11 +282,11 @@ Add these properties after `task_queue`:
 
     @property
     def mongo_uri(self) -> str:
-        return f"mongodb://{self.mongo_host}:{self.mongo_port}"
+        return f"mongodb://{_format_host(self.mongo_host)}:{self.mongo_port}"
 
     @property
     def redis_url(self) -> str:
-        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{_format_host(self.redis_host)}:{self.redis_port}/{self.redis_db}"
 ```
 
 - [ ] **Step 6: Run to verify it passes**
