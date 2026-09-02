@@ -946,7 +946,10 @@ from app.settings import Settings
 pytestmark = pytest.mark.unit
 
 SETTINGS = Settings(jwt_secret="unit-test-secret", jwt_expiry_minutes=30)
-NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+#: Anchored to the real clock, NOT a fixed date. `decode_access_token` validates `exp`
+#: against wall-clock time, so a hardcoded NOW makes every token-validity test depend
+#: on the hour the suite runs - and eventually fail forever.
+NOW = datetime.now(UTC)
 
 
 def test_password_hash_round_trips():
@@ -1093,16 +1096,19 @@ implicit clock — so expiry and tampering can be tested without patching anythi
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import jwt
 from pwdlib import PasswordHash
+from pwdlib.exceptions import UnknownHashError
 
 from app.modules.identity.models import UserRole
 from app.settings import Settings
 
 _password_hash = PasswordHash.recommended()
+_logger = logging.getLogger(__name__)
 
 
 class InvalidToken(Exception):
@@ -1120,7 +1126,17 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    return _password_hash.verify(password, hashed)
+    """Check a password against a stored hash.
+
+    An unparseable stored hash counts as a failed verification, not an exception: a
+    corrupted column must not turn a login into a 500 that leaks a stack trace and
+    signals to an attacker that this account differs from the others.
+    """
+    try:
+        return _password_hash.verify(password, hashed)
+    except UnknownHashError:
+        _logger.warning("stored password hash is unparseable; treating as a failed login")
+        return False
 
 
 def create_access_token(
@@ -1131,6 +1147,11 @@ def create_access_token(
     now: datetime,
     expires_in: timedelta | None = None,
 ) -> str:
+    if now.tzinfo is None:
+        raise ValueError(
+            "`now` must be timezone-aware: datetime.timestamp() reads a naive value as "
+            "local time, which silently shifts the token's lifetime by the UTC offset"
+        )
     lifetime = expires_in or timedelta(minutes=settings.jwt_expiry_minutes)
     payload = {
         "sub": subject,
@@ -1143,8 +1164,14 @@ def create_access_token(
 
 def decode_access_token(token: str, *, settings: Settings) -> TokenClaims:
     try:
+        # verify_iat=False: PyJWT checks "iat" against the real wall clock with zero
+        # leeway, which is fragile against ordinary skew between the issuing and
+        # validating machines. Lifetime is controlled by "exp", still fully enforced.
         payload = jwt.decode(
-            token, settings.jwt_secret, algorithms=[settings.jwt_algorithm]
+            token,
+            settings.jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            options={"verify_iat": False},
         )
     except jwt.ExpiredSignatureError as exc:
         raise InvalidToken("token has expired") from exc
@@ -1203,7 +1230,8 @@ from app.settings import Settings
 pytestmark = pytest.mark.contract
 
 SETTINGS = Settings(jwt_secret="authz-test-secret", jwt_expiry_minutes=30)
-NOW = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+#: Anchored to the real clock - see the note in Task 5.
+NOW = datetime.now(UTC)
 
 
 def build_app() -> FastAPI:
