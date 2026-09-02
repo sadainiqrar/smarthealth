@@ -22,14 +22,14 @@ def build_app() -> FastAPI:
 
     @app.get("/admin-only")
     async def admin_only(
-        claims: TokenClaims = Depends(require_role(UserRole.ADMIN)),  # noqa: B008
+        claims: TokenClaims = Depends(require_role(UserRole.ADMIN)),
     ) -> dict[str, str]:
         return {"subject": claims.subject}
 
     @app.get("/staff")
     async def staff(
-        claims: TokenClaims = Depends(  # noqa: B008
-            require_role(UserRole.ADMIN, UserRole.FRONT_DESK)  # noqa: B008
+        claims: TokenClaims = Depends(
+            require_role(UserRole.ADMIN, UserRole.FRONT_DESK)
         ),
     ) -> dict[str, str]:
         return {"subject": claims.subject}

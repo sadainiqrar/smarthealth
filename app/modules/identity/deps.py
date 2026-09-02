@@ -38,7 +38,7 @@ def require_role(*allowed: UserRole) -> Callable[..., TokenClaims]:
     permitted = frozenset(allowed)
 
     def dependency(
-        request: Request, settings: Settings = Depends(get_token_settings)  # noqa: B008
+        request: Request, settings: Settings = Depends(get_token_settings)
     ) -> TokenClaims:
         header = request.headers.get("Authorization", "")
         scheme, _, token = header.partition(" ")
