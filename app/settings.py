@@ -9,11 +9,31 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Literal
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LlmMode = Literal["fixture", "record", "live"]
+
+
+def _encode_credential(value: str) -> str:
+    """Percent-encode a URI userinfo component.
+
+    `quote_plus` is wrong here: it encodes a space as `+`, which is a query-string
+    convention. URI parsers unquote only `%XX`, so the `+` survives literally and the
+    credential silently becomes a different string. `quote(safe="")` encodes a space
+    as `%20`, which round-trips correctly.
+    """
+    return quote(value, safe="")
+
+
+def _format_host(host: str) -> str:
+    """Bracket an IPv6 literal.
+
+    RFC 3986 requires it: unbracketed, the colons in `::1` are ambiguous with the
+    port separator and the authority will not parse.
+    """
+    return f"[{host}]" if ":" in host else host
 
 
 class Settings(BaseSettings):
@@ -71,14 +91,10 @@ class Settings(BaseSettings):
 
     @property
     def _postgres_authority(self) -> str:
-        """user:password@host:port, with credentials percent-encoded.
-
-        An unencoded `@` or `/` in a password silently corrupts the URL's authority
-        section, producing a confusing connection failure rather than a clear one.
-        """
-        user = quote_plus(self.postgres_user)
-        password = quote_plus(self.postgres_password)
-        return f"{user}:{password}@{self.postgres_host}:{self.postgres_port}"
+        """user:password@host:port, with credentials percent-encoded."""
+        user = _encode_credential(self.postgres_user)
+        password = _encode_credential(self.postgres_password)
+        return f"{user}:{password}@{_format_host(self.postgres_host)}:{self.postgres_port}"
 
     @property
     def postgres_dsn(self) -> str:
@@ -97,11 +113,11 @@ class Settings(BaseSettings):
 
     @property
     def mongo_uri(self) -> str:
-        return f"mongodb://{self.mongo_host}:{self.mongo_port}"
+        return f"mongodb://{_format_host(self.mongo_host)}:{self.mongo_port}"
 
     @property
     def redis_url(self) -> str:
-        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{_format_host(self.redis_host)}:{self.redis_port}/{self.redis_db}"
 
 
 @lru_cache
