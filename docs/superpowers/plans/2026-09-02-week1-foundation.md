@@ -588,6 +588,8 @@ class JsonFormatter(logging.Formatter):
         }
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
+        if record.stack_info:
+            payload["stack_info"] = self.formatStack(record.stack_info)
         for key, value in record.__dict__.items():
             if key not in _RESERVED:
                 payload[key] = value
@@ -595,11 +597,20 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(level: str = "INFO") -> None:
-    """Install the JSON formatter on the root logger, replacing existing handlers."""
+    """Install the JSON formatter on the root logger.
+
+    Removes only handlers this function previously installed, never other people's.
+    A blanket `handlers.clear()` would also remove pytest's `caplog` capture handler
+    — and this runs inside the application lifespan, so it fires on every contract
+    test. Idempotent: calling it repeatedly leaves exactly one JSON handler.
+    """
+    root = logging.getLogger()
+    for handler in [h for h in root.handlers if isinstance(h.formatter, JsonFormatter)]:
+        root.removeHandler(handler)
+        handler.close()
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
-    root = logging.getLogger()
-    root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
 ```
