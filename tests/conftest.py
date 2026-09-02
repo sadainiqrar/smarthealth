@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from asgi_lifespan import LifespanManager
 
 from app.main import app
 from app.settings import get_settings
@@ -30,10 +31,18 @@ def _reset_settings_cache():
 
 @pytest.fixture
 async def api_client() -> AsyncIterator[httpx.AsyncClient]:
-    """An HTTP client wired straight to the ASGI app — no socket, no server."""
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-        yield client
+    """An HTTP client wired straight to the ASGI app — no socket, no server.
+
+    Wrapped in LifespanManager because `httpx.ASGITransport` does not run FastAPI's
+    lifespan: without it these tests exercise an app whose startup never ran, and
+    `app.state.engine` would not exist.
+    """
+    async with LifespanManager(app) as manager:
+        transport = httpx.ASGITransport(app=manager.app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            yield client
 
 
 @pytest.fixture(scope="session")
