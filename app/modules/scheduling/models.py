@@ -13,9 +13,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -112,6 +114,30 @@ class Appointment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         Index("ix_appointments_patient_status", "patient_id", "status"),
+        # The slot must belong to the provider and clinic this appointment names.
+        # MATCH SIMPLE means this is skipped while slot_id is NULL (pre-claim) and
+        # enforced the moment a slot is attached.
+        ForeignKeyConstraint(
+            ["slot_id", "provider_id", "clinic_id"],
+            [
+                "provider_slots.id",
+                "provider_slots.provider_id",
+                "provider_slots.clinic_id",
+            ],
+            name="fk_appointments_slot_provider_clinic",
+        ),
+        # The department must belong to the clinic this appointment names.
+        ForeignKeyConstraint(
+            ["department_id", "clinic_id"],
+            ["departments.id", "departments.clinic_id"],
+            name="fk_appointments_department_clinic",
+        ),
+        # A confirmed appointment without a claimed slot is a contradiction: confirmed
+        # is only reachable after slot reservation succeeds.
+        CheckConstraint(
+            "status <> 'confirmed' OR slot_id IS NOT NULL",
+            name="confirmed_requires_slot",
+        ),
     )
 
 

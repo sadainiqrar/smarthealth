@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -70,6 +71,8 @@ class Department(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         UniqueConstraint("clinic_id", "name", name="uq_departments_clinic_id_name"),
+        # Composite target for the department/clinic coherence FKs.
+        UniqueConstraint("id", "clinic_id", name="uq_departments_id_clinic"),
     )
 
 
@@ -146,4 +149,15 @@ class ProviderSlot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint("ends_at > starts_at", name="end_after_start"),
         Index("ix_provider_slots_provider_starts", "provider_id", "starts_at"),
         Index("ix_provider_slots_status_starts", "status", "starts_at"),
+        # Composite target for appointments' coherence FK: lets an appointment prove
+        # its slot really belongs to the provider and clinic it claims.
+        UniqueConstraint(
+            "id", "provider_id", "clinic_id", name="uq_provider_slots_id_provider_clinic"
+        ),
+        # A slot's department must belong to the slot's own clinic.
+        ForeignKeyConstraint(
+            ["department_id", "clinic_id"],
+            ["departments.id", "departments.clinic_id"],
+            name="fk_provider_slots_department_clinic",
+        ),
     )
