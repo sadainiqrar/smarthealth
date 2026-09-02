@@ -16,18 +16,18 @@ Commands that work today:
 | `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract |
 | `python -m pytest -m docker` | integration tests against the compose stack |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
-| `python -m alembic upgrade head` | apply migrations |
-| `python -m alembic check` | confirm models and migrations agree |
 
-The two `alembic` commands need connection settings. The compose stack runs Postgres on
-an **offset port (15432)** so a dev and a test stack can coexist, while `Settings`
-defaults to 5432 — so run them as:
+**Migrations need connection settings.** The compose stack puts Postgres on an offset
+port (**15432**) so a dev and a test stack can coexist, while `Settings` defaults to
+5432. Run them as:
 
 ```bash
 SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth   python -m alembic upgrade head
+
+SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth   python -m alembic check
 ```
 
-or copy `.env.example` to `.env` and set the offset ports there, since `Settings` reads
+Or copy `.env.example` to `.env` and set the offset ports there — `Settings` reads
 `.env`. Without either, alembic fails with `ConnectionRefusedError` against 5432.
 
 ## What this project is

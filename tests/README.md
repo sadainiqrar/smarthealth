@@ -11,7 +11,7 @@ interpreter may lack pytest and PyYAML.
 ```bash
 python -m pytest -m "not docker"          # fast lane: T0, T1, meta — no containers
 python -m pytest -m docker                # T3/T4 — needs the compose test stack
-python -m pytest -m workflow              # one tier
+python -m pytest -m workflow              # one tier (exits 5 until Week 2 adds any)
 python -m pytest tests/tiers/test_catalog.py -k <case-id>   # one case
 python -m tests.runner.route_check        # validate and route the catalog (no infra)
 python -m tests.runner.route_check --write-catalog --write-traceability
