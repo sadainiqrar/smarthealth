@@ -6,11 +6,12 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 1 |
+| Total cases | 2 |
 | contract | 1 |
-| P0 | 1 |
+| integration | 1 |
+| P0 | 2 |
 | declarative | 1 |
-| impl-backed | 0 |
+| impl-backed | 1 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -19,3 +20,4 @@
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
+| sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |

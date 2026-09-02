@@ -1,0 +1,7 @@
+id: sys-002-ready-reports-all-dependencies-healthy
+title: "Readiness reports every infrastructure dependency healthy"
+requirement: [PART-A-OBS-1]
+tier: integration
+priority: P0
+status: ready
+impl: "tests/tiers/t3_integration/test_readiness.py::test_ready_reports_all_dependencies_healthy"
