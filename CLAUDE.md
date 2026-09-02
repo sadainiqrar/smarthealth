@@ -4,18 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository status
 
-**No feature code exists yet.** The repository holds the assignment requirements and the
-testing harness spine (`tests/`, `docker-compose.infra.yml`, `.claude/`). Application
-modules land week by week — do not invent build/run commands for services that do not
-exist, and update this file when they do.
+**Week 1 foundation in place; no business endpoints yet.** The repository holds the
+assignment requirements, the testing harness, and the application foundation: settings,
+core utilities, async SQLAlchemy with Alembic migrations, the ten-table domain schema,
+Mongo and Redis clients, an auth skeleton, and liveness/readiness endpoints.
 
 Commands that work today:
 
 | Command | Purpose |
 | --- | --- |
 | `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract |
-| `python -m pytest -m docker` | tests needing the compose test stack |
+| `python -m pytest -m docker` | integration tests against the compose stack |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
+| `python -m alembic upgrade head` | apply migrations |
+| `python -m alembic check` | confirm models and migrations agree |
 
 ## What this project is
 
@@ -104,6 +106,12 @@ A `Stop` hook blocks the session when a path in `tests/core-paths.txt` changes w
 validated case. Waive with `E2E_WAIVE="<reason>"` — logged to `tests/waivers.log`, not
 silent.
 
+The hook is **armed**: `app/api/**`, `app/core/**`, `app/db/**`, `app/modules/**`, and
+`migrations/**` are core paths. Changing any of them without adding a validated case
+blocks the session. `app/settings.py` and `app/main.py` are deliberately excluded — they
+are wiring that changes whenever a module is added, so gating them would fire constantly
+without adding signal.
+
 **Harness requirements on application code** — honour these as modules land:
 
 1. Topic, queue, and task-queue names come from `Settings.topic()/queue()/task_queue()`,
@@ -115,3 +123,50 @@ silent.
 5. The OpenTelemetry tracer provider stays swappable.
 6. Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline.
 7. Every service exposes a readiness endpoint.
+
+## Domain model
+
+Design and rationale: `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`.
+
+Four decisions the requirements left open, each easy to get wrong:
+
+1. **A patient is not a user.** `users` is auth identity; `patients`/`providers` are
+   domain records with a nullable, unique `user_id`. Front-desk staff register walk-ins
+   who have no credentials.
+2. **Slots are pre-generated rows.** Booking is
+   `UPDATE provider_slots SET status='held', version=version+1 WHERE id=:id AND
+   status='free'` — zero rows affected *is* the conflict.
+3. **A visit is separate from an appointment.** Appointment = the booking; visit = what
+   happened. Average Wait Time is `seen_at - checked_in_at`; a no-show is an appointment
+   with no visit.
+4. **Mongo owns the audit trail.** Postgres is the system of record for all
+   transactional state.
+
+`appointments.status` starts at `pending`. **`confirmed` is reachable only after the
+whole booking workflow succeeds** — the assignment's headline invariant, enforced by the
+schema default and by a CHECK that a confirmed appointment must hold a slot.
+
+### What the database guarantees
+
+Proven by integration tests, not by convention:
+
+- A provider cannot have two overlapping slots (GiST exclusion constraint).
+- At most one *live* appointment may hold a slot (partial unique index) — partial, so
+  cancelling frees it.
+- An appointment's slot must belong to the provider and clinic it names, and a
+  department must belong to its clinic (composite foreign keys). Every single-column FK
+  can be satisfied while the booking is still nonsense; these catch that.
+- `updated_at` moves on raw SQL updates (`BEFORE UPDATE` trigger using
+  `clock_timestamp()`). SQLAlchemy's `onupdate` does not fire for raw statements, and
+  `now()` would record when the transaction began rather than when the row changed.
+
+### What it cannot guarantee — Week 2's contract
+
+- **Releasing a slot is a paired write.** Moving an appointment out of `pending`/
+  `confirmed` frees the partial index, but `provider_slots.status` stays as it was, so
+  the slot never reappears in a `status = 'free'` query. Cancel, reschedule, no-show and
+  completion must flip both in one transaction.
+- **A past slot is still bookable.** `CHECK (starts_at > now())` is impossible — Postgres
+  requires check constraints to be immutable. The booking activity must reject it.
+- **`version` is not self-incrementing.** The claim statement must say
+  `version = version + 1`, or the column is decoration.

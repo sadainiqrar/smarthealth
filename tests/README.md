@@ -24,7 +24,7 @@ python -m tests.runner.route_check --write-catalog --write-traceability
 | `unit` | T0 | none | domain logic, state transitions, validators |
 | `contract` | T1 | none (ASGI transport) | API surface, authz, schema compatibility |
 | `workflow` | T2 | Temporal SDK time-skipping | workflow correctness, compensation, timers |
-| `integration` | T3 | compose test stack | repositories, consumers, tasks, idempotency |
+| `integration` | T3 | compose test stack | schema constraints, repositories, consumers, tasks, idempotency |
 | `journey` | T4 | full stack | business journeys, chaos, traces, invariants |
 
 Choose the cheapest tier that can prove the property. Most reliability invariants belong
@@ -118,6 +118,17 @@ annotation change.
 
 **4. Redis and RabbitMQ have no persistent volume.** A `down`/`up` cycle discards their
 state. Postgres, Mongo, and Kafka persist.
+
+**5. Integration tests get a per-run database, created and dropped per session.**
+`tests/tiers/t3_integration/conftest.py` creates `<prefix>db`, runs `alembic upgrade
+head`, and drops it at session end. It builds `Settings(...)` directly rather than
+calling `get_settings()` — see constraint 1. A crashed session can leave the database
+behind; list strays with `docker compose -p smarthealth-test --env-file .env.test -f
+docker-compose.infra.yml exec -T postgres psql -U smarthealth -c "\l"`.
+
+**6. The integration fixture runs each test in one transaction, rolled back.** Anything
+depending on `now()` therefore sees a single frozen timestamp for the whole test — which
+is why the `updated_at` trigger uses `clock_timestamp()`.
 
 ## Phase status
 

@@ -9,9 +9,8 @@
 # Avoid bare patterns like `*.py`, which would match at every depth in the repo.
 #
 # Uncomment as each module appears:
-# app/api/**
-# app/domain/**
-# app/services/**
-# app/workflows/**
-# app/consumers/**
-# app/tasks/**
+app/api/**
+app/core/**
+app/db/**
+app/modules/**
+migrations/**
