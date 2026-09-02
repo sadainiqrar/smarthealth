@@ -6,7 +6,7 @@
 
 **Architecture:** Domain-oriented modules under `app/modules/`, each owning its own models, with shared plumbing in `app/core` (settings, clock, registry, logging) and `app/db` (base, engine, session, clients). Resources are created in a FastAPI lifespan handler and stored on `app.state`; the engine is lazy so startup needs no running database. Postgres is the system of record; Mongo owns the audit trail.
 
-**Tech Stack:** Python 3.13 · FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · Motor · redis.asyncio · pwdlib[argon2] · PyJWT · pytest (five-tier harness already in place)
+**Tech Stack:** Python 3.13 · FastAPI · SQLAlchemy 2.0 async + asyncpg · Alembic · pymongo (async) · redis.asyncio · pwdlib[argon2] · PyJWT · pytest (five-tier harness already in place)
 
 **Spec:** `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 
@@ -35,7 +35,7 @@
 | `app/db/base.py` | `Base`, metadata naming convention, UUID + timestamp mixins |
 | `app/db/engine.py` | Async engine factory — lazy, does not connect |
 | `app/db/session.py` | Session factory and the request-scoped dependency |
-| `app/db/mongo.py` | Motor client factory and audit-collection bootstrap |
+| `app/db/mongo.py` | Async Mongo client factory and audit-collection bootstrap |
 | `app/db/redis.py` | `redis.asyncio` client factory |
 | `app/db/all_models.py` | Imports every model module so Alembic sees full metadata |
 | `app/modules/identity/models.py` | `users`, `UserRole` |
@@ -86,7 +86,7 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
     "alembic>=1.14",
-    "motor>=3.6",
+    "pymongo>=4.9",
     "redis>=5.2",
     "pwdlib[argon2]>=0.2.1",
     "pyjwt>=2.10",
@@ -108,7 +108,7 @@ dev = [
 Run:
 ```bash
 .venv/Scripts/python.exe -m pip install --quiet -e ".[dev]"
-.venv/Scripts/python.exe -c "import sqlalchemy, asyncpg, alembic, motor, redis, pwdlib, jwt, asgi_lifespan; print('deps OK')"
+.venv/Scripts/python.exe -c "import sqlalchemy, asyncpg, alembic, pymongo, redis, pwdlib, jwt, asgi_lifespan; print('deps OK')"
 ```
 Expected: `deps OK`
 
@@ -2257,7 +2257,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_mongo_client_is_built_from_settings_without_connecting():
-    """Motor connects lazily; the T1 lane must not require a running Mongo."""
+    """The client connects lazily; the T1 lane must not require a running Mongo."""
     settings = Settings(mongo_host="203.0.113.1", mongo_port=1, mongo_db="sh_test")
     client = create_mongo_client(settings)
     assert client.address is None or True  # no connection attempted at construction
@@ -2306,16 +2306,17 @@ for every piece of transactional state (design spec 3.4).
 
 from __future__ import annotations
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.collection import AsyncCollection
 
 from app.settings import Settings
 
 AUDIT_COLLECTION = "audit_events"
 
 
-def create_mongo_client(settings: Settings) -> AsyncIOMotorClient:
-    """Motor connects lazily, so this is safe to call with no Mongo running."""
-    return AsyncIOMotorClient(
+def create_mongo_client(settings: Settings) -> AsyncMongoClient:
+    """Connects lazily, so this is safe to call with no Mongo running."""
+    return AsyncMongoClient(
         settings.mongo_uri,
         serverSelectionTimeoutMS=2000,
         connectTimeoutMS=2000,
@@ -2324,13 +2325,13 @@ def create_mongo_client(settings: Settings) -> AsyncIOMotorClient:
 
 
 def get_audit_collection(
-    client: AsyncIOMotorClient, settings: Settings
-) -> AsyncIOMotorCollection:
+    client: AsyncMongoClient, settings: Settings
+) -> AsyncCollection:
     return client[settings.mongo_db][AUDIT_COLLECTION]
 
 
 async def ensure_audit_indexes(
-    client: AsyncIOMotorClient, settings: Settings
+    client: AsyncMongoClient, settings: Settings
 ) -> None:
     """Create the indexes the audit query pattern needs.
 
@@ -2615,7 +2616,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await app.state.engine.dispose()
-        app.state.mongo.close()
+        # `close()` is a coroutine on pymongo's async client, unlike Motor's.
+        await app.state.mongo.close()
         await app.state.redis.aclose()
 
 
@@ -3283,7 +3285,8 @@ async def test_the_audit_indexes_exist(db_settings: Settings):
     try:
         await ensure_audit_indexes(client, db_settings)
         collection = get_audit_collection(client, db_settings)
-        names = [index["name"] async for index in collection.list_indexes()]
+        cursor = await collection.list_indexes()
+        names = [index["name"] for index in await cursor.to_list()]
         assert any("entity_type" in name for name in names)
     finally:
         client.close()

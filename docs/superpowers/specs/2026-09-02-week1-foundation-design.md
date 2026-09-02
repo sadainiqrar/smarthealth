@@ -241,7 +241,7 @@ status flip alone, or the column is decoration.
 |---|---|---|
 | ORM | SQLAlchemy 2.0 async + `asyncpg` | consistent with FastAPI, Temporal, and Kafka clients all being async |
 | Migrations | Alembic, async `env.py`, one baseline revision | the harness's per-run database needs a repeatable schema |
-| Mongo | `motor` | async, official |
+| Mongo | `pymongo` async driver | Motor reached its deprecation date in May 2026 |
 | Redis | `redis.asyncio` | async |
 | Password hashing | `pwdlib[argon2]` | argon2 by default; the maintained successor to passlib |
 | JWT | `pyjwt` | minimal and sufficient |
