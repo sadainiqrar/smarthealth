@@ -3277,7 +3277,7 @@ async def test_an_audit_event_round_trips(db_settings: Settings):
         assert stored["after"]["phone"] == "+44 20 7946 0000"
     finally:
         await get_audit_collection(client, db_settings).drop()
-        client.close()
+        await client.close()
 
 
 async def test_the_audit_indexes_exist(db_settings: Settings):
@@ -3289,7 +3289,7 @@ async def test_the_audit_indexes_exist(db_settings: Settings):
         names = [index["name"] for index in await cursor.to_list()]
         assert any("entity_type" in name for name in names)
     finally:
-        client.close()
+        await client.close()
 
 
 async def test_redis_round_trips_a_namespaced_key(db_settings: Settings):
