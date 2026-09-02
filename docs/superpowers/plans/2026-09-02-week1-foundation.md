@@ -772,12 +772,13 @@ The laziness proved here is what lets T1 contract tests run the real FastAPI lif
 Create `tests/tiers/t0_unit/test_db_engine.py`:
 
 ```python
+from types import SimpleNamespace
+
 import pytest
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.engine import create_engine
-from app.db.session import create_session_factory
+from app.db.session import create_session_factory, get_session
 from app.settings import Settings
 
 pytestmark = pytest.mark.unit
@@ -806,7 +807,9 @@ def test_creating_an_engine_does_not_connect():
 def test_session_factory_produces_async_sessions():
     settings = Settings()
     factory = create_session_factory(create_engine(settings))
-    assert isinstance(factory, sessionmaker)
+    # Verified on SQLAlchemy 2.0.52: async_sessionmaker does NOT subclass sessionmaker,
+    # so asserting the sync type here would simply be wrong.
+    assert isinstance(factory, async_sessionmaker)
     assert factory.class_ is AsyncSession
 
 
