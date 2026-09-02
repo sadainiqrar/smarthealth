@@ -104,12 +104,13 @@ cannot invalidate a `Settings` object a session-scoped fixture already captured 
 consumer would silently serve the pre-session value while every `monkeypatch.setenv`
 appears to do nothing. Read `os.environ` directly in session-scoped fixtures.
 
-**2. `httpx.ASGITransport` does not run FastAPI's lifespan.** The transport only sends an
-`"http"` scope, so `api_client` exercises an app whose startup handlers never ran. Harmless
-while `/health` depends on nothing. Once a DB pool, Kafka producer, or Temporal client is
-wired through a lifespan handler, any endpoint reached via `api_client` that reads
-`app.state.<resource>` fails on uninitialised state. Drive the lifespan explicitly then, or
-keep those endpoints at T3 against the real stack.
+**2. `httpx.ASGITransport` does not run FastAPI's lifespan — handled, keep it that way.**
+The transport only sends an `"http"` scope, so on its own `api_client` would exercise an
+app whose startup never ran. The engine, Mongo and Redis clients now *are* created in a
+lifespan handler and `/ready` reads them off `app.state`, so the fixture wraps
+`LifespanManager` to drive startup for real. This still needs no containers, because
+every client is lazy — each builds a pool without connecting. If a future resource
+connects eagerly at startup, the entire T1 lane silently becomes container-dependent.
 
 **3. `/health`'s `-> dict[str, str]` annotation is an enforced response model.** FastAPI
 validates against it: returning a boolean or a nested object raises

@@ -19,6 +19,17 @@ Commands that work today:
 | `python -m alembic upgrade head` | apply migrations |
 | `python -m alembic check` | confirm models and migrations agree |
 
+The two `alembic` commands need connection settings. The compose stack runs Postgres on
+an **offset port (15432)** so a dev and a test stack can coexist, while `Settings`
+defaults to 5432 — so run them as:
+
+```bash
+SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth   python -m alembic upgrade head
+```
+
+or copy `.env.example` to `.env` and set the offset ports there, since `Settings` reads
+`.env`. Without either, alembic fails with `ConnectionRefusedError` against 5432.
+
 ## What this project is
 
 SmartHealth is a training assignment: a backend for a fictional healthcare operations platform
