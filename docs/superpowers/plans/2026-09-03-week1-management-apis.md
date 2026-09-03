@@ -136,10 +136,14 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
       front-desk/admin, providers to admin), and those are precisely the people who
       legitimately handle those identifiers. If it ever changes, change both modules
       together -- they are deliberately symmetrical.
-13. **`\` collapses to `\` in a Bash heredoc even with a quoted delimiter**, silently
-    corrupting a literal like `a\_b` into `a_b` and emitting only a `SyntaxWarning`. Same
-    class of silent corruption as `Path.write_text` writing CRLF into an LF repo. Use the
-    Edit tool for content containing backslashes, or run with `-W error::SyntaxWarning`.
+13. **A doubled backslash collapses to a single one in a Bash heredoc**, even with a
+    quoted delimiter, silently corrupting an escaped literal and emitting only a
+    `SyntaxWarning` rather than an error. Same class of silent corruption as
+    `Path.write_text` writing CRLF into an LF repo. Use the Edit tool for content
+    containing backslashes, or run with `-W error::SyntaxWarning` so it fails loudly.
+
+    This note was itself corrupted by the very hazard it describes, on the first
+    attempt to write it.
 14. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
