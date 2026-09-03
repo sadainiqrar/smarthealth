@@ -1,6 +1,9 @@
+import enum
 import subprocess
 import sys
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 
@@ -85,6 +88,137 @@ async def test_the_stored_timestamp_is_timezone_aware_utc():
     stored_at = collection.documents[0]["at"]
     assert stored_at.tzinfo is not None
     assert stored_at.utcoffset() == UTC.utcoffset(None)
+
+
+class _Status(enum.Enum):
+    ACTIVE = "active"
+
+
+async def test_a_bare_date_becomes_an_iso_string():
+    """Verified against pymongo 4.17.0: `bson.encode({"d": date(2000, 1, 1)})` raises
+    `InvalidDocument`. Because the audit write is awaited inside the request, that
+    would fail the whole mutation, not just the audit entry."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+
+    await log.record(
+        AuditEvent(
+            entity_type="patient",
+            entity_id="p1",
+            action="registered",
+            after={"date_of_birth": date(1990, 4, 17)},
+        )
+    )
+
+    assert collection.documents[0]["after"] == {"date_of_birth": "1990-04-17"}
+
+
+async def test_a_real_datetime_is_preserved_as_a_datetime():
+    """The subclass trap: `datetime` *is* a `date`, so an `isinstance(value, date)`
+    check placed first would stringify every genuine timestamp and silently destroy
+    the audit trail's queryability on time ranges."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+    seen_at = datetime(2026, 9, 3, 9, 15, tzinfo=UTC)
+
+    await log.record(
+        AuditEvent(
+            entity_type="visit", entity_id="v1", action="checked_in", after={"seen_at": seen_at}
+        )
+    )
+
+    stored = collection.documents[0]["after"]["seen_at"]
+    assert isinstance(stored, datetime)
+    assert stored == seen_at
+
+
+async def test_a_decimal_becomes_a_string():
+    """BSON has no arbitrary-precision decimal that round-trips a Python `Decimal`,
+    and a float would quietly lose cents off a billing amount."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+
+    await log.record(
+        AuditEvent(
+            entity_type="invoice",
+            entity_id="i1",
+            action="issued",
+            after={"total": Decimal("12.50")},
+        )
+    )
+
+    assert collection.documents[0]["after"] == {"total": "12.50"}
+
+
+async def test_an_enum_becomes_its_value():
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+
+    await log.record(
+        AuditEvent(
+            entity_type="user", entity_id="u1", action="updated", after={"status": _Status.ACTIVE}
+        )
+    )
+
+    assert collection.documents[0]["after"] == {"status": "active"}
+
+
+async def test_normalisation_recurses_into_nested_dicts_and_lists():
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+
+    await log.record(
+        AuditEvent(
+            entity_type="patient",
+            entity_id="p1",
+            action="updated",
+            before={"profile": {"date_of_birth": date(1990, 4, 17)}},
+            after={"appointments": [{"day": date(2026, 9, 4)}, date(2026, 9, 5)]},
+        )
+    )
+
+    document = collection.documents[0]
+    assert document["before"] == {"profile": {"date_of_birth": "1990-04-17"}}
+    assert document["after"] == {"appointments": [{"day": "2026-09-04"}, "2026-09-05"]}
+
+
+async def test_normalisation_leaves_none_payloads_as_none():
+    """`None` means "there was no before/after state" and must not become `{}`."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+
+    await log.record(AuditEvent(entity_type="patient", entity_id="p1", action="viewed"))
+
+    assert collection.documents[0]["before"] is None
+    assert collection.documents[0]["after"] is None
+
+
+async def test_a_uuid_is_left_alone_for_pymongo_to_encode():
+    """`app.db.mongo` sets `uuidRepresentation="standard"`, so a UUID round-trips as a
+    UUID. Stringifying it here would lose that."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+    identifier = uuid.uuid4()
+
+    await log.record(
+        AuditEvent(entity_type="patient", entity_id="p1", action="viewed", after={"id": identifier})
+    )
+
+    assert collection.documents[0]["after"]["id"] is identifier
+
+
+async def test_an_unknown_unencodable_type_is_left_alone_to_fail_loudly():
+    """Normalisation converts the known-unencodable types and nothing else. Blanket
+    `str()` would push an unreviewed repr into a record meant to be evidence."""
+    collection = _FakeCollection()
+    log = AuditLog(collection, FixedClock(INSTANT))
+    sentinel = object()
+
+    await log.record(
+        AuditEvent(entity_type="patient", entity_id="p1", action="viewed", after={"x": sentinel})
+    )
+
+    assert collection.documents[0]["after"]["x"] is sentinel
 
 
 def test_importing_audit_does_not_load_fastapi_or_starlette():

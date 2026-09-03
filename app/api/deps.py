@@ -16,19 +16,27 @@ reason: a service takes a `PageParams` value, never a `Query`-bound parameter.
 
 from __future__ import annotations
 
-from fastapi import Query, Request
+from fastapi import Depends, Query, Request
 
 from app.core.audit import AuditLog
-from app.core.clock import get_clock
+from app.core.clock import Clock, get_clock
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageParams
 from app.db.mongo import get_audit_collection
 
 
-def get_audit_log(request: Request) -> AuditLog:
-    """FastAPI dependency. Services receive an `AuditLog`, never the request."""
+def get_audit_log(request: Request, clock: Clock = Depends(get_clock)) -> AuditLog:
+    """FastAPI dependency. Services receive an `AuditLog`, never the request.
+
+    `clock` is declared as a dependency rather than obtained by calling `get_clock()`
+    inline. Only a declared dependency appears in this provider's graph, and only
+    something in the graph can be replaced through `app.dependency_overrides` — an
+    inline call would make `app.dependency_overrides[get_clock]` silently do nothing
+    to audit timestamps, which is the one place Clock injection is observable through
+    a real HTTP request. `app.modules.identity.router` declares it the same way.
+    """
     settings = request.app.state.settings
     collection = get_audit_collection(request.app.state.mongo, settings)
-    return AuditLog(collection, get_clock())
+    return AuditLog(collection, clock)
 
 
 def page_params(
