@@ -91,7 +91,10 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    term are metacharacters, so `a_b` also matches `axb` and `100%` matches anything
    containing `100` -- a patient lookup silently returning people nobody searched for.
    It is not injection (the value is parameterised), it is over-matching. Use
-   `Column.contains(value, autoescape=True)`, which escapes them. Applies to
+   `Column.icontains(value, autoescape=True)` -- **not** `contains`, which compiles to
+   `LIKE` and would silently make the search case-sensitive, so `bloggs` would stop
+   matching `Bloggs`. `icontains` compiles to `lower(col) LIKE lower(term) ESCAPE '/'`,
+   keeping both properties. Applies to
    `list_providers` (corrected in the Task 7 text above) and to `list_patients`, which
    needs a follow-up commit against the code Task 5 already shipped. Task 6 is what
    first exposes `search` over HTTP, so the patients side is live until that lands.
@@ -1504,8 +1507,8 @@ async def list_providers(
         pattern = f"%{search}%"
         conditions.append(
             or_(
-                Provider.first_name.contains(search, autoescape=True),
-                Provider.last_name.contains(search, autoescape=True),
+                Provider.first_name.icontains(search, autoescape=True),
+                Provider.last_name.icontains(search, autoescape=True),
             )
         )
 
