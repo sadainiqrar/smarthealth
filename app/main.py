@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.router import api_router
+from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client
@@ -44,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     application = FastAPI(title="SmartHealth", version="0.1.0", lifespan=lifespan)
     application.include_router(api_router)
+    register_error_handlers(application)
     return application
 
 
