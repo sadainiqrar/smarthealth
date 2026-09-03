@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api import health
+from app.modules.identity import router as identity_router
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(identity_router.router)
