@@ -38,3 +38,39 @@ def test_update_reports_only_the_fields_actually_sent():
 def test_update_rejects_an_empty_body():
     with pytest.raises(ValidationError, match="at least one field"):
         PatientUpdate()
+
+
+def test_update_rejects_an_explicit_null_first_name():
+    """`patients.first_name` is NOT NULL; a null must fail validation, not the flush."""
+    with pytest.raises(ValidationError):
+        PatientUpdate(first_name=None)
+
+
+def test_update_rejects_an_explicit_null_last_name():
+    """`patients.last_name` is NOT NULL; a null must fail validation, not the flush."""
+    with pytest.raises(ValidationError):
+        PatientUpdate(last_name=None)
+
+
+def test_update_still_accepts_an_explicit_null_phone():
+    """`phone` is nullable -- clearing it is a legitimate operation."""
+    update = PatientUpdate(phone=None)
+    assert update.model_dump(exclude_unset=True) == {"phone": None}
+
+
+def test_update_still_accepts_an_explicit_null_date_of_birth():
+    """`date_of_birth` is nullable -- clearing it is a legitimate operation."""
+    update = PatientUpdate(date_of_birth=None)
+    assert update.model_dump(exclude_unset=True) == {"date_of_birth": None}
+
+
+def test_update_still_accepts_an_explicit_null_email():
+    """`email` is nullable -- clearing it is a legitimate operation."""
+    update = PatientUpdate(email=None)
+    assert update.model_dump(exclude_unset=True) == {"email": None}
+
+
+def test_update_still_accepts_an_ordinary_partial_update():
+    """The validator must not fire on unset fields or on real values."""
+    update = PatientUpdate(first_name="Ada")
+    assert update.model_dump(exclude_unset=True) == {"first_name": "Ada"}

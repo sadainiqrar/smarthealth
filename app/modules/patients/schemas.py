@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class PatientCreate(BaseModel):
@@ -29,6 +29,21 @@ class PatientUpdate(BaseModel):
     date_of_birth: date | None = None
     phone: str | None = Field(default=None, max_length=32)
     email: EmailStr | None = None
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def _reject_an_explicit_null(cls, value: str | None) -> str | None:
+        """`patients.first_name` and `last_name` are NOT NULL.
+
+        Without this an explicit `{"first_name": null}` validates, `exclude_unset`
+        reports it as set, and the service writes NULL into a NOT NULL column -- a
+        client-triggerable 500 instead of a 422. `min_length` does not cover it: it
+        constrains only the `str` branch of the union. Unset fields never reach a
+        field validator, so an ordinary partial update is unaffected.
+        """
+        if value is None:
+            raise ValueError("may not be set to null")
+        return value
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> PatientUpdate:
