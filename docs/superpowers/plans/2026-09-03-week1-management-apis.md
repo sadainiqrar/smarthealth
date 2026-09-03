@@ -144,7 +144,30 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
 
     This note was itself corrupted by the very hazard it describes, on the first
     attempt to write it.
-14. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+14. **Follow-ups accepted from the Task 7 review**, to land before Task 12:
+    - `violated_constraint` reaches `exc.orig.__cause__` directly, so a non-exception
+      `orig` raises `AttributeError` instead of returning `None`. Use
+      `getattr(exc.orig, "__cause__", None)`, and walk the `__cause__` chain rather than
+      unwrapping exactly one level -- it is shared infrastructure now, and a deeper chain
+      silently degrades a 409 into a 500.
+    - Audit `action` strings (`"registered"`, `"profile_updated"`) are bare literals
+      duplicated across both services, and `AuditEvent.action` is typed `str`, so
+      `"profiel_updated"` type-checks and silently fractures any query filtering on it.
+      Extract constants **now**, before Week 2's appointments and visits triple the
+      surface with booked/cancelled/rescheduled/checked_in/completed/no_show.
+    - `ProviderUpdate._reject_an_explicit_null` is typed `object -> object`, discarding
+      real information. `str | bool | None -> str | bool` is accurate, since `None`
+      always raises.
+    - `func.lower(Provider.specialty) == ...` cannot use `ix_providers_specialty`, so
+      specialty filtering is a sequential scan and that index is dead weight for the only
+      query that filters on it. Fix is a functional index on `lower(specialty)` or a
+      `citext` column. Fine at this scale; record it rather than doing it.
+
+    **Not** doing: no shared base class for the patients and providers services. Two
+    instances is not a pattern, and Week 2's appointments are Temporal-orchestrated
+    multi-table writes that would bypass or awkwardly override an abstraction derived
+    from two CRUD modules. Revisit at a third real instance.
+15. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
