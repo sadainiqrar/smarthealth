@@ -1454,10 +1454,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound
 from app.core.pagination import PageParams
+from app.db.constraints import violated_constraint
 from app.modules.providers.models import Provider
 from app.modules.providers.schemas import ProviderCreate, ProviderUpdate
 
 ENTITY = "provider"
+
+#: `Provider.license_number` is declared `unique=True` with no index, so Postgres
+#: enforces it with a named UNIQUE CONSTRAINT -- unlike `Patient.mrn`, which is
+#: `unique=True, index=True` and gets a unique INDEX instead. The two are genuinely
+#: asymmetric; verify against `migrations/versions/0001_baseline.py` before trusting it.
+LICENCE_UNIQUE_CONSTRAINT = "uq_providers_license_number"
 
 
 def _snapshot(provider: Provider) -> dict[str, object]:
@@ -1489,7 +1496,7 @@ async def register_provider(
     try:
         await session.flush()
     except IntegrityError as exc:
-        if "uq_providers_license_number" in str(exc.orig):
+        if violated_constraint(exc) == LICENCE_UNIQUE_CONSTRAINT:
             raise Conflict(
                 f"a provider with licence number {data.license_number} already exists"
             ) from exc
@@ -1527,7 +1534,6 @@ async def list_providers(
         # client pass "%" and match every provider.
         conditions.append(func.lower(Provider.specialty) == specialty.lower())
     if search:
-        pattern = f"%{search}%"
         conditions.append(
             or_(
                 Provider.first_name.icontains(search, autoescape=True),
