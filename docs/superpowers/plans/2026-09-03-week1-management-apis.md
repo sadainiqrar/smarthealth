@@ -92,8 +92,9 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    containing `100` -- a patient lookup silently returning people nobody searched for.
    It is not injection (the value is parameterised), it is over-matching. Use
    `Column.contains(value, autoescape=True)`, which escapes them. Applies to
-   `list_patients` (fixed as a follow-up to Task 5) and `list_providers` (fixed in the
-   Task 7 text above).
+   `list_providers` (corrected in the Task 7 text above) and to `list_patients`, which
+   needs a follow-up commit against the code Task 5 already shipped. Task 6 is what
+   first exposes `search` over HTTP, so the patients side is live until that lands.
 10. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
