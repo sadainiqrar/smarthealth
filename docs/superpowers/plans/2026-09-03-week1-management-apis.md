@@ -98,7 +98,23 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    `list_providers` (corrected in the Task 7 text above) and to `list_patients`, which
    needs a follow-up commit against the code Task 5 already shipped. Task 6 is what
    first exposes `search` over HTTP, so the patients side is live until that lands.
-10. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+10. **A deactivated user keeps access until their token expires.** `decode_access_token`
+    validates only signature and `exp`; `is_active` is checked solely at login. So a
+    deactivated admin can still register and update patients for up to
+    `jwt_expiry_minutes` (60) afterwards. Inherited from the Week 1 auth skeleton, not
+    introduced by the routers. Closing it means a per-request user lookup, which trades
+    the statelessness the JWT was chosen for -- a real decision, not an oversight.
+    **Task 12 must record it as a deliberate deferral** in the design spec rather than
+    leave it undocumented.
+11. **An infrastructure failure breaks the error-response contract.** If Mongo is down,
+    the awaited audit write raises `ServerSelectionTimeoutError` after ~2s. That is not a
+    `DomainError`, so nothing in `app/api/error_handlers.py` catches it and Starlette
+    returns `{"detail": "Internal Server Error"}` -- a different shape from the
+    `{"error", "detail"}` body every other failure produces, so a client parsing errors
+    uniformly breaks on exactly the path that is hardest to reproduce. Postgres state is
+    safe (the session rolls back). **Task 12 should add a catch-all handler** preserving
+    the contract, without leaking the exception text.
+12. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
