@@ -61,7 +61,17 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    `request.app.state.mongo` attribute names and its argument order into
    `get_audit_collection` are verified only by reading. **Task 9 must drive it through the
    real dependency**, not a test override, or the wiring stays unproven.
-6. **The default `jwt_secret` is 20 bytes**, so PyJWT emits `InsecureKeyLengthWarning` on
+6. **The duplicate-MRN check in Task 5 matches the wrong constraint name.** `patients.mrn`
+   is declared `unique=True, index=True`, so SQLAlchemy emits a **unique index**
+   `ix_patients_mrn` (see `migrations/versions/0001_baseline.py:74`) and **no**
+   `uq_patients_mrn` exists. The plan's `if "uq_patients_mrn" in str(exc.orig)` therefore
+   never matches, and a duplicate MRN returns **500 instead of the required 409**.
+   `providers.license_number` is declared `unique=True` only, so it really does get
+   `uq_providers_license_number` — the two are asymmetric. Do not string-match at all:
+   asyncpg raises `UniqueViolationError` carrying a `.constraint_name` attribute, so use
+   `getattr(exc.orig, "constraint_name", None)`, and **confirm the observed value by
+   provoking a real duplicate insert** before writing the comparison.
+7. **The default `jwt_secret` is 20 bytes**, so PyJWT emits `InsecureKeyLengthWarning` on
    every token operation. Raise the default to >=32 bytes in Task 12.
 
 ## Deviation from the spec, deliberate
@@ -880,6 +890,11 @@ from app.modules.patients.schemas import PatientCreate, PatientUpdate
 
 ENTITY = "patient"
 
+#: The database enforces MRN uniqueness with a unique index, not a unique constraint —
+#: `Patient.mrn` is declared `unique=True, index=True`. Verified against
+#: `migrations/versions/0001_baseline.py`.
+MRN_UNIQUE_CONSTRAINT = "ix_patients_mrn"
+
 
 def _snapshot(patient: Patient) -> dict[str, object]:
     """The audited shape of a patient. Deliberately excludes nothing sensitive today,
@@ -909,7 +924,10 @@ async def register_patient(
         await session.flush()
     except IntegrityError as exc:
         # The naming convention makes this constraint name predictable.
-        if "uq_patients_mrn" in str(exc.orig):
+        # `patients.mrn` is `unique=True, index=True`, so the database enforces it with a
+        # unique INDEX (`ix_patients_mrn`), not a named unique constraint. Compare against
+        # asyncpg's `constraint_name` rather than string-matching the message.
+        if getattr(exc.orig, "constraint_name", None) == MRN_UNIQUE_CONSTRAINT:
             raise Conflict(f"a patient with MRN {data.mrn} already exists") from exc
         raise
 
