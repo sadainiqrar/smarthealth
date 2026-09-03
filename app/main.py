@@ -13,8 +13,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.error_handlers import register_error_handlers
 from app.api.router import api_router
-from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client

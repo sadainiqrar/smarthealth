@@ -1,15 +1,17 @@
-"""Domain errors and their HTTP translation.
+"""Domain errors.
 
 Services raise these; routers never catch them. That separation is the reason the
 service layer exists at all — Week 2's Temporal activities call the same functions and
 need an exception they can act on, not an `HTTPException` that only means something to
 a web framework.
+
+This module has zero framework imports on purpose: importing it must not pull FastAPI,
+Starlette, or the ASGI stack into a process that has no business loading them (a
+Temporal worker, a Celery task, a plain script). The HTTP translation of these errors
+lives in `app.api.error_handlers`, not here.
 """
 
 from __future__ import annotations
-
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 
 
 class DomainError(Exception):
@@ -38,18 +40,3 @@ class InvalidCredentials(DomainError):
     """Authentication failed. Deliberately says nothing about which part failed."""
 
     status_code = 401
-
-
-def register_error_handlers(app: FastAPI) -> None:
-    """One handler on the base class covers every subclass.
-
-    Starlette resolves handlers by walking the raised exception's MRO, so this single
-    registration catches `NotFound`, `Conflict` and the rest.
-    """
-
-    @app.exception_handler(DomainError)
-    async def _handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": type(exc).__name__, "detail": exc.detail},
-        )
