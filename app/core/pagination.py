@@ -1,11 +1,20 @@
-"""Offset pagination for list endpoints."""
+"""Offset pagination types for list endpoints.
+
+This module has zero framework imports on purpose, for the same reason as
+`app.core.errors` and `app.core.audit`: importing it must not pull FastAPI, Starlette,
+or the ASGI stack into a process that has no business loading them (a Temporal worker, a
+Celery task, a plain script). `PageParams` and `Page` are plain dataclass/pydantic
+types a service can build and return without ever knowing a request happened.
+
+The FastAPI dependency that parses `limit`/`offset` off the query string into a
+`PageParams` lives in `app.api.deps`, not here — see `page_params` there.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from fastapi import Query
 from pydantic import BaseModel, Field
 
 T = TypeVar("T")
@@ -19,14 +28,6 @@ DEFAULT_LIMIT = 50
 class PageParams:
     limit: int
     offset: int
-
-
-def page_params(
-    limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
-    offset: int = Query(0, ge=0),
-) -> PageParams:
-    """FastAPI dependency for the two query parameters."""
-    return PageParams(limit=limit, offset=offset)
 
 
 class Page(BaseModel, Generic[T]):
