@@ -1146,8 +1146,9 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit import AuditLog, get_audit_log
-from app.core.pagination import Page, PageParams, page_params
+from app.api.deps import get_audit_log, page_params
+from app.core.audit import AuditLog
+from app.core.pagination import Page, PageParams
 from app.db.session import get_session
 from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
@@ -1636,8 +1637,9 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.audit import AuditLog, get_audit_log
-from app.core.pagination import Page, PageParams, page_params
+from app.api.deps import get_audit_log, page_params
+from app.core.audit import AuditLog
+from app.core.pagination import Page, PageParams
 from app.db.session import get_session
 from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
