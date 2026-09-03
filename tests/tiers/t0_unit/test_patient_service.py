@@ -1,6 +1,6 @@
 """Unit coverage for `app.modules.patients.service` that needs no database.
 
-`list_patients`'s search escaping (Fix 1 -- `Column.contains(search, autoescape=True)`
+`list_patients`'s search escaping (Fix 1 -- `Column.icontains(search, autoescape=True)`
 instead of a hand-built `f"%{search}%"` passed to `ilike`) is only observable in the
 compiled SQL: whether "a_b" over-matches "axb" is a property of how Postgres evaluates
 LIKE, not of anything Python can assert without a live connection. That over-match /
@@ -8,6 +8,13 @@ fix comparison was proven separately against the running test-stack database. Wh
 unit test *can* assert without a database is that the statement `list_patients` sends
 downstream carries an ESCAPE clause and an escaped `_`/`%` -- i.e. that escaping is
 actually wired in, not just present in some other expression this test doesn't exercise.
+
+Compiled against `sqlalchemy.dialects.postgresql.dialect()`, the same dialect asyncpg
+uses at runtime, `icontains(..., autoescape=True)` compiles to a native `ILIKE ... ESCAPE`
+-- not the `lower(col) LIKE lower(term)` form SQLAlchemy's generic/default dialect
+produces for the same expression. `contains()` (the regression this replaced) compiles to
+a plain, case-sensitive `LIKE` here, so `ILIKE` is what actually distinguishes the two
+under this dialect and is what the case-insensitivity test below pins on.
 """
 
 from __future__ import annotations
@@ -73,3 +80,22 @@ async def test_search_still_wraps_the_term_for_an_ordinary_substring_match():
     # check needs to prove.
     assert "|| 'Blog' ||" in compiled
     assert "ESCAPE" in compiled
+
+
+async def test_search_stays_case_insensitive_in_the_compiled_statement():
+    """Pins `icontains` against a regression back to `contains`.
+
+    `contains(..., autoescape=True)` -- what caused the case-sensitivity regression this
+    fix corrects -- compiles to a plain, case-sensitive `LIKE ... ESCAPE` under the same
+    dialect. `icontains` compiles to `ILIKE ... ESCAPE`. If a future edit "simplifies"
+    this back to `contains`, `ILIKE` disappears from the compiled statement and this test
+    fails loudly instead of the regression shipping silently.
+    """
+    session = _CapturingSession()
+
+    await list_patients(session, page=PageParams(limit=50, offset=0), search="bloggs")
+
+    for stmt in session.statements:
+        compiled = _compiled(stmt)
+        assert "ILIKE" in compiled
+        assert "ESCAPE" in compiled

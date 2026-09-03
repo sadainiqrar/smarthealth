@@ -116,16 +116,20 @@ async def list_patients(
     """Return one page of patients and the total matching the same filter."""
     conditions = []
     if search:
-        # `%` and `_` are LIKE metacharacters. `Column.contains(..., autoescape=True)`
+        # `%` and `_` are LIKE metacharacters. `Column.icontains(..., autoescape=True)`
         # escapes both (and the escape character itself) before wrapping the term in
         # wildcards, so a search for "a_b" cannot also match "axb" -- see the
         # before/after comparison run against the live database, documented in the
-        # commit that introduced this fix.
+        # commit that introduced this fix. Use `icontains`, not `contains`: `contains`
+        # compiles to a plain `LIKE`, which is case-sensitive and would silently make
+        # "bloggs" stop matching "Bloggs". `icontains` compiles to
+        # `lower(col) LIKE lower(term) ESCAPE '/'`, so escaping and case-insensitivity
+        # both hold -- do not "simplify" this back to `contains`.
         conditions.append(
             or_(
-                Patient.mrn.contains(search, autoescape=True),
-                Patient.first_name.contains(search, autoescape=True),
-                Patient.last_name.contains(search, autoescape=True),
+                Patient.mrn.icontains(search, autoescape=True),
+                Patient.first_name.icontains(search, autoescape=True),
+                Patient.last_name.icontains(search, autoescape=True),
             )
         )
 
