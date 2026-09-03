@@ -71,8 +71,10 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    asyncpg raises `UniqueViolationError` carrying a `.constraint_name` attribute, so use
    `getattr(exc.orig, "constraint_name", None)`, and **confirm the observed value by
    provoking a real duplicate insert** before writing the comparison.
-7. **The default `jwt_secret` is 20 bytes**, so PyJWT emits `InsecureKeyLengthWarning` on
-   every token operation. Raise the default to >=32 bytes in Task 12.
+7. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+   `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
+   Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
+   arguments rather than repeating the literal, or raising the default breaks them.
 
 ## Deviation from the spec, deliberate
 
@@ -1051,7 +1053,9 @@ from app.settings import Settings
 
 pytestmark = pytest.mark.contract
 
-SETTINGS = Settings(jwt_secret="dev-secret-change-me", jwt_expiry_minutes=30)
+#: Constructed with no overrides so it resolves to exactly what the running app reads.
+#: Hardcoding the secret here would silently break the moment the default changes.
+SETTINGS = Settings()
 NOW = datetime.now(UTC)
 
 VALID_BODY = {"mrn": "MRN-AUTHZ", "first_name": "Jo", "last_name": "Bloggs"}
@@ -1541,7 +1545,9 @@ from app.settings import Settings
 
 pytestmark = pytest.mark.contract
 
-SETTINGS = Settings(jwt_secret="dev-secret-change-me", jwt_expiry_minutes=30)
+#: Constructed with no overrides so it resolves to exactly what the running app reads.
+#: Hardcoding the secret here would silently break the moment the default changes.
+SETTINGS = Settings()
 NOW = datetime.now(UTC)
 
 VALID_BODY = {
