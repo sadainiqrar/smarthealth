@@ -12,8 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidCredentials
 from app.modules.identity.models import User
-from app.modules.identity.security import create_access_token, verify_password
+from app.modules.identity.security import (
+    create_access_token,
+    hash_password,
+    verify_password,
+)
 from app.settings import Settings
+
+#: Verified against when no user matches, so that a failed login costs the same
+#: argon2 work whether or not the address exists. Without this the response time
+#: alone reveals which addresses are registered, defeating the identical message.
+_DUMMY_PASSWORD_HASH = hash_password("not-a-real-password")
 
 
 async def authenticate(
@@ -26,12 +35,21 @@ async def authenticate(
 ) -> tuple[str, int]:
     """Return an access token and its lifetime in seconds.
 
-    Every failure path raises the same error with the same message. Distinguishing
-    "no such account" from "wrong password" tells an attacker which addresses are
-    registered, and an inactive account should not be enumerable either.
+    Every failure path raises the same error with the same message, and costs the
+    same time. Distinguishing "no such account" from "wrong password" tells an
+    attacker which addresses are registered, and an inactive account should not be
+    enumerable either.
+
+    The identical message alone is not enough. `or` short-circuits, so an unknown
+    address would never reach `verify_password` while a known one pays argon2's
+    deliberate ~55ms — a gap trivially readable over a network. So `verify_password`
+    runs exactly once on every path, against `_DUMMY_PASSWORD_HASH` when there is no
+    user to check, and its result is only consulted afterwards.
     """
     user = await session.scalar(select(User).where(User.email == email))
-    if user is None or not user.is_active or not verify_password(password, user.password_hash):
+    stored_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
+    password_matches = verify_password(password, stored_hash)
+    if user is None or not user.is_active or not password_matches:
         raise InvalidCredentials("email or password is incorrect")
 
     token = create_access_token(subject=str(user.id), role=user.role, settings=settings, now=now)
