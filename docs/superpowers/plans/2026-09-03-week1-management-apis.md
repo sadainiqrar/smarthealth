@@ -1845,7 +1845,8 @@ api_router.include_router(providers_router.router)
 - [ ] **Step 5: Run to verify it passes**
 
 Run: `.venv/Scripts/python.exe -m pytest tests/tiers/t1_contract/test_providers_authz.py -v`
-Expected: 13 passed (two are parametrized over three roles)
+Expected: 11 passed -- 7 test functions, 5 unparametrized plus 2 parametrized over
+three roles (5 + 6). Confirm with `--collect-only` rather than trusting this arithmetic.
 
 - [ ] **Step 6: Verify and commit**
 
