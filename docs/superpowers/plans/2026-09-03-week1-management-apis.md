@@ -122,7 +122,25 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
     uniformly breaks on exactly the path that is hardest to reproduce. Postgres state is
     safe (the session rolls back). **Task 12 should add a catch-all handler** preserving
     the contract, without leaking the exception text.
-12. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+12. **Carried to Week 2, deliberately not fixed now** (surfaced while building the
+    provider module):
+    - `list_providers` has no `is_active` filter, so a deactivated clinician still
+      appears in listings. Adding one is additive as long as the **default stays
+      unfiltered**; changing the default later would be a behaviour break, so decide it
+      when booking needs "bookable providers only".
+    - `update_provider` will deactivate a provider holding future booked slots and live
+      appointments, with no check and no cascade. Genuinely Week 2's problem, but a real
+      one -- it is the sort of thing Temporal is in the stack to handle.
+    - The `Conflict` message echoes the client-supplied MRN or licence number, making it
+      an existence oracle. **Accepted:** both write paths are role-gated (patients to
+      front-desk/admin, providers to admin), and those are precisely the people who
+      legitimately handle those identifiers. If it ever changes, change both modules
+      together -- they are deliberately symmetrical.
+13. **`\` collapses to `\` in a Bash heredoc even with a quoted delimiter**, silently
+    corrupting a literal like `a\_b` into `a_b` and emitting only a `SyntaxWarning`. Same
+    class of silent corruption as `Path.write_text` writing CRLF into an LF repo. Use the
+    Edit tool for content containing backslashes, or run with `-W error::SyntaxWarning`.
+14. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
