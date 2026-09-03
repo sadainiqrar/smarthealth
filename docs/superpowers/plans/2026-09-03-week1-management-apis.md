@@ -33,6 +33,37 @@ E2E_WAIVE="core/errors.py is plumbing; behaviour covered by the endpoint cases i
 
 The reason is logged to `tests/waivers.log`, which is tracked on purpose — an audit trail that isn't committed isn't an audit trail.
 
+## Findings from execution that later tasks MUST honour
+
+Discovered while implementing tasks 1-4. Each one silently breaks a later task if ignored.
+
+1. **`.test` email addresses are rejected.** `email-validator` refuses `.test`, `.invalid`
+   and `localhost` as special-use TLDs, so `nobody@example.test` returns 422 before the
+   service is ever called. **Task 9 fixtures and every case file must use `example.com`.**
+   A `.test` address would look exactly like an auth bug.
+2. **`app.routes` does not enumerate routes on FastAPI 0.141.1.** Mounted routers appear as
+   a single `fastapi.routing._IncludedRouter` exposing `original_router` /
+   `effective_route_contexts`, with no `.routes` to recurse into. Any meta-test that walks
+   `app.routes` will find zero routes and **pass vacuously**. Write it against that
+   structure, and prove it discriminates by mutation before trusting it.
+3. **`/openapi.json` cannot prove a route is public.** `require_role` reads the raw
+   `Authorization` header instead of using a FastAPI security scheme, so it contributes
+   nothing to the schema — a gated route and a public route are indistinguishable there.
+   Prove "public" behaviourally: no auth header plus an invalid body returns **422**, not
+   401, because validation only runs once no auth gate has rejected the request first.
+4. **`app/core/*` modules must not import FastAPI.** Three separate modules shipped this
+   defect (`errors.py`, `audit.py`, `pagination.py`). The rule: framework-free types live in
+   `app/core/`, and every FastAPI dependency provider lives in `app/api/deps.py`. Prove it in
+   a **fresh interpreter** — an in-process assertion cannot, since pytest has already
+   imported FastAPI:
+   `python -c "import sys; import app.core.X; print('fastapi' in sys.modules)"` must be `False`.
+5. **`get_audit_log` is exercised by nothing** until tasks 6 and 8 call it. Its
+   `request.app.state.mongo` attribute names and its argument order into
+   `get_audit_collection` are verified only by reading. **Task 9 must drive it through the
+   real dependency**, not a test override, or the wiring stays unproven.
+6. **The default `jwt_secret` is 20 bytes**, so PyJWT emits `InsecureKeyLengthWarning` on
+   every token operation. Raise the default to >=32 bytes in Task 12.
+
 ## Deviation from the spec, deliberate
 
 The spec's §8 says T1 overrides the service dependency with a fake. That turns out to be unnecessary: `require_role` and request validation both reject **before** the handler body runs, and `get_session` opens a session without connecting (the engine is lazy). So the T1 authz matrix and validation tests need neither a database nor a fake. Response *shape* on the success path is proven at T3 against real data, where it means more.
