@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound
 from app.core.pagination import PageParams
+from app.db.constraints import violated_constraint
 from app.modules.patients.models import Patient
 from app.modules.patients.schemas import PatientCreate, PatientUpdate
 
@@ -32,22 +33,6 @@ ENTITY = "patient"
 #: `op.create_index(op.f('ix_patients_mrn'), 'patients', ['mrn'], unique=True)`.
 #: Verified against the running database: asyncpg reports exactly this name.
 MRN_UNIQUE_CONSTRAINT = "ix_patients_mrn"
-
-
-def _violated_constraint(exc: IntegrityError) -> str | None:
-    """The name of the constraint or unique index that rejected the write.
-
-    `exc.orig` is *not* the asyncpg error: SQLAlchemy's asyncpg dialect re-raises it as
-    its own `IntegrityError` shim, which carries only `sqlstate`/`pgcode`. The original
-    `asyncpg.exceptions.UniqueViolationError` -- the object holding `constraint_name` --
-    hangs off it as `__cause__`. Verified against the running database; matching on
-    `exc.orig` alone always missed, which turned a duplicate MRN into a 500.
-    """
-    for candidate in (exc.orig.__cause__ if exc.orig is not None else None, exc.orig):
-        name = getattr(candidate, "constraint_name", None)
-        if name:
-            return str(name)
-    return None
 
 
 def _snapshot(patient: Patient) -> dict[str, object]:
@@ -78,7 +63,7 @@ async def register_patient(
     try:
         await session.flush()
     except IntegrityError as exc:
-        if _violated_constraint(exc) == MRN_UNIQUE_CONSTRAINT:
+        if violated_constraint(exc) == MRN_UNIQUE_CONSTRAINT:
             raise Conflict(f"a patient with MRN {data.mrn} already exists") from exc
         raise
 
