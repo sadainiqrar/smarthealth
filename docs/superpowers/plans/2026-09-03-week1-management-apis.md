@@ -38,7 +38,7 @@ The reason is logged to `tests/waivers.log`, which is tracked on purpose — an 
 Discovered while implementing tasks 1-4. Each one silently breaks a later task if ignored.
 
 1. **`.test` email addresses are rejected.** `email-validator` refuses `.test`, `.invalid`
-   and `localhost` as special-use TLDs, so `nobody@example.test` returns 422 before the
+   and `localhost` as special-use TLDs, so `nobody@example.com` returns 422 before the
    service is ever called. **Task 9 fixtures and every case file must use `example.com`.**
    A `.test` address would look exactly like an auth bug.
 2. **`app.routes` does not enumerate routes on FastAPI 0.141.1.** Mounted routers appear as
@@ -575,7 +575,7 @@ async def test_login_rejects_a_malformed_email(api_client):
 async def test_login_is_public(api_client):
     """No Authorization header: the route must not be behind require_role."""
     response = await api_client.post(
-        "/auth/login", json={"email": "nobody@example.test", "password": "wrong"}
+        "/auth/login", json={"email": "nobody@example.com", "password": "wrong"}
     )
     assert response.status_code != 401 or response.json()["error"] == "InvalidCredentials"
     assert response.status_code in (401, 500)
@@ -1859,7 +1859,7 @@ async def _user(session, *, email: str, password: str, active: bool = True) -> U
 
 async def test_login_issues_a_usable_token(api, db_session):
     """Referenced by tests/cases/aut-001-login-issues-a-token.yaml."""
-    email = f"admin-{uuid.uuid4().hex[:8]}@example.test"
+    email = f"admin-{uuid.uuid4().hex[:8]}@example.com"
     await _user(db_session, email=email, password="correct horse battery staple")
 
     response = await api.post(
@@ -1880,7 +1880,7 @@ async def test_login_issues_a_usable_token(api, db_session):
 
 async def test_a_wrong_password_and_an_unknown_email_are_indistinguishable(api, db_session):
     """Different messages would tell an attacker which addresses are registered."""
-    email = f"admin-{uuid.uuid4().hex[:8]}@example.test"
+    email = f"admin-{uuid.uuid4().hex[:8]}@example.com"
     await _user(db_session, email=email, password="right")
 
     wrong_password = await api.post(
@@ -1888,7 +1888,7 @@ async def test_a_wrong_password_and_an_unknown_email_are_indistinguishable(api, 
     )
     unknown_email = await api.post(
         "/auth/login",
-        json={"email": f"nobody-{uuid.uuid4().hex[:8]}@example.test", "password": "x"},
+        json={"email": f"nobody-{uuid.uuid4().hex[:8]}@example.com", "password": "x"},
     )
 
     assert wrong_password.status_code == unknown_email.status_code == 401
@@ -1896,7 +1896,7 @@ async def test_a_wrong_password_and_an_unknown_email_are_indistinguishable(api, 
 
 
 async def test_an_inactive_account_cannot_log_in(api, db_session):
-    email = f"admin-{uuid.uuid4().hex[:8]}@example.test"
+    email = f"admin-{uuid.uuid4().hex[:8]}@example.com"
     await _user(db_session, email=email, password="right", active=False)
 
     response = await api.post(
@@ -2229,7 +2229,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
 
 async def test_create_user_inserts_a_usable_account(db_settings, db_session):
-    email = f"cli-{uuid.uuid4().hex[:8]}@example.test"
+    email = f"cli-{uuid.uuid4().hex[:8]}@example.com"
     await create_user(
         settings=db_settings, email=email, password="a strong secret", role="admin"
     )
@@ -2242,7 +2242,7 @@ async def test_create_user_inserts_a_usable_account(db_settings, db_session):
 
 
 async def test_create_user_refuses_a_duplicate_email(db_settings):
-    email = f"cli-{uuid.uuid4().hex[:8]}@example.test"
+    email = f"cli-{uuid.uuid4().hex[:8]}@example.com"
     await create_user(settings=db_settings, email=email, password="x1", role="admin")
 
     with pytest.raises(SystemExit) as exit_info:
@@ -2254,7 +2254,7 @@ async def test_create_user_rejects_an_unknown_role(db_settings):
     with pytest.raises(SystemExit):
         await create_user(
             settings=db_settings,
-            email=f"cli-{uuid.uuid4().hex[:8]}@example.test",
+            email=f"cli-{uuid.uuid4().hex[:8]}@example.com",
             password="x",
             role="superuser",
         )
@@ -2365,7 +2365,7 @@ Against the running stack, create an admin and then log in with it via `curl` or
 ```bash
 SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth \
   .venv/Scripts/python.exe -m app.cli create-user \
-  --email demo@example.test --password "demo password" --role admin
+  --email demo@example.com --password "demo password" --role admin
 ```
 
 Then start the app (`uvicorn app.main:app --port 8001` with the same env) and
@@ -2583,7 +2583,7 @@ booking (Week 2).
 ```bash
 # an account to log in with
 SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth \
-  python -m app.cli create-user --email you@example.test --password "..." --role admin
+  python -m app.cli create-user --email you@example.com --password "..." --role admin
 
 # the whole system in containers
 docker compose --profile app -f docker-compose.infra.yml up -d --wait
