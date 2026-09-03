@@ -51,8 +51,10 @@ def _violated_constraint(exc: IntegrityError) -> str | None:
 
 
 def _snapshot(patient: Patient) -> dict[str, object]:
-    """The audited shape of a patient. Deliberately excludes nothing sensitive today,
-    but is a single place to redact from if that changes."""
+    """The audited shape of a patient: every column a mutation can change, including
+    `user_id` -- a future account-linking flow that reuses this function needs that
+    field in the trail, not just the identifying and contact columns. It is a single
+    place to redact from if a field ever needs to be excluded."""
     return {
         "mrn": patient.mrn,
         "first_name": patient.first_name,
@@ -60,6 +62,7 @@ def _snapshot(patient: Patient) -> dict[str, object]:
         "date_of_birth": patient.date_of_birth.isoformat() if patient.date_of_birth else None,
         "phone": patient.phone,
         "email": patient.email,
+        "user_id": str(patient.user_id) if patient.user_id is not None else None,
     }
 
 
@@ -92,6 +95,15 @@ async def register_patient(
 
 
 async def get_patient(session: AsyncSession, patient_id: uuid.UUID) -> Patient:
+    """Fetch a patient by id.
+
+    `session.get()` checks the identity map before the database. For one session per
+    HTTP request (`expire_on_commit=False`) that is exactly right. A longer-lived
+    session -- a Temporal activity or Celery task holding one across multiple calls --
+    can get back a stale object on a second `get_patient` for the same id; call
+    `session.expire(patient)` first, or pass `populate_existing=True`, when a fresh
+    read matters.
+    """
     patient = await session.get(Patient, patient_id)
     if patient is None:
         raise NotFound(f"patient {patient_id} does not exist")
@@ -104,12 +116,16 @@ async def list_patients(
     """Return one page of patients and the total matching the same filter."""
     conditions = []
     if search:
-        pattern = f"%{search}%"
+        # `%` and `_` are LIKE metacharacters. `Column.contains(..., autoescape=True)`
+        # escapes both (and the escape character itself) before wrapping the term in
+        # wildcards, so a search for "a_b" cannot also match "axb" -- see the
+        # before/after comparison run against the live database, documented in the
+        # commit that introduced this fix.
         conditions.append(
             or_(
-                Patient.mrn.ilike(pattern),
-                Patient.first_name.ilike(pattern),
-                Patient.last_name.ilike(pattern),
+                Patient.mrn.contains(search, autoescape=True),
+                Patient.first_name.contains(search, autoescape=True),
+                Patient.last_name.contains(search, autoescape=True),
             )
         )
 
@@ -135,6 +151,12 @@ async def update_patient(
     patient = await get_patient(session, patient_id)
     before = _snapshot(patient)
 
+    # No IntegrityError handling here, unlike register_patient: `PatientUpdate` cannot
+    # set `mrn` or `user_id`, the only columns with a uniqueness constraint, and `email`
+    # has none. If that changes -- a unique index added to `email`, or `PatientUpdate`
+    # extended to allow account linking via `user_id` -- this flush needs the same
+    # try/except IntegrityError -> Conflict translation as register_patient, or the
+    # violation surfaces as an unhandled 500 instead of a 409.
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(patient, field, value)
     await session.flush()

@@ -74,3 +74,12 @@ def test_update_still_accepts_an_ordinary_partial_update():
     """The validator must not fire on unset fields or on real values."""
     update = PatientUpdate(first_name="Ada")
     assert update.model_dump(exclude_unset=True) == {"first_name": "Ada"}
+
+
+def test_an_unknown_field_is_ignored_not_written():
+    """`mrn` is deliberately absent from PatientUpdate; a client that sends it must not
+    have it silently applied. Pydantic's default `extra="ignore"` drops it before the
+    model exists, so it can never reach the service's setattr loop."""
+    update = PatientUpdate(phone="+1 555 0100", mrn="SHOULD-BE-IGNORED")
+    assert update.model_dump(exclude_unset=True) == {"phone": "+1 555 0100"}
+    assert not hasattr(update, "mrn")
