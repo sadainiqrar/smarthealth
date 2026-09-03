@@ -1461,12 +1461,19 @@ ENTITY = "provider"
 
 
 def _snapshot(provider: Provider) -> dict[str, object]:
+    """The audited shape of a provider, and a single place to redact from later.
+
+    `user_id` is included so that a future account-linking flow reusing this helper
+    records the one field it changes -- the patients module omitted it and had to be
+    corrected.
+    """
     return {
         "first_name": provider.first_name,
         "last_name": provider.last_name,
         "specialty": provider.specialty,
         "license_number": provider.license_number,
         "is_active": provider.is_active,
+        "user_id": str(provider.user_id) if provider.user_id is not None else None,
     }
 
 
