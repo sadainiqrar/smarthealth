@@ -71,7 +71,23 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    asyncpg raises `UniqueViolationError` carrying a `.constraint_name` attribute, so use
    `getattr(exc.orig, "constraint_name", None)`, and **confirm the observed value by
    provoking a real duplicate insert** before writing the comparison.
-7. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+7. **`exc.orig` is not the asyncpg exception.** It is SQLAlchemy's asyncpg *dialect shim*,
+   exposing only `add_note`/`args`/`pgcode`/`sqlstate`/`with_traceback` — so
+   `getattr(exc.orig, "constraint_name", None)` is **always `None`**. The real
+   `asyncpg.exceptions.UniqueViolationError`, which does carry `constraint_name`, is at
+   `exc.orig.__cause__`. Task 5 added `_violated_constraint(exc)` checking `__cause__`
+   then `orig`; **Task 7 must reuse it, not re-derive it.** Verified empirically against
+   the live database, not from documentation.
+8. **A PATCH may not null out a NOT NULL column.** `first_name: str | None = Field(...)`
+   accepts an explicit `null`, `exclude_unset` reports it as set, and the service writes
+   `NULL` into a `NOT NULL` column -> `NotNullViolationError` -> an unhandled **500**,
+   triggerable by any client. `min_length=1` does not help; it constrains only the `str`
+   branch of the union. Every update schema needs a `field_validator` rejecting an
+   explicit `None` on the columns that are `NOT NULL` (`first_name`, `last_name` for
+   patients; `first_name`, `last_name`, `specialty` for providers) so the answer is a
+   422. Genuinely nullable fields -- `date_of_birth`, `phone`, `email` -- must keep
+   accepting `null`, since clearing them is a legitimate operation.
+9. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
