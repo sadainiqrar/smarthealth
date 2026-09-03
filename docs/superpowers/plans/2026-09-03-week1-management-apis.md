@@ -87,7 +87,14 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    patients; `first_name`, `last_name`, `specialty` for providers) so the answer is a
    422. Genuinely nullable fields -- `date_of_birth`, `phone`, `email` -- must keep
    accepting `null`, since clearing them is a legitimate operation.
-9. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+9. **`ilike(f"%{search}%")` leaks LIKE wildcards.** `%` and `_` inside a user's search
+   term are metacharacters, so `a_b` also matches `axb` and `100%` matches anything
+   containing `100` -- a patient lookup silently returning people nobody searched for.
+   It is not injection (the value is parameterised), it is over-matching. Use
+   `Column.contains(value, autoescape=True)`, which escapes them. Applies to
+   `list_patients` (fixed as a follow-up to Task 5) and `list_providers` (fixed in the
+   Task 7 text above).
+10. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
@@ -1489,11 +1496,16 @@ async def list_providers(
 ) -> tuple[list[Provider], int]:
     conditions = []
     if specialty:
-        conditions.append(Provider.specialty.ilike(specialty))
+        # Case-insensitive equality, not ILIKE: an unescaped ILIKE value lets a
+        # client pass "%" and match every provider.
+        conditions.append(func.lower(Provider.specialty) == specialty.lower())
     if search:
         pattern = f"%{search}%"
         conditions.append(
-            or_(Provider.first_name.ilike(pattern), Provider.last_name.ilike(pattern))
+            or_(
+                Provider.first_name.contains(search, autoescape=True),
+                Provider.last_name.contains(search, autoescape=True),
+            )
         )
 
     total = await session.scalar(
