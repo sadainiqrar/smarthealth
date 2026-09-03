@@ -93,8 +93,16 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
    It is not injection (the value is parameterised), it is over-matching. Use
    `Column.icontains(value, autoescape=True)` -- **not** `contains`, which compiles to
    `LIKE` and would silently make the search case-sensitive, so `bloggs` would stop
-   matching `Bloggs`. `icontains` compiles to `lower(col) LIKE lower(term) ESCAPE '/'`,
-   keeping both properties. Applies to
+   matching `Bloggs`.
+
+   **How `icontains` compiles depends on the dialect, and this has now misled three
+   separate tasks.** Under SQLAlchemy's *generic* dialect it emits
+   `lower(col) LIKE lower(term) ESCAPE '/'`; under the **PostgreSQL** dialect -- the one
+   asyncpg actually speaks -- it emits a native `col ILIKE term ESCAPE '/'` with no
+   `lower(` anywhere. A test that asserts `"lower(" in compiled` therefore fails against
+   real output, and "fixing" it by compiling under the generic dialect tests something
+   the application never runs. **Assert on `ILIKE`, compiling with
+   `sqlalchemy.dialects.postgresql.dialect()`.** Applies to
    `list_providers` (corrected in the Task 7 text above) and to `list_patients`, which
    needs a follow-up commit against the code Task 5 already shipped. Task 6 is what
    first exposes `search` over HTTP, so the patients side is live until that lands.
