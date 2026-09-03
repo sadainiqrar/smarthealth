@@ -1344,7 +1344,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class ProviderCreate(BaseModel):
@@ -1371,6 +1371,21 @@ class ProviderUpdate(BaseModel):
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     specialty: str | None = Field(default=None, min_length=1, max_length=120)
     is_active: bool | None = None
+
+    @field_validator("first_name", "last_name", "specialty", "is_active")
+    @classmethod
+    def _reject_an_explicit_null(cls, value: object) -> object:
+        """Every column this schema can touch is NOT NULL.
+
+        Without this an explicit `{"specialty": null}` validates, `exclude_unset`
+        reports it as set, and the service writes NULL into a NOT NULL column -- a
+        client-triggerable 500 instead of a 422. `min_length` does not cover it: it
+        constrains only the `str` branch of the union. Unset fields never reach a
+        field validator, so a normal partial update is unaffected.
+        """
+        if value is None:
+            raise ValueError("may not be set to null")
+        return value
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> ProviderUpdate:
