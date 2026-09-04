@@ -13,6 +13,7 @@ import asyncio
 import sys
 from collections.abc import Sequence
 
+from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.db.constraints import violated_constraint
@@ -29,6 +30,15 @@ from app.settings import Settings
 #: `violated_constraint()` off the resulting `IntegrityError`.
 USERS_EMAIL_CONSTRAINT = "ix_users_email"
 
+#: The *same* validator `LoginRequest.email` uses, so the CLI cannot accept an address
+#: the login endpoint will later reject. `email-validator` refuses the reserved TLDs
+#: (`.test`, `.invalid`, `localhost`) as well as malformed addresses, so without this
+#: check `create-user --email admin@medinova.test` writes a row whose owner can never
+#: authenticate: the account looks created and is silently useless. Validate through
+#: pydantic rather than a hand-rolled regex — a second implementation would drift from
+#: `LoginRequest` and reintroduce exactly this disagreement.
+_EMAIL = TypeAdapter(EmailStr)
+
 
 async def create_user(*, settings: Settings, email: str, password: str, role: str) -> None:
     """Insert a usable `users` row, or exit(1) politely on a bad input.
@@ -36,6 +46,16 @@ async def create_user(*, settings: Settings, email: str, password: str, role: st
     Builds and disposes its own engine so it can run standalone, outside any request
     lifecycle. Never prints the password.
     """
+    try:
+        _EMAIL.validate_python(email)
+    except ValidationError:
+        print(
+            f"error: '{email}' is not an address that can log in. The login endpoint "
+            f"validates the same way and would reject it.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+
     try:
         parsed_role = UserRole(role)
     except ValueError:
