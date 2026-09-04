@@ -4,6 +4,10 @@
 #
 #   dev:   docker compose -f docker-compose.infra.yml up -d --wait
 #   test:  docker compose -p smarthealth-test --env-file .env.test -f docker-compose.infra.yml up -d --wait
+#   full:  docker compose --profile app -f docker-compose.infra.yml up -d --wait
+#
+# The `full` invocation adds the containerised application. It is deliberately behind
+# a profile, so the two infrastructure-only invocations above are unchanged by it.
 #
 # Every service declares a healthcheck: `--wait` blocks until they report healthy,
 # so the harness never sleeps and guesses.
@@ -11,6 +15,45 @@
 name: smarthealth
 
 services:
+  app:
+    # Behind a profile so the test stack, which runs this same file under
+    # -p smarthealth-test, does not try to start an app container on every
+    # `up -d --wait`. The tests drive the application in-process.
+    #
+    #   docker compose --profile app -f docker-compose.infra.yml up -d --wait
+    #
+    # Note this reaches the databases on their *internal* ports. The 15432/27018
+    # offsets in .env.test are host-side publications only and mean nothing here.
+    profiles: ["app"]
+    build: .
+    environment:
+      SMARTHEALTH_ENVIRONMENT: docker
+      SMARTHEALTH_POSTGRES_HOST: postgres
+      SMARTHEALTH_POSTGRES_PORT: 5432
+      SMARTHEALTH_POSTGRES_USER: ${POSTGRES_USER:-smarthealth}
+      SMARTHEALTH_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthealth}
+      SMARTHEALTH_POSTGRES_DB: ${POSTGRES_DB:-smarthealth}
+      SMARTHEALTH_MONGO_HOST: mongo
+      SMARTHEALTH_MONGO_PORT: 27017
+      SMARTHEALTH_MONGO_DB: ${MONGO_DB:-smarthealth}
+      SMARTHEALTH_REDIS_HOST: redis
+      SMARTHEALTH_REDIS_PORT: 6379
+      SMARTHEALTH_JWT_SECRET: ${SMARTHEALTH_JWT_SECRET:-dev-secret-change-me}
+    ports: ["${APP_PORT:-8000}:8000"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   postgres:
     image: postgres:16-alpine
     environment:

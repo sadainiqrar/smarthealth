@@ -1,0 +1,12 @@
+# Keep the build context small and the image free of host-only state.
+# Note the `**/` prefixes: .dockerignore patterns are anchored at the context
+# root, so a bare `__pycache__` would only exclude a top-level one and would
+# happily copy `app/__pycache__` into the image.
+.git
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+tests/reports
+docs
