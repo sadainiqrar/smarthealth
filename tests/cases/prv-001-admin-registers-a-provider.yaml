@@ -1,0 +1,7 @@
+id: prv-001-admin-registers-a-provider
+title: "An admin registers a provider and the change is audited"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P0
+status: ready
+impl: "tests/tiers/t3_integration/test_providers_api.py::test_admin_registers_a_provider"

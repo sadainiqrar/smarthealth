@@ -1,0 +1,7 @@
+id: pat-001-front-desk-registers-a-patient
+title: "Front-desk staff register a walk-in patient with no user account"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P0
+status: ready
+impl: "tests/tiers/t3_integration/test_patients_api.py::test_front_desk_registers_a_patient"
