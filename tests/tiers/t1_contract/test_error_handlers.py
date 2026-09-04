@@ -40,11 +40,17 @@ def build_app() -> FastAPI:
     async def out_of_budget() -> None:
         raise _OutOfBudget("insurance budget exhausted")
 
+    @app.get("/boom")
+    async def boom() -> None:
+        raise RuntimeError("mongodb://user:hunter2@mongo:27017 is unreachable")
+
     return app
 
 
-async def call(path: str) -> httpx.Response:
-    transport = httpx.ASGITransport(app=build_app())
+async def call(path: str, *, raise_app_exceptions: bool = True) -> httpx.Response:
+    transport = httpx.ASGITransport(
+        app=build_app(), raise_app_exceptions=raise_app_exceptions
+    )
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
         return await client.get(path)
 
@@ -83,3 +89,43 @@ async def test_a_subclass_unknown_to_the_handler_is_still_caught_via_mro():
         "error": "_OutOfBudget",
         "detail": "insurance budget exhausted",
     }
+
+
+async def test_an_unexpected_exception_keeps_the_documented_error_shape():
+    """A failure nobody anticipated must still answer `{"error", "detail"}`.
+
+    Starlette's own 500 answers `{"detail": "Internal Server Error"}` with no `error`
+    key, so a client parsing errors uniformly would break on exactly the failure that
+    is hardest to reproduce.
+
+    `raise_app_exceptions=False` is required to observe this at all:
+    `ServerErrorMiddleware` sends the handler's response and then re-raises, so the
+    default transport reports the exception instead of the response. That re-raise is
+    also why registering this handler did not change any existing test.
+    """
+    response = await call("/boom", raise_app_exceptions=False)
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": "InternalError",
+        "detail": "an unexpected error occurred",
+    }
+
+
+async def test_an_unexpected_exception_leaks_neither_its_text_nor_a_traceback():
+    """The message of a real failure carries connection strings and row data."""
+    response = await call("/boom", raise_app_exceptions=False)
+    body = response.text
+    assert "hunter2" not in body
+    assert "RuntimeError" not in body
+    assert "Traceback" not in body
+
+
+async def test_a_starlette_http_exception_is_not_swallowed_by_the_catch_all():
+    """Registering a handler for `Exception` must not change FastAPI's own errors.
+
+    Starlette dispatches `HTTPException` through a different path, so a 404 for an
+    unrouted URL keeps its `{"detail": ...}` shape rather than becoming a 500.
+    """
+    response = await call("/no-such-route")
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}

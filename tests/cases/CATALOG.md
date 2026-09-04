@@ -6,12 +6,13 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 6 |
-| contract | 1 |
+| Total cases | 7 |
+| contract | 2 |
 | integration | 5 |
 | P0 | 6 |
+| P1 | 1 |
 | declarative | 1 |
-| impl-backed | 5 |
+| impl-backed | 6 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -25,3 +26,4 @@
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
+| sys-003-an-unexpected-failure-keeps-the-error-shape | contract | P1 | impl | PART-A-OBS-1 | An unexpected exception answers the documented error shape, leaking nothing |

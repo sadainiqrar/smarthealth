@@ -1,0 +1,10 @@
+id: sys-003-an-unexpected-failure-keeps-the-error-shape
+title: "An unexpected exception answers the documented error shape, leaking nothing"
+requirement: [PART-A-OBS-1]
+tier: contract
+priority: P1
+status: ready
+# `impl` rather than `steps`: the catalog engine drives the real app over HTTP and
+# has no way to provoke an unanticipated failure inside it. The behaviour is proven
+# by a hand-written contract test that raises from a route deliberately.
+impl: "tests/tiers/t1_contract/test_error_handlers.py::test_an_unexpected_exception_keeps_the_documented_error_shape"
