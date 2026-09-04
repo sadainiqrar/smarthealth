@@ -6,13 +6,13 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 7 |
+| Total cases | 8 |
 | contract | 2 |
-| integration | 5 |
+| integration | 6 |
 | P0 | 6 |
-| P1 | 1 |
+| P1 | 2 |
 | declarative | 1 |
-| impl-backed | 6 |
+| impl-backed | 7 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -21,6 +21,7 @@
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
+| ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |

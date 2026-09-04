@@ -1,0 +1,7 @@
+id: ops-001-the-cli-creates-a-usable-account
+title: "The create-user command inserts an account that can actually log in"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P1
+status: ready
+impl: "tests/tiers/t3_integration/test_cli.py::test_create_user_inserts_a_usable_account"

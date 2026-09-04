@@ -5,3 +5,12 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 *.yml text eol=lf
+
+# The repo is otherwise a genuine mix: README.md is LF while CLAUDE.md and
+# tests/README.md are CRLF, because tools that rewrite a file in place adopt
+# whatever the platform default is. Normalise text formats so an edit shows as the
+# lines that changed rather than a whole-file rewrite.
+*.md text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf

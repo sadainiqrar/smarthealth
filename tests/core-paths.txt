@@ -14,3 +14,7 @@ app/core/**
 app/db/**
 app/modules/**
 migrations/**
+# Operational entry point, not part of the request path -- but it writes rows to the
+# users table, so a change to it is feature work by any honest definition. Without
+# this glob it could be altered with nothing gating it.
+app/cli.py
