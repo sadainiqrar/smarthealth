@@ -15,7 +15,7 @@ from app.settings import Settings
 
 pytestmark = pytest.mark.unit
 
-SETTINGS = Settings(jwt_secret="unit-test-secret", jwt_expiry_minutes=30)
+SETTINGS = Settings(jwt_secret="unit-test-secret-at-least-32-bytes-long", jwt_expiry_minutes=30)
 #: Anchored to the real clock, not a fixed date. `decode_access_token` validates
 #: `exp` against wall-clock time, so a hardcoded NOW makes every token-validity test
 #: depend on what time of day the suite happens to run — and eventually fail forever.
@@ -67,7 +67,7 @@ def test_a_token_signed_with_another_secret_is_rejected():
     """Accepting a foreign signature would let anyone mint an admin token."""
     token = create_access_token(
         subject="u1", role=UserRole.ADMIN,
-        settings=Settings(jwt_secret="attacker-secret"), now=NOW,
+        settings=Settings(jwt_secret="attacker-secret-at-least-32-bytes-long"), now=NOW,
     )
     with pytest.raises(InvalidToken):
         decode_access_token(token, settings=SETTINGS)

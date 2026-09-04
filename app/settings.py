@@ -73,7 +73,11 @@ class Settings(BaseSettings):
     redis_prefix: str = ""
 
     # --- Auth ---
-    jwt_secret: str = "dev-secret-change-me"
+    # At least 32 bytes: below that PyJWT warns (InsecureKeyLengthWarning) on every
+    # sign and verify, because HMAC-SHA256's security argument assumes a key at least
+    # as long as the digest (RFC 7518 §3.2). Still obviously a development placeholder
+    # — deployments override it through SMARTHEALTH_JWT_SECRET.
+    jwt_secret: str = "dev-secret-change-me-before-deploying-anywhere"
     jwt_algorithm: str = "HS256"
     jwt_expiry_minutes: int = 60
 

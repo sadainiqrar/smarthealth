@@ -11,7 +11,7 @@ from app.settings import Settings
 
 pytestmark = pytest.mark.contract
 
-SETTINGS = Settings(jwt_secret="authz-test-secret", jwt_expiry_minutes=30)
+SETTINGS = Settings(jwt_secret="authz-test-secret-at-least-32-bytes-long", jwt_expiry_minutes=30)
 #: Anchored to the real clock: `decode_access_token` validates `exp` against wall time,
 #: so a hardcoded date makes these tests fail forever once that hour passes.
 NOW = datetime.now(UTC)

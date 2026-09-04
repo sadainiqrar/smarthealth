@@ -38,7 +38,7 @@ services:
       SMARTHEALTH_MONGO_DB: ${MONGO_DB:-smarthealth}
       SMARTHEALTH_REDIS_HOST: redis
       SMARTHEALTH_REDIS_PORT: 6379
-      SMARTHEALTH_JWT_SECRET: ${SMARTHEALTH_JWT_SECRET:-dev-secret-change-me}
+      SMARTHEALTH_JWT_SECRET: ${SMARTHEALTH_JWT_SECRET:-dev-secret-change-me-before-deploying-anywhere}
     ports: ["${APP_PORT:-8000}:8000"]
     depends_on:
       postgres:
