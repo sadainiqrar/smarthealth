@@ -182,3 +182,66 @@ None blocking. One to revisit in Week 2: whether `AuditLog` should batch writes 
 booking starts emitting several events per workflow. Deferred until there is a measured
 reason — batching an audit trail trades durability for throughput, and that trade needs
 evidence.
+
+## 11. Deliberately deferred
+
+Written down so each is a decision a reviewer can disagree with, rather than something
+nobody noticed. None of them is a bug in what shipped; all of them are things a reader of
+the code could reasonably expect to find and will not.
+
+**A deactivated user keeps access until their token expires.** `decode_access_token`
+validates the signature and `exp` and nothing else; `is_active` is read once, at login.
+So revoking an account stops the next login but not the token already in the attacker's
+hands, for up to `jwt_expiry_minutes`. Closing the gap means a database lookup of the
+user on every request, which trades away exactly the statelessness the JWT was chosen
+for. The honest fix is a short expiry plus a deny-list in Redis when there is a reason to
+build one — not a silent per-request query. Sixty minutes is the current exposure window.
+
+**A patient cannot read their own record.** Covered in §5: `require_role` is purely
+role-based, and self-access needs authorisation against the object, not the role. The
+requirements group patient self-service with booking, so it lands in Week 2 alongside the
+first endpoint that genuinely needs per-object rules.
+
+**`list_providers` has no `is_active` filter**, so a deactivated clinician still appears
+in listings. That is wrong for a "who can I book with" screen and right for an admin
+roster, and Week 1 has only the roster. Adding the filter later is additive as long as
+the default stays unfiltered; making it default to active-only later would be a silent
+behaviour change to an endpoint someone had already built against, which is why it is not
+being guessed at now.
+
+**Deactivating a provider ignores their future appointments.** There are no appointments
+yet, so nothing is broken today — but the moment scheduling exists, a deactivation has to
+decide what happens to booked slots: cancel and notify, reassign, or refuse the
+deactivation. That is a multi-step operation across scheduling, notification and billing
+that must not half-apply, which is precisely the shape Temporal is in the stack for. It
+belongs in Week 2, as a workflow, not as an extra `UPDATE` bolted onto the provider
+service.
+
+**Specialty filtering is a sequential scan.** The filter compiles to
+`func.lower(providers.specialty) = lower(:value)`, and a plain B-tree index on
+`specialty` cannot serve a call over the column — `ix_providers_specialty` is not used.
+At Week 1 row counts this is unmeasurable, so paying for the fix now would be
+speculative. When it matters the answer is a functional index on `lower(specialty)` or
+moving the column to `citext`; the latter is tidier at the call site but adds an
+extension to the migration path, so it deserves a deliberate choice rather than a default.
+
+**The container migrates in its entrypoint.** Covered in §7. Right at one replica,
+racy at several — Alembic's lock makes the race safe rather than corrupting, but replicas
+serialise on startup. It becomes a separate migration job the first time there is more
+than one replica.
+
+**The compose healthcheck polls `/health`, not `/ready`.** `/health` answers "is the
+process alive"; `/ready` answers "can it serve", and only the second notices a dependency
+that dies after startup. The healthcheck therefore keeps reporting the container healthy
+while every request fails on a downed Postgres. It is deliberate for now: `--wait` uses
+the healthcheck as a startup gate, and a readiness-based gate would make the app's own
+startup depend on dependencies that `depends_on: service_healthy` has already gated. The
+same retry budget (12 x 10s) doubles as the timeout for the entrypoint's
+`alembic upgrade head`, which is worth knowing before shrinking it — a slow migration
+would then be reported as an unhealthy container.
+
+**There is no dependency lock file.** `pyproject.toml` carries ranges, so `pip install`
+resolves whatever is current, and the image rebuilt in six months may not be the image
+built today. For an assignment graded on architecture that is an acceptable trade against
+the churn of maintaining a lock; for anything deployed it is not. The fix is a compiled
+requirements file (pip-compile / uv) referenced by the Dockerfile.

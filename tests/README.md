@@ -22,7 +22,7 @@ python -m tests.runner.route_check --write-catalog --write-traceability
 | Marker | Tier | Infrastructure | Proves |
 |---|---|---|---|
 | `unit` | T0 | none | domain logic, state transitions, validators |
-| `contract` | T1 | none (ASGI transport) | API surface, authz, schema compatibility |
+| `contract` | T1 | none (ASGI transport) | API surface, authorisation matrix, request validation, schema compatibility |
 | `workflow` | T2 | Temporal SDK time-skipping | workflow correctness, compensation, timers |
 | `integration` | T3 | compose test stack | schema constraints, repositories, consumers, tasks, idempotency |
 | `journey` | T4 | full stack | business journeys, chaos, traces, invariants |

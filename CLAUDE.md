@@ -4,31 +4,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository status
 
-**Week 1 foundation in place; no business endpoints yet.** The repository holds the
-assignment requirements, the testing harness, and the application foundation: settings,
-core utilities, async SQLAlchemy with Alembic migrations, the ten-table domain schema,
-Mongo and Redis clients, an auth skeleton, and liveness/readiness endpoints.
+**Week 1 complete.** On top of the foundation (settings, core utilities, async SQLAlchemy
+with Alembic migrations, the ten-table domain schema, Mongo and Redis clients,
+liveness/readiness) the business surface now exists: `POST /auth/login`; patient and
+provider management with role-gated writes, paginated and filtered reads, and every
+mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
+Dockerfile plus an `app` service behind a compose profile. Week 2 adds scheduling.
+
+`README.md` carries the endpoint/role table. The design and the list of what was
+deliberately deferred are in
+`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`.
 
 Commands that work today:
 
 | Command | Purpose |
 | --- | --- |
-| `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract |
-| `python -m pytest -m docker` | integration tests against the compose stack |
+| `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract, meta |
+| `python -m pytest -m docker` | integration tests against the compose test stack |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
+| `python -m ruff check app tests` | lint |
+| `python -m app.cli create-user --email … --password … --role …` | create a login |
+| `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 
-**Migrations need connection settings.** The compose stack puts Postgres on an offset
-port (**15432**) so a dev and a test stack can coexist, while `Settings` defaults to
-5432. Run them as:
+**Anything reaching Postgres from the host needs connection settings.** The *test* stack
+(`--env-file .env.test`) publishes Postgres on an offset port (**15432**) so a dev and a
+test stack can coexist, while `Settings` defaults to 5432. Run alembic and the CLI as:
 
 ```bash
-SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth   python -m alembic upgrade head
+SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth python -m alembic upgrade head
 
-SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth   python -m alembic check
+SMARTHEALTH_POSTGRES_PORT=15432 SMARTHEALTH_POSTGRES_DB=smarthealth python -m alembic check
 ```
 
 Or copy `.env.example` to `.env` and set the offset ports there — `Settings` reads
 `.env`. Without either, alembic fails with `ConnectionRefusedError` against 5432.
+
+Note that `docker compose --profile app` starts the *dev* project, a different database
+from the test stack — a user created against 15432 does not exist in the containerised
+one. `README.md` spells this out.
 
 ## What this project is
 
