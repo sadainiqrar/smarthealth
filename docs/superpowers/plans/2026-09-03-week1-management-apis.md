@@ -167,7 +167,25 @@ Discovered while implementing tasks 1-4. Each one silently breaks a later task i
     instances is not a pattern, and Week 2's appointments are Temporal-orchestrated
     multi-table writes that would bypass or awkwardly override an abstraction derived
     from two CRUD modules. Revisit at a third real instance.
-15. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
+15. **Replace the per-service `session.refresh` with `eager_defaults=True`.** Commit
+    `23b1f0d` fixed a real bug -- `updated_at` carries `onupdate=func.now()`, so
+    SQLAlchemy expires it after an UPDATE and serialising the response triggered a lazy
+    reload outside a greenlet context, making **every PATCH return 500**. The fix works,
+    but it duplicates a four-line refresh into two service functions. Week 2's
+    appointments and visits inherit the same `TimestampMixin` and will hit the identical
+    bug unless someone remembers to copy it.
+
+    `eager_defaults=True` on the mapper uses `UPDATE ... RETURNING` in the statement
+    SQLAlchemy already issues -- no second round trip, and it covers every model
+    inheriting the mixin at once. **Verify empirically before switching**, since whether
+    it fetches `onupdate` SQL expressions eagerly depends on dialect support; the
+    existing PATCH integration tests are the check, and they must stay green with the
+    per-service refreshes removed.
+
+    Do **not** instead remove `onupdate` and rely on the `BEFORE UPDATE` trigger alone:
+    SQLAlchemy would then never expire the attribute, so the response would carry a
+    silently stale `updated_at`. A loud failure beats a wrong answer that ships.
+16. **The default `jwt_secret` is 20 bytes** (`"dev-secret-change-me"`), so PyJWT emits
    `InsecureKeyLengthWarning` on every token operation. Raise the default to >=32 bytes in
    Task 12. The authz tests in tasks 6 and 8 must therefore construct `Settings()` with no
    arguments rather than repeating the literal, or raising the default breaks them.
