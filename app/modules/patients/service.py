@@ -148,15 +148,11 @@ async def update_patient(
     # violation surfaces as an unhandled 500 instead of a 409.
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(patient, field, value)
+    # `eager_defaults=True` on `Base` makes this flush emit `UPDATE ... RETURNING
+    # updated_at`, so the expired-attribute reload that used to raise `MissingGreenlet`
+    # while serialising the response never happens, and the value read back is the one
+    # the `BEFORE UPDATE` trigger wrote (`clock_timestamp()`).
     await session.flush()
-    # `updated_at` carries `onupdate=func.now()`, a SQL expression, so SQLAlchemy cannot
-    # know the resulting value and expires the attribute after the UPDATE. Reading it
-    # later -- serialising the response -- would trigger a lazy reload outside a greenlet
-    # context and raise `MissingGreenlet`. Refresh explicitly here, where the await is
-    # legal, so callers receive a fully populated object. This also picks up the value
-    # the `BEFORE UPDATE` trigger actually wrote (`clock_timestamp()`), rather than the
-    # transaction-start time `now()` would have recorded.
-    await session.refresh(patient)
 
     await audit.record(
         AuditEvent(

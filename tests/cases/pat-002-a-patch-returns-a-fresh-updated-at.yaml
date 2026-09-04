@@ -1,0 +1,7 @@
+id: pat-002-a-patch-returns-a-fresh-updated-at
+title: "A patient PATCH returns the updated_at the database actually holds"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P0
+status: ready
+impl: "tests/tiers/t3_integration/test_patients_api.py::test_a_patch_returns_the_timestamp_the_database_actually_holds"

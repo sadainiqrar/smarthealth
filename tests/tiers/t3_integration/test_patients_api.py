@@ -6,8 +6,10 @@ decoration.
 """
 
 import uuid
+from datetime import datetime
 
 import pytest
+from sqlalchemy import text
 
 from app.modules.identity.models import UserRole
 
@@ -186,3 +188,35 @@ async def test_pagination_reports_the_total_and_slices(api, token_for):
         await api.get(f"/patients?search=Page{marker}&limit=2&offset=2", headers=headers)
     ).json()
     assert len(second["items"]) == 1
+
+
+async def test_a_patch_returns_the_timestamp_the_database_actually_holds(
+    api, token_for, db_session
+):
+    """The guard on `eager_defaults=True` (app/db/base.py).
+
+    `updated_at` has `onupdate=func.now()`, a SQL expression, so SQLAlchemy expires the
+    attribute after an UPDATE; without eager fetching the serialiser's lazy reload
+    raised `MissingGreenlet` and every PATCH 500'd. `eager_defaults` makes the UPDATE
+    carry RETURNING instead -- but a value that came back *stale* would be worse than
+    the crash, because nothing would look wrong. Compare it against a fresh read.
+    """
+    headers = token_for(UserRole.ADMIN)
+    created = (await api.post("/patients", json=_body(), headers=headers)).json()
+
+    updated = (
+        await api.patch(
+            f"/patients/{created['id']}", json={"first_name": "Grace"}, headers=headers
+        )
+    ).json()
+
+    row = (
+        await db_session.execute(
+            text("select created_at, updated_at from patients where id = :id"),
+            {"id": created["id"]},
+        )
+    ).one()
+    assert datetime.fromisoformat(updated["updated_at"]) == row.updated_at
+    # The BEFORE UPDATE trigger fired, so this is not merely the INSERT's value
+    # echoed back.
+    assert row.updated_at > row.created_at

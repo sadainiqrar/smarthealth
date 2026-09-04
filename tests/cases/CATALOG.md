@@ -6,12 +6,12 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 5 |
+| Total cases | 6 |
 | contract | 1 |
-| integration | 4 |
-| P0 | 5 |
+| integration | 5 |
+| P0 | 6 |
 | declarative | 1 |
-| impl-backed | 4 |
+| impl-backed | 5 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -21,6 +21,7 @@
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
+| pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
