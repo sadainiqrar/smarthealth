@@ -17,10 +17,125 @@ a CLI to create the first user, and the application containerised behind a compo
 profile. Week 2 adds scheduling. See [API surface](#api-surface) for what is callable
 today.
 
+## Architecture
+
+Solid lines are wired and exercised by tests today; dashed lines are provisioned
+infrastructure that no code connects to yet.
+
+```mermaid
+flowchart TB
+    client["Client<br/><i>staff · patient · provider</i>"]
+
+    subgraph app["SmartHealth API (FastAPI)"]
+        direction TB
+        routers["<b>Routers</b> — the HTTP layer<br/>auth · role gate · transaction boundary<br/><i>app/api · app/modules/*/router.py</i>"]
+        services["<b>Services</b> — business rules<br/>no framework imports; raise domain errors<br/><i>app/modules/*/service.py</i>"]
+        models["<b>Models</b> — schema &amp; constraints<br/><i>app/modules/*/models.py</i>"]
+        routers --> services --> models
+    end
+
+    pg[("<b>PostgreSQL</b><br/>system of record<br/>10 tables · constraints<br/>enforce the invariants")]
+    mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
+    redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
+
+    temporal["<b>Temporal</b><br/><i>Week 2</i><br/>booking &amp; visit workflows"]
+    kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
+    celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
+    otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]
+
+    client -->|HTTPS| routers
+    models --> pg
+    services -->|awaited audit write| mongo
+    app -.-> redis
+
+    temporal -.->|"calls the same services<br/>with no HTTP request"| services
+    services -.-> kafka
+    kafka -.-> celery
+    app -.-> otel
+
+    classDef done fill:#e8f4ea,stroke:#2f5d3f,stroke-width:2px,color:#14301f
+    classDef todo fill:#f4f2ee,stroke:#a9a49a,stroke-width:1px,stroke-dasharray:4 3,color:#55534e
+    classDef store fill:#eef2f8,stroke:#3c5a80,stroke-width:2px,color:#1d2c40
+    class routers,services,models done
+    class pg,mongo store
+    class redis,temporal,kafka,celery,otel todo
+```
+
+**The layering rule:** services never import FastAPI. They raise domain errors that the
+router layer translates to HTTP. That is what allows Week 2's Temporal activities to call
+the same service functions from a worker process with no web request — and to distinguish
+a permanent failure (*"the slot is taken"*) from a retryable one (*"the connection
+dropped"*), which an HTTP status code cannot express.
+
+### Request lifecycle — `POST /patients`
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant R as Router
+    participant S as Service
+    participant P as PostgreSQL
+    participant M as MongoDB
+
+    C->>R: POST /patients + Bearer token
+    R->>R: require_role(front_desk, admin)
+    R->>S: register_patient(...)
+    S->>P: INSERT + flush
+    Note over S,P: constraints fire here —<br/>a duplicate MRN becomes 409, not 500
+    S->>M: await audit write (before/after, actor)
+    Note over S,M: awaited, and before the commit:<br/>if the audit fails, nothing happened in either store
+    S-->>R: Patient
+    R->>P: COMMIT
+    R-->>C: 201 Created
+```
+
+The router owns the commit; services only flush. That is what lets one request compose
+several services into a single transaction — which Week 2's booking workflow requires.
+
+### Data model
+
+```mermaid
+erDiagram
+    users ||--o| patients : "optional login"
+    users ||--o| providers : "optional login"
+    clinics ||--o{ departments : has
+    clinics ||--o{ provider_slots : hosts
+    providers ||--o{ provider_slots : offers
+    providers }o--o{ departments : "works in"
+    departments ||--o{ provider_slots : "scoped to"
+    patients ||--o{ appointments : books
+    providers ||--o{ appointments : "is booked for"
+    provider_slots ||--o| appointments : "claimed by"
+    appointments ||--o| visits : "became"
+    patients ||--o{ waitlist_entries : "waits on"
+```
+
+Four decisions shape this, each rejecting a more obvious alternative:
+
+1. **A user account is not a person.** `users` is credentials only; `patients` and
+   `providers` link to one *optionally*, so front desk can register a walk-in who has no
+   email and no password.
+2. **Bookable time is a row, not a calculation.** Booking is
+   `UPDATE provider_slots SET status='held' WHERE id=:id AND status='free'` — zero rows
+   affected *is* the conflict, with no window between checking and acting.
+3. **An appointment is not a visit.** The booking and what actually happened have
+   different lifecycles. Split, Average Wait Time is `seen_at - checked_in_at` and a
+   no-show is an appointment with no visit.
+4. **PostgreSQL is the system of record; MongoDB owns only the audit trail** — which is
+   append-only, shape-varying per entity, and unbounded.
+
+**What the database guarantees**, rather than trusting application code: at most one
+*live* appointment per slot (a partial unique index, so cancelling frees it); no
+overlapping slots for one provider (a GiST exclusion constraint); a slot, provider and
+clinic that actually agree (composite foreign keys); and a confirmed appointment that must
+hold a slot (a CHECK) — the assignment's headline invariant, made structural.
+
 ## Documentation
 
 | Document | Purpose |
 | --- | --- |
+| [`docs/PRD.md`](docs/PRD.md) | **Product requirements** — use cases, numbered requirements, milestones, and feature traceability |
 | [`docs/requirements/part-a-core-platform.md`](docs/requirements/part-a-core-platform.md) | Part A problem statement, functional requirements, tech stack |
 | [`docs/requirements/part-b-genai-layer.md`](docs/requirements/part-b-genai-layer.md) | Part B GenAI scope and requirements |
 | [`docs/requirements/execution-guidelines.md`](docs/requirements/execution-guidelines.md) | Weekly plan, submission guidelines, evaluation criteria |
@@ -71,6 +186,18 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | GET | `/providers`, `/providers/{id}` | any authenticated |
 
 `GET /health` and `GET /ready` are public.
+
+**Try it in a browser.** With the stack running, FastAPI serves interactive API
+documentation generated from the route definitions and response models:
+
+| URL | What it is |
+| --- | --- |
+| <http://localhost:8000/docs> | Swagger UI — authorise once, then execute any endpoint against the running system |
+| <http://localhost:8000/redoc> | ReDoc — a reference-style read of the same schema |
+| <http://localhost:8000/openapi.json> | The raw OpenAPI schema |
+
+This is a backend; there is no UI by design (see [`docs/PRD.md`](docs/PRD.md) §2,
+non-goals). `/docs` is the intended way to exercise it by hand.
 
 **Layering:** `router → service → SQLAlchemy`. Services never import FastAPI — they raise
 domain errors that exception handlers translate, so Week 2's Temporal activities can call
