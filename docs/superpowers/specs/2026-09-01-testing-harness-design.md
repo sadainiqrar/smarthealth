@@ -198,7 +198,13 @@ chaos: null
 ```
 
 The failure sibling of that case sets `chaos: { fail_activity: BillingPreCheck }` and expects
-`appointments.status == pending_failed`, `slots.count == 0`, and a compensation span.
+`appointments.status == failed`, `slots.count == 0`, and a compensation span.
+
+> **Corrected 2026-09-13.** This sketch previously said `pending_failed`, which is not a
+> member of `AppointmentStatus` — the enum has `FAILED = "failed"`
+> (`app/modules/scheduling/models.py:44`), and the schema's CHECK constraint accepts only the
+> declared values. A Week 2 case written from the original wording would have failed
+> confusingly. The code is authoritative; the spec was wrong.
 
 ### 7.2 Escape hatch
 
