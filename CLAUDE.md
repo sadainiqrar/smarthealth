@@ -11,9 +11,22 @@ provider management with role-gated writes, paginated and filtered reads, and ev
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
 Dockerfile plus an `app` service behind a compose profile. Week 2 adds scheduling.
 
-`README.md` carries the endpoint/role table. The design and the list of what was
-deliberately deferred are in
+`README.md` carries the endpoint/role table and the architecture diagrams. The design and
+the list of what was deliberately deferred are in
 `docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`.
+
+Two documents carry the things code cannot state, and are the first stop for "why":
+
+| Document | Use it for |
+| --- | --- |
+| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the seven design decisions with their rejected alternatives (§8), and the seven known gaps with dispositions (§9) |
+| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, and the **designed** event flows — the Temporal/Kafka/Celery split, the booking workflow, cancellation as a paired write |
+
+**Treat every document here as a source, not as proof.** Docs drift from code, and a stale
+claim is worse than a missing one because it gets trusted. Two real examples found on
+2026-09-13: the testing-harness spec asserted an appointment status (`pending_failed`) that
+does not exist in the enum, and the harness-requirements list below reads as present tense
+when it is forward-looking. **Grep before asserting** that something exists.
 
 Commands that work today:
 
@@ -136,17 +149,39 @@ blocks the session. `app/settings.py` and `app/main.py` are deliberately exclude
 are wiring that changes whenever a module is added, so gating them would fire constantly
 without adding signal.
 
-**Harness requirements on application code** — honour these as modules land:
+## Three harnesses, three different things
 
-1. Topic, queue, and task-queue names come from `Settings.topic()/queue()/task_queue()`,
-   never string literals — the isolation layer namespaces a shared stack through them.
-2. LLM and embedding clients come from a provider factory keyed on `Settings.llm_mode`.
-3. Kafka consumers, Temporal workflows, and Celery tasks register in enumerable registries
-   so meta-tests can discover them.
-4. Consumers take an explicit idempotency key.
-5. The OpenTelemetry tracer provider stays swappable.
-6. Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline.
-7. Every service exposes a readiness endpoint.
+"Harness" is used for three separate systems in this repository. They are at different
+stages, and conflating them misleads — including in conversation with a reviewer.
+
+| Harness | What it is | Status |
+| --- | --- | --- |
+| **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 307 fast tests in ~8s |
+| **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
+
+The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
+(`Settings.llm_mode`; the `ai` step kind and `judge` block in `tests/runner/schema.py`, with
+a cross-field rule binding each to the other). Nothing else of it is implemented, and no
+LLM client library is in `pyproject.toml`. Do not describe it as working.
+
+**Harness requirements on application code** — these are *forward-looking constraints*, to
+honour as each module lands, not descriptions of code that exists. Each is tagged with the
+harness it serves.
+
+| # | Requirement | Serves |
+| --- | --- | --- |
+| 1 | Topic, queue, and task-queue names come from `Settings.topic()/queue()/task_queue()`, never string literals — the isolation layer namespaces a shared stack through them | Test |
+| 2 | LLM and embedding clients come from a provider factory keyed on `Settings.llm_mode` | AI |
+| 3 | Kafka consumers, Temporal workflows, and Celery tasks register in enumerable registries so meta-tests can discover them | Test |
+| 4 | Consumers take an explicit idempotency key | Test |
+| 5 | The OpenTelemetry tracer provider stays swappable | Test |
+| 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
+| 7 | Every service exposes a readiness endpoint | Test |
+
+Of these, only **6** and **7** are satisfied today (`app/core/clock.py`, `app/api/health.py`).
+**3** has its mechanism but no registrants (`app/core/registry.py`). The rest await the code
+they constrain.
 
 ## Domain model
 
