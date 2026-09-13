@@ -6,13 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 8 |
+| Total cases | 9 |
 | contract | 2 |
 | integration | 6 |
+| unit | 1 |
 | P0 | 6 |
-| P1 | 2 |
+| P1 | 3 |
 | declarative | 1 |
-| impl-backed | 7 |
+| impl-backed | 8 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -28,3 +29,4 @@
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
 | sys-003-an-unexpected-failure-keeps-the-error-shape | contract | P1 | impl | PART-A-OBS-1 | An unexpected exception answers the documented error shape, leaking nothing |
+| sys-004-primary-keys-are-time-ordered-uuid-v7 | unit | P1 | impl | PART-A-NFR-5 | Every table mints a time-ordered UUIDv7 primary key, not a scattered v4 |

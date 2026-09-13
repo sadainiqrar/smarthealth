@@ -1,0 +1,15 @@
+id: sys-004-primary-keys-are-time-ordered-uuid-v7
+title: "Every table mints a time-ordered UUIDv7 primary key, not a scattered v4"
+requirement: [PART-A-NFR-5]
+tier: unit
+priority: P1
+status: ready
+# `impl` rather than `steps`: the property is about identifier generation and column
+# defaults, which no HTTP request exposes. The catalog engine drives the app over
+# HTTP, so a declarative case could only assert this indirectly, if at all.
+#
+# Traced to PART-A-NFR-5 (scale) rather than a functional requirement: v7 exists
+# purely so inserts append near the right edge of the B-tree instead of scattering
+# across it, which is a write-throughput property under the concurrent load the
+# requirement names -- not a behaviour any user can observe.
+impl: "tests/tiers/t0_unit/test_ids.py::test_every_table_generates_a_v7_primary_key"

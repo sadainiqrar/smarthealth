@@ -13,6 +13,8 @@ from sqlalchemy import DateTime, MetaData, func
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.core.ids import uuid7
+
 NAMING_CONVENTION = {
     "ix": "ix_%(table_name)s_%(column_0_name)s",
     "uq": "uq_%(table_name)s_%(column_0_name)s",
@@ -40,10 +42,21 @@ class Base(DeclarativeBase):
 
 
 class UUIDPrimaryKeyMixin:
-    """UUID primary keys: stable inside event payloads, no sequence contention."""
+    """UUIDv7 primary keys: stable inside event payloads, no sequence contention.
+
+    v7 rather than v4 for index locality -- a v4 key is entirely random, so inserts
+    scatter across the whole B-tree and split pages, while v7's leading 48-bit
+    timestamp makes inserts append near the right edge the way a sequence would.
+    Rationale, the accepted information-leak tradeoff, and the Python 3.14 removal
+    path are all in `app.core.ids`.
+
+    Rows created before this change keep their v4 ids, which is harmless: the column
+    type is `uuid` either way, and nothing reads the version. No migration is needed
+    because only generation changed, not storage.
+    """
 
     id: Mapped[uuid.UUID] = mapped_column(
-        PGUUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+        PGUUID(as_uuid=True), primary_key=True, default=uuid7
     )
 
 
