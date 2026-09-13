@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 11 |
+| Total cases | 12 |
 | contract | 2 |
 | integration | 7 |
-| unit | 2 |
-| P0 | 6 |
+| unit | 3 |
+| P0 | 7 |
 | P1 | 5 |
 | declarative | 1 |
-| impl-backed | 10 |
+| impl-backed | 11 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -32,3 +32,4 @@
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
 | sys-003-an-unexpected-failure-keeps-the-error-shape | contract | P1 | impl | PART-A-OBS-1 | An unexpected exception answers the documented error shape, leaking nothing |
 | sys-004-primary-keys-are-time-ordered-uuid-v7 | unit | P1 | impl | PART-A-NFR-5 | Every table mints a time-ordered UUIDv7 primary key, not a scattered v4 |
+| sys-005-the-http-layer-cannot-leak-into-the-core | unit | P0 | impl | PART-A-OBS-4 | No module outside the HTTP layer can reach FastAPI, directly or through another module |

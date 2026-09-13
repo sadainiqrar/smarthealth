@@ -1,10 +1,19 @@
-"""Session factory and the request-scoped session dependency."""
+"""Session factory.
+
+Framework-free by the same rule as `app.core.errors`, `app.core.audit` and
+`app.db.constraints`: importing this must not pull FastAPI, Starlette or the ASGI stack
+into a process that has no business loading them. `app.cli` builds a session factory to
+create a user or seed a database, and Week 2's Temporal activities will do the same from
+a worker with no HTTP request anywhere in sight.
+
+The request-scoped `get_session` dependency lives in `app.api.deps`, not here, for
+exactly the reason `get_audit_log` does: it takes a FastAPI `Request`, and keeping it
+beside the factory made this module framework-bound and every operational entry point
+that touched it framework-bound with it.
+"""
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-
-from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 
@@ -16,18 +25,3 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     silently issuing a query.
     """
     return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding a session bound to this request.
-
-    Rolls back on an unhandled exception so a failed request cannot leak a dirty
-    transaction into the pool.
-    """
-    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
-    async with factory() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise

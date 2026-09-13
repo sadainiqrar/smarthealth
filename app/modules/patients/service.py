@@ -6,7 +6,7 @@ an audit document before returning, awaited so a Mongo outage fails loudly.
 `register_patient` raises `Conflict` from inside a failed `flush()`, which leaves the
 session in the "pending rollback" state: any further statement on it raises
 `PendingRollbackError` until someone rolls back. The HTTP path is covered — the
-`get_session` dependency in `app.db.session` rolls back on any exception leaving the
+`get_session` dependency in `app.api.deps` rolls back on any exception leaving the
 request. A non-HTTP caller (a Temporal activity, a Celery task, a script) owns its own
 session and must roll back before reusing it.
 """

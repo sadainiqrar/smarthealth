@@ -5,8 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_session
 from app.core.clock import Clock, get_clock
-from app.db.session import get_session
 from app.modules.identity.schemas import LoginRequest, TokenResponse
 from app.modules.identity.service import authenticate
 

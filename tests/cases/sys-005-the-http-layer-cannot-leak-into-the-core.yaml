@@ -1,0 +1,20 @@
+id: sys-005-the-http-layer-cannot-leak-into-the-core
+title: "No module outside the HTTP layer can reach FastAPI, directly or through another module"
+requirement: [PART-A-OBS-4]
+tier: unit
+priority: P0
+status: ready
+# Traced to PART-A-OBS-4, "clear separation of responsibilities between services/modules":
+# this is that requirement made mechanical rather than aspirational.
+#
+# Until this existed the framework-free rule held by discipline alone -- a single
+# `from fastapi import HTTPException` inside a service passed the entire suite, and the
+# cost would have landed in Week 2 when a Temporal worker began importing Starlette.
+#
+# P0 rather than P1 because the rule it guards is what makes Week 2 possible at all:
+# Temporal activities call the same service functions from a worker with no ASGI stack.
+#
+# The transitive half is the part worth having. On its first run it found
+# `app.cli -> app.db.session -> fastapi`, a real leak in a module whose own docstring
+# says it "must never import app.main or any router".
+impl: "tests/meta/test_import_boundaries.py::test_framework_free_modules_do_not_reach_a_framework_through_another_module"

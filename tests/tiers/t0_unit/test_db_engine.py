@@ -4,7 +4,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.db.engine import create_engine
-from app.db.session import create_session_factory, get_session
+from app.api.deps import get_session
+from app.db.session import create_session_factory
 from app.settings import Settings
 
 pytestmark = pytest.mark.unit
@@ -63,7 +64,12 @@ class _SpySession:
 
 
 def _request_with(session: _SpySession) -> SimpleNamespace:
-    """The minimum shape `get_session` reads: request.app.state.session_factory."""
+    """The minimum shape `get_session` reads: request.app.state.session_factory.
+
+    `get_session` moved to `app.api.deps` when a meta-test showed that keeping it
+    beside `create_session_factory` made `app.db.session` framework-bound, and every
+    operational entry point that built a session transitively imported FastAPI.
+    """
     return SimpleNamespace(
         app=SimpleNamespace(state=SimpleNamespace(session_factory=lambda: session))
     )

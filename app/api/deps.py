@@ -16,7 +16,10 @@ reason: a service takes a `PageParams` value, never a `Query`-bound parameter.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from fastapi import Depends, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.audit import AuditLog
 from app.core.clock import Clock, get_clock
@@ -45,3 +48,26 @@ def page_params(
 ) -> PageParams:
     """FastAPI dependency for the two query parameters."""
     return PageParams(limit=limit, offset=offset)
+
+
+async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency yielding a session bound to this request.
+
+    Lives here rather than beside `create_session_factory` in `app.db.session` for the
+    same reason as `get_audit_log`: it takes a `Request`, and keeping it next to the
+    factory made that module framework-bound — which in turn made `app.cli`, and every
+    other operational entry point that builds a session, transitively import FastAPI.
+    `tests/meta/test_import_boundaries.py` caught exactly that and is what moved it.
+
+    Rolls back on an unhandled exception so a failed request cannot leak a dirty
+    transaction back into the pool. Services rely on this: `register_patient` raises
+    `Conflict` from inside a failed `flush()`, which leaves the session in the
+    "pending rollback" state until someone rolls it back.
+    """
+    factory: async_sessionmaker[AsyncSession] = request.app.state.session_factory
+    async with factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
