@@ -31,18 +31,33 @@ class UserRole(str, enum.Enum):
 #: committed". The stale belief is widespread because Alembic's own documentation
 #: still states the old rule.
 #:
-#: The reasons that do hold:
-#:  - Postgres has ADD VALUE and RENAME VALUE but **no DROP VALUE at all**, so
-#:    removing a value means creating a new type, rewriting every dependent column,
-#:    and dropping the old one. With a CHECK constraint it is one DDL statement and
-#:    no table rewrite.
-#:  - `alembic autogenerate` does not detect enum value changes, so a stale type
-#:    produces a clean diff — the failure mode is silence.
-#:  - A value added in a transaction cannot be used in that same transaction, so
-#:    add-a-status-and-backfill needs two migrations either way.
+#: The reason that does hold: Postgres has ADD VALUE and RENAME VALUE but **no
+#: DROP VALUE at all**. Removing a value means creating a new type, an
+#: `ALTER COLUMN ... TYPE ... USING` per dependent column with a table rewrite, then
+#: dropping the old type — and the reverse again for the downgrade. The CHECK
+#: equivalent is a drop-and-recreate in one transactional migration, no rewrite.
 #:
-#: Cost of this choice: a varchar rather than the enum's 4 bytes, and no
-#: database-level type identity shared across columns.
+#: NOT an argument, though it reads like one: "alembic autogenerate misses enum
+#: value changes". It misses CHECK expression changes too — detection of named
+#: CHECK constraints is off by default, matches on name only, and per Alembic's
+#: docs "expression changes are never detected". Both choices give a clean diff
+#: over a stale database, so autogenerate is symmetric here. What differs is the
+#: remediation cost once you notice, which is the DROP VALUE point above.
+#:
+#: Also minor: a value added inside a transaction cannot be used until that
+#: transaction commits, so add-a-status-and-backfill is two migrations either way.
+#:
+#: Costs of this choice, priced rather than waved off:
+#:  - ~5 bytes/row versus the enum's 4-byte OID. At the tens of thousands of
+#:    appointments this system is specified for, under a megabyte. Irrelevant here;
+#:    it would flip at tens of millions of rows with no expected churn.
+#:  - No type reuse across columns.
+#:  - **Loss of database-level type identity** — the real cost. Postgres would stop
+#:    you comparing an appointment status to a visit status; as varchar, both are
+#:    text and it shrugs. The usual mitigation, disjoint value sets, does NOT hold
+#:    here: 'completed' is in both AppointmentStatus and VisitStatus, and
+#:    'cancelled' is in both AppointmentStatus and WaitlistStatus. SQLAlchemy's Enum
+#:    in Python is the only remaining guard.
 #:
 #: Separately, `create_constraint=True` is required — a library default, not an
 #: argument for the above. SQLAlchemy 2.0 defaults it to False, which would leave a
