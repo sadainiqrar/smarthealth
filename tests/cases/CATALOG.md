@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 12 |
+| Total cases | 13 |
 | contract | 2 |
 | integration | 7 |
-| unit | 3 |
+| unit | 4 |
 | P0 | 7 |
-| P1 | 5 |
+| P1 | 6 |
 | declarative | 1 |
-| impl-backed | 11 |
+| impl-backed | 12 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -22,6 +22,7 @@
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
+| aut-002-login-does-not-block-the-event-loop | unit | P1 | impl | PART-A-NFR-5 | Password verification runs off the event loop, so one login cannot stall the worker |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |

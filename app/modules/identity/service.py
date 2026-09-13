@@ -5,6 +5,7 @@ No FastAPI import: Week 2's Temporal activities call these functions directly.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from sqlalchemy import select
@@ -42,13 +43,22 @@ async def authenticate(
 
     The identical message alone is not enough. `or` short-circuits, so an unknown
     address would never reach `verify_password` while a known one pays argon2's
-    deliberate ~55ms — a gap trivially readable over a network. So `verify_password`
+    deliberate ~58ms — a gap trivially readable over a network. So `verify_password`
     runs exactly once on every path, against `_DUMMY_PASSWORD_HASH` when there is no
     user to check, and its result is only consulted afterwards.
+
+    **It runs in a thread, and that is not an optimisation.** argon2 is CPU-bound and
+    measured at ~58ms; called directly from this coroutine it blocks the event loop for
+    that whole time, which stalls *every other request on the worker*, not just this
+    one. The timing defence above makes that reachable without any valid credentials:
+    an unknown address pays the same 58ms by design, so a flood of garbage addresses
+    freezes the loop just as effectively as a flood of real ones. `asyncio.to_thread`
+    moves the CPU work off the loop while preserving the property that every path costs
+    the same — the thread does identical work either way.
     """
     user = await session.scalar(select(User).where(User.email == email))
     stored_hash = user.password_hash if user is not None else _DUMMY_PASSWORD_HASH
-    password_matches = verify_password(password, stored_hash)
+    password_matches = await asyncio.to_thread(verify_password, password, stored_hash)
     if user is None or not user.is_active or not password_matches:
         raise InvalidCredentials("email or password is incorrect")
 

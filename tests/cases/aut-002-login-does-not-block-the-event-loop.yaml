@@ -1,0 +1,22 @@
+id: aut-002-login-does-not-block-the-event-loop
+title: "Password verification runs off the event loop, so one login cannot stall the worker"
+requirement: [PART-A-NFR-5]
+tier: unit
+priority: P1
+status: ready
+# Traced to PART-A-NFR-5 (scale: peak booking windows, concurrent load): this is a
+# throughput property, not a behaviour a single user can observe.
+#
+# argon2 is deliberately expensive -- ~58ms measured -- and that cost is the point. But
+# called directly from an async handler it blocks the event loop for the whole duration,
+# stalling every other request on the worker rather than just this one.
+#
+# The interaction with aut-001's timing defence is what makes it reachable: an unknown
+# address pays the same 58ms by design, so a flood of garbage addresses freezes the loop
+# exactly as well as a flood of real ones. No valid credentials required.
+#
+# The test measures the largest gap between heartbeat ticks during a login rather than a
+# tick count, which keeps it robust on platforms with coarse timer resolution. Confirmed
+# to fail when the fix is reverted: "the event loop stalled for 161.8ms during a 160.9ms
+# login" -- a test that passes either way would prove nothing.
+impl: "tests/tiers/t0_unit/test_identity_service.py::test_password_verification_does_not_block_the_event_loop"
