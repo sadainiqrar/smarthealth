@@ -225,6 +225,24 @@ curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json
   -d '{"email": "you@example.com", "password": "..."}'
 ```
 
+**Seed a demonstrable clinic network** — two clinics in different timezones,
+departments, five providers with specialties, one login per role, 50 patients (most of
+them walk-ins with no user account), and a two-week window of bookable slots:
+
+```bash
+docker compose --profile app -f docker-compose.infra.yml exec app \
+  python -m app.cli seed --password "..." --patients 50
+```
+
+Idempotent — rerunning changes nothing, because every row is matched on its natural
+key. `--clear` removes exactly what it created and nothing else.
+
+It deliberately seeds **no appointments, visits or waitlist entries**. Those are
+workflow outputs that Week 2 produces: an appointment reaches `confirmed` only after
+slot reservation, the billing pre-check and notification scheduling have all succeeded,
+so hand-writing one would fabricate state no workflow ever ran — and Week 2 would then
+be tested against fiction. See [`app/seed.py`](app/seed.py).
+
 The `app` service sits behind a compose profile so the test stack, which uses the same
 file, does not start it — the tests drive the application in-process.
 

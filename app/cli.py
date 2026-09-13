@@ -21,6 +21,9 @@ from app.db.engine import create_engine
 from app.db.session import create_session_factory
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import hash_password
+from app.seed import USERS as SEED_USERS
+from app.seed import clear as seed_clear
+from app.seed import seed as seed_data
 from app.settings import Settings
 
 #: The unique index backing `users.email` (see migrations/versions/0001_baseline.py:
@@ -90,6 +93,41 @@ async def create_user(*, settings: Settings, email: str, password: str, role: st
         await engine.dispose()
 
 
+async def run_seed(
+    *, settings: Settings, password: str, patient_count: int, clear: bool
+) -> None:
+    """Fill an empty database with a demonstrable clinic network, or empty it again.
+
+    Owns the transaction, the same way a router does for a request: `app.seed` only
+    flushes. One commit means a half-seeded database is not a state that can exist --
+    a partial failure rolls the whole thing back rather than leaving providers with
+    no slots.
+    """
+    engine = create_engine(settings)
+    try:
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            if clear:
+                summary = await seed_clear(session, patient_count=patient_count)
+                action = "removed"
+            else:
+                summary = await seed_data(
+                    session, password=password, patient_count=patient_count
+                )
+                action = "created"
+            await session.commit()
+
+        print(f"{action}:")
+        for line in summary.as_lines():
+            print(line)
+        if not clear:
+            print("\nlogins (all share the password you supplied):")
+            for email, role in SEED_USERS:
+                print(f"  {email:34} {role.value}")
+    finally:
+        await engine.dispose()
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -101,6 +139,35 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     create_user_parser.add_argument("--password", required=True)
     create_user_parser.add_argument(
         "--role", required=True, choices=[member.value for member in UserRole]
+    )
+
+    seed_parser = subparsers.add_parser(
+        "seed",
+        help="Insert a demonstrable clinic network. Idempotent; --clear undoes it.",
+        description=(
+            "Seeds clinics, departments, providers, patients, one login per role, and "
+            "a two-week window of bookable slots. Deliberately seeds no appointments, "
+            "visits or waitlist entries -- those are workflow outputs that Week 2 "
+            "produces, and hand-writing them would fabricate state no workflow created."
+        ),
+    )
+    # Required rather than defaulted. A well-known credential written into a database
+    # by a tool that never asked is how a demo database becomes an incident.
+    seed_parser.add_argument(
+        "--password",
+        required=True,
+        help="Password for every seeded login. Required; there is no default.",
+    )
+    seed_parser.add_argument(
+        "--patients",
+        type=int,
+        default=50,
+        help="How many patient records to create (default: 50).",
+    )
+    seed_parser.add_argument(
+        "--clear",
+        action="store_true",
+        help="Remove the seeded rows instead of creating them.",
     )
 
     return parser.parse_args(argv)
@@ -115,6 +182,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 email=args.email,
                 password=args.password,
                 role=args.role,
+            )
+        )
+    elif args.command == "seed":
+        if args.patients < 0:
+            print("error: --patients cannot be negative", file=sys.stderr)
+            raise SystemExit(1)
+        asyncio.run(
+            run_seed(
+                settings=Settings(),
+                password=args.password,
+                patient_count=args.patients,
+                clear=args.clear,
             )
         )
 

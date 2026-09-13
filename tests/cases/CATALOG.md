@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 9 |
+| Total cases | 10 |
 | contract | 2 |
 | integration | 6 |
-| unit | 1 |
+| unit | 2 |
 | P0 | 6 |
-| P1 | 3 |
+| P1 | 4 |
 | declarative | 1 |
-| impl-backed | 8 |
+| impl-backed | 9 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -23,6 +23,7 @@
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
+| ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |

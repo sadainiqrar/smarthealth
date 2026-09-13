@@ -37,6 +37,7 @@ Commands that work today:
 | `python -m tests.runner.route_check` | validate and route the case catalog |
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
+| `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 
 **Anything reaching Postgres from the host needs connection settings.** The *test* stack

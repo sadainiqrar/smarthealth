@@ -1,0 +1,17 @@
+id: ops-002-seeding-never-fabricates-workflow-state
+title: "Seed data builds a demonstrable network without inventing Week 2 workflow state"
+requirement: [PART-A-FR-1]
+tier: unit
+priority: P1
+status: ready
+# `impl` rather than `steps`: the seeder is an operational entry point, not an HTTP
+# surface, so the catalog engine has nothing to drive.
+#
+# Pointed at the structural assertion rather than one of the slot-generation tests
+# because it is the one guarding a *design* rule instead of an implementation detail.
+# Appointments, visits and waitlist entries are workflow outputs -- an appointment
+# reaches `confirmed` only after slot reservation, billing pre-check and notification
+# scheduling all succeed. Seeding one fabricates state no workflow produced, and Week 2
+# would then be tested against fiction. The test reads the module's imports, so the rule
+# holds even down a code path no test happens to execute.
+impl: "tests/tiers/t0_unit/test_seed.py::test_the_seeder_never_touches_week_two_state"
