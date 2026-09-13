@@ -1,0 +1,14 @@
+id: ops-003-seeding-is-idempotent-against-a-real-database
+title: "Re-running the seeder against a real database inserts nothing the second time"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P1
+status: ready
+# Idempotency is a statement about the database, so it cannot be unit-tested: the T0
+# suite can prove the generation rules are deterministic, but not that the second pass
+# actually *finds* the rows the first one wrote.
+#
+# This case exists because the claim was made in a commit message before it had ever
+# executed. A regression would not raise -- it would quietly double the data, or trip
+# the GiST exclusion constraint on the second set of slots.
+impl: "tests/tiers/t3_integration/test_seed.py::test_rerunning_changes_nothing"
