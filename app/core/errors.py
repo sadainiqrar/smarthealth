@@ -19,6 +19,13 @@ class DomainError(Exception):
 
     status_code = 500
 
+    #: Response headers the HTTP translation must preserve. A plain dict, not a
+    #: framework type, so this module stays importable without Starlette. Only
+    #: `InvalidCredentials` needs one today — RFC 9110 §15.5.2 requires a 401 to
+    #: carry `WWW-Authenticate`, and dropping it to gain a uniform body would be
+    #: trading one correctness problem for another.
+    headers: dict[str, str] | None = None
+
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
@@ -40,3 +47,4 @@ class InvalidCredentials(DomainError):
     """Authentication failed. Deliberately says nothing about which part failed."""
 
     status_code = 401
+    headers = {"WWW-Authenticate": "Bearer"}

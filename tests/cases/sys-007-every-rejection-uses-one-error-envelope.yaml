@@ -1,0 +1,18 @@
+id: sys-007-every-rejection-uses-one-error-envelope
+title: "An authorisation rejection answers the same {error, detail} shape as every other failure"
+requirement: [PART-A-OBS-1]
+tier: contract
+priority: P0
+status: ready
+# Risk R-6, closed. `require_role` raised `HTTPException`, which Starlette handles
+# itself rather than routing through `register_error_handlers` — so 401 and 403 were
+# the only failures in the system answering `{"detail": ...}` with no `error` key,
+# and they are the two a client meets most often.
+#
+# P0 because it is a security boundary's response contract: a client that cannot
+# parse a rejection uniformly is a client that mishandles rejections.
+#
+# `impl` rather than `steps`: the assertion is about the response *envelope* and the
+# `WWW-Authenticate` header together, which the declarative `api` expectation cannot
+# express.
+impl: "tests/tiers/t1_contract/test_authz.py::test_every_rejection_uses_the_same_error_envelope"

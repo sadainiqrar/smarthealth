@@ -156,7 +156,7 @@ Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 | **R-3** | A slot in the past is still bookable. `CHECK (starts_at > now())` is impossible — PostgreSQL requires CHECK conditions to be immutable | **Week 2 contract.** The booking activity must reject it |
 | **R-4** | `provider_slots.version` does not self-increment. The claim statement must say `version = version + 1` | **Week 2 contract** |
 | **R-5** | A patient cannot read their own record. This needs per-object authorisation, not per-role | **Deferred to Week 2**, with patient self-service |
-| **R-6** | Authentication failures (401/403) do not carry the `error` key used by every other error response | **Open.** Small inconsistency in the error contract |
+| **R-6** | Authentication failures (401/403) did not carry the `error` key used by every other error response | **Closed.** `require_role` now raises `DomainError` subclasses instead of `HTTPException`, so 401/403 route through the same handler as everything else. `DomainError` gained a `headers` attribute so the RFC 9110 `WWW-Authenticate` challenge survives the change. Guarded by `sys-007` |
 | **R-7** | Redis is connected and health-checked but used by no feature | **Open.** Intended use is caching and rate limiting in Week 3 |
 
 ## 10. Delivery milestones

@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 14 |
-| contract | 3 |
+| Total cases | 15 |
+| contract | 4 |
 | integration | 7 |
 | unit | 4 |
-| P0 | 7 |
+| P0 | 8 |
 | P1 | 7 |
 | declarative | 1 |
-| impl-backed | 13 |
+| impl-backed | 14 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -35,3 +35,4 @@
 | sys-004-primary-keys-are-time-ordered-uuid-v7 | unit | P1 | impl | PART-A-NFR-5 | Every table mints a time-ordered UUIDv7 primary key, not a scattered v4 |
 | sys-005-the-http-layer-cannot-leak-into-the-core | unit | P0 | impl | PART-A-OBS-4 | No module outside the HTTP layer can reach FastAPI, directly or through another module |
 | sys-006-the-running-process-emits-structured-logs | contract | P1 | impl | PART-A-OBS-1 | The served application emits JSON log lines, not merely a JSON formatter |
+| sys-007-every-rejection-uses-one-error-envelope | contract | P0 | impl | PART-A-OBS-1 | An authorisation rejection answers the same {error, detail} shape as every other failure |

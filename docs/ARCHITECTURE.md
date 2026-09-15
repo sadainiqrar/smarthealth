@@ -227,7 +227,9 @@ Must not import: `app.modules` (except `all_models.py`, whose whole job is to im
 `require_role` is the one place that deliberately raises `HTTPException` rather than a
 domain error: it is HTTP-layer machinery and 401 has no domain meaning
 (`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md` §3.1). The cost is
-PRD R-6 — 401/403 bodies carry `detail` but not the `error` key every other failure has.
+PRD R-6, now closed — 401/403 bodies carry the same `{error, detail}` envelope as every
+other failure, because `require_role` raises `DomainError` subclasses rather than
+`HTTPException`, which Starlette would have handled itself.
 
 #### `app/modules/patients` — patient records
 
@@ -608,10 +610,10 @@ with credentials or the row data that broke a constraint (`error_handlers.py:27-
 text goes to the log with a traceback instead.
 
 Two documented limits: `HTTPException` is handled separately by Starlette, so FastAPI's 404s
-and 422s keep their own shapes (which is why `require_role`'s 401/403 lack the `error` key —
-PRD R-6); and a `DomainError` raised inside a `StreamingResponse` body runs after the
-response has started and is not caught, which Part B's streaming responses will have to
-handle themselves (`error_handlers.py:9-13`).
+and 422s keep their own shapes — this is why `require_role` raises `DomainError` subclasses
+rather than `HTTPException`, which is what closed PRD R-6; and a `DomainError` raised inside
+a `StreamingResponse` body runs after the response has started and is not caught, which
+Part B's streaming responses will have to handle themselves (`error_handlers.py:9-13`).
 
 ---
 
@@ -934,7 +936,8 @@ Seven known gaps and accepted risks are recorded, each with a status, in
 **[PRD §9](PRD.md#9-known-gaps-and-accepted-risks)** (R-1 … R-7): the non-atomic
 audit/commit pair (R-1), the paired slot release (R-2), bookable past slots (R-3), the
 non-self-incrementing `version` column (R-4), the missing patient self-access (R-5), the
-error-contract inconsistency on 401/403 (R-6), and Redis being connected but unused (R-7).
+and Redis being connected but unused (R-7). The error-contract inconsistency on 401/403
+(R-6) is closed.
 R-1 is explained in situ at §2.3, R-2 at §3.3, and R-3/R-4 at §3.2.
 
 Further deferrals that are decisions rather than oversights — a deactivated user keeping
