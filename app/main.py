@@ -26,7 +26,7 @@ from app.settings import get_settings
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
-    configure_logging()
+    configure_logging(settings.log_level)
 
     app.state.settings = settings
     app.state.engine = create_engine(settings)

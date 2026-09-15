@@ -31,3 +31,20 @@ def test_settings_read_the_environment(monkeypatch):
 
 def test_llm_mode_defaults_to_fixture():
     assert Settings().llm_mode == "fixture"
+
+
+def test_log_level_defaults_to_info_and_reads_the_environment(monkeypatch):
+    """Verbosity has to be changeable without a redeploy.
+
+    `configure_logging` was called with no argument for the whole of Week 1, which
+    pinned the root logger to INFO in code — so raising verbosity to debug a live
+    incident meant editing a source file.
+    """
+    assert Settings().log_level == "INFO"
+
+    monkeypatch.setenv("SMARTHEALTH_LOG_LEVEL", "DEBUG")
+    get_settings.cache_clear()
+    try:
+        assert get_settings().log_level == "DEBUG"
+    finally:
+        get_settings.cache_clear()

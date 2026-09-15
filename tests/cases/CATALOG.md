@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 13 |
-| contract | 2 |
+| Total cases | 14 |
+| contract | 3 |
 | integration | 7 |
 | unit | 4 |
 | P0 | 7 |
-| P1 | 6 |
+| P1 | 7 |
 | declarative | 1 |
-| impl-backed | 12 |
+| impl-backed | 13 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -34,3 +34,4 @@
 | sys-003-an-unexpected-failure-keeps-the-error-shape | contract | P1 | impl | PART-A-OBS-1 | An unexpected exception answers the documented error shape, leaking nothing |
 | sys-004-primary-keys-are-time-ordered-uuid-v7 | unit | P1 | impl | PART-A-NFR-5 | Every table mints a time-ordered UUIDv7 primary key, not a scattered v4 |
 | sys-005-the-http-layer-cannot-leak-into-the-core | unit | P0 | impl | PART-A-OBS-4 | No module outside the HTTP layer can reach FastAPI, directly or through another module |
+| sys-006-the-running-process-emits-structured-logs | contract | P1 | impl | PART-A-OBS-1 | The served application emits JSON log lines, not merely a JSON formatter |

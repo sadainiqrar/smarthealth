@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     environment: str = "local"
     service_name: str = "smarthealth"
 
+    # Raising verbosity during an incident should be an environment variable and a
+    # restart, not a code change and a redeploy.
+    log_level: str = "INFO"
+
     # Namespaces every Kafka topic, RabbitMQ queue, and Temporal task queue.
     # The isolation layer sets this per test run; production leaves it empty.
     resource_prefix: str = ""

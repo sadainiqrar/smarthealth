@@ -1,0 +1,16 @@
+id: sys-006-the-running-process-emits-structured-logs
+title: "The served application emits JSON log lines, not merely a JSON formatter"
+requirement: [PART-A-OBS-1]
+tier: contract
+priority: P1
+status: ready
+# `impl` rather than `steps`: the catalog engine drives the application over an HTTP
+# client and observes responses. This property is about the server process's *stdout*,
+# which no response can carry — the test starts a real uvicorn subprocess and reads it.
+#
+# Contract tier because that tier's defining property is "no containers", and this
+# needs none. It is deliberately not `unit`: four T0 tests asserting that the formatter
+# formats passed for the whole of Week 1 while the running process emitted no JSON at
+# all, because uvicorn sets `propagate = False` on `uvicorn` and `uvicorn.access`. A
+# test whose subject is narrower than the claim is evidence for a different claim.
+impl: "tests/tiers/t1_contract/test_log_output.py::test_the_request_log_line_is_json"

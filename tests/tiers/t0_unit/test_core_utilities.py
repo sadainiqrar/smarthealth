@@ -137,3 +137,29 @@ def test_json_formatter_includes_stack_info():
     record.stack_info = "Stack (most recent call last):\n  probe"
     payload = json.loads(formatter.format(record))
     assert "probe" in payload["stack_info"]
+
+
+def test_configure_logging_takes_over_uvicorns_loggers():
+    """The mechanism behind the process-level guard in `t1_contract/test_log_output.py`.
+
+    uvicorn ships `propagate = False` and its own handler on these loggers, which is
+    what kept every request's log line away from the JSON formatter for the whole of
+    Week 1. This asserts the mechanism; it deliberately does not assert the outcome,
+    because a unit test cannot — that is the point of the contract-tier test.
+    """
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        hijacked = logging.getLogger(name)
+        hijacked.addHandler(logging.NullHandler())
+        hijacked.propagate = False
+        hijacked.setLevel(logging.INFO)
+
+    configure_logging(level="WARNING")
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        captured = logging.getLogger(name)
+        assert captured.handlers == [], f"{name} kept a handler of its own"
+        assert captured.propagate is True, f"{name} still cannot reach the root handler"
+        assert captured.level == logging.NOTSET, (
+            f"{name} is pinned to its own level and would ignore the configured one"
+        )
+        assert captured.getEffectiveLevel() == logging.WARNING

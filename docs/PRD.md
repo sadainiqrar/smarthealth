@@ -102,7 +102,7 @@ credentials; a login may be linked later. See §7 D-1.
 
 | Id | Requirement | Milestone | Status |
 | --- | --- | --- | --- |
-| **PART-A-OBS-1** | Liveness and readiness endpoints; structured logging; a uniform error contract that leaks no internal detail | Week 1 | **Done** |
+| **PART-A-OBS-1** | Liveness and readiness endpoints; structured logging; a uniform error contract that leaks no internal detail | Week 1 | **Done.** Structured logging is verified at the *process* level by `sys-006`, not only at the formatter — uvicorn's `propagate = False` meant the served application emitted no JSON at all until that was fixed. The error contract became genuinely uniform when R-6 closed |
 | **PART-A-OBS-2** | Distributed tracing across booking, availability sync, billing, reminders and background workers | Week 3 | Not started |
 | **PART-A-OBS-3** | Metrics and dashboards (Prometheus + Grafana) | Week 3 | Not started |
 | **PART-A-OBS-4** | Clear separation of responsibilities between modules, so a failure is attributable to one | Week 1 → ongoing | Done for Week 1 scope |
