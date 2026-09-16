@@ -95,6 +95,16 @@ mistake in this project.
 
 These are the requirements most likely to be violated by an obvious implementation:
 
+- **This is a modular monolith, and both import rules are enforced by meta-tests**
+  (`tests/meta/test_import_boundaries.py`), not by convention. *Vertical:* nothing outside
+  the HTTP layer may reach FastAPI/Starlette, directly or transitively. *Horizontal:*
+  `app/modules/<x>` may not import `app/modules/<y>` — `service.py`, `models.py` and
+  `schemas.py` take no exception at all, and the router layer's six auth edges onto
+  `identity` are declared as explicit pairs. When a module needs another's data, the
+  answer is a published interface or a domain event, never a direct import. Week 2's
+  `scheduling/service.py` is the first code with a real reason to break this, and one
+  import is the whole difference between a modular monolith and a monolith. Decision D-8
+  in `docs/PRD.md`; rationale in `docs/ARCHITECTURE.md` §1.3.
 - **Appointments confirm only after the whole workflow succeeds.** Slot reservation, conflict
   checks, notification scheduling, and billing pre-check all happen before an appointment is
   marked confirmed. Partial failures must leave scheduling state uncorrupted — this is why

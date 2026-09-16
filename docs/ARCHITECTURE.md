@@ -47,7 +47,8 @@ code that must respect them is not written yet.
 - [1. Service / module breakdown](#1-service--module-breakdown)
   - [1.1 Dependency direction](#11-dependency-direction)
   - [1.2 The framework-free rule](#12-the-framework-free-rule)
-  - [1.3 Module by module](#13-module-by-module)
+  - [1.3 The module-boundary rule](#13-the-module-boundary-rule)
+  - [1.4 Module by module](#14-module-by-module)
 - [2. Data flows](#2-data-flows)
   - [2.1 The transaction boundary rule](#21-the-transaction-boundary-rule)
   - [2.2 POST /auth/login](#22-post-authlogin)
@@ -157,7 +158,54 @@ collection and a clock with no request involved. `page_params` (`app/api/deps.py
 the same for `limit`/`offset`, so a service takes a `PageParams` value, never a
 `Query`-bound parameter.
 
-### 1.3 Module by module
+### 1.3 The module-boundary rule
+
+**`app/modules/<x>` must not import `app/modules/<y>`.** §1.2 is the *vertical* rule —
+nothing outside the HTTP layer reaches a web framework. This is the *horizontal* one, and
+it is the property the phrase "modular monolith" actually names.
+
+SmartHealth is one deployable, one codebase, one schema and one migration history. So is a
+plain monolith: the two are indistinguishable on every externally visible axis. The single
+difference is whether the import graph has a deliberate shape. Verified — the complete set
+of cross-module edges in the application is:
+
+```
+app/modules/patients/router.py  → identity.deps, identity.models, identity.security
+app/modules/providers/router.py → identity.deps, identity.models, identity.security
+```
+
+Six edges, all at the router layer, all auth: `require_role`, `UserRole`, `TokenClaims`.
+Every `service.py` imports only `app/core`, `app/db` and its own module — no exceptions.
+
+**Two rules, not one, and they are asymmetric.**
+`test_modules_do_not_import_each_other` takes an allowlist (`CROSS_MODULE_ALLOWED`, the six
+pairs above) because the router is a composition point and a declared exception there is
+legitimate. `test_the_service_layer_never_crosses_a_module_boundary` takes none: a
+`service.py`, `models.py` or `schemas.py` edge is always a bug, because the service layer
+is the unit of extraction and the models are what it owns. An allowlist entry for a service
+would grant precisely the coupling the boundary exists to prevent. Both lists are checked
+for staleness, so an exemption cannot outlive its reason.
+
+**What the rule deliberately does not touch: the database.** `appointments` carries foreign
+keys into five other modules' tables (`patients`, `providers`, `clinics`, `departments`,
+`provider_slots`) and `app/modules/scheduling/models.py` imports none of them — they are
+declared as table-name strings (`ForeignKey("patients.id")`). Scheduling is therefore fully
+coupled in the database and not coupled at all in Python. That is not a loophole; a shared
+schema is what a modular monolith *is*. The modularity lives in the import graph, which is
+why extracting scheduling later would mean moving three tables and rewriting five foreign
+keys as API calls or event payloads — bounded, well-understood work — whereas if
+`scheduling/service.py` imported `patients/service.py` there would be no list of call sites
+to work from.
+
+**Why it exists now rather than later.** Until it did, the property was true but unguarded:
+`patients/service.py` could import `providers/service.py` and the whole suite stayed green.
+Week 2 writes `app/modules/scheduling/service.py`, which needs patient, provider, slot and
+clinic data; a direct import is the path of least resistance and looks entirely reasonable
+in a diff. The three ways to get that data are a direct import (the modular monolith
+silently becomes a monolith), a published interface on the owning module, or a domain event
+once Week 3's Kafka exists. Only the first is now a test failure.
+
+### 1.4 Module by module
 
 #### `app/api` — HTTP wiring
 

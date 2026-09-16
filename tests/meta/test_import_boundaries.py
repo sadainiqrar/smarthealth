@@ -1,4 +1,18 @@
-"""The framework-free rule, enforced instead of merely documented.
+"""The import graph of `app`, enforced instead of merely documented.
+
+Two independent rules live here, and conflating them is how a claim gets overstated in
+front of a reviewer:
+
+* **Vertical** -- the framework-free rule. Nothing outside the HTTP layer may reach
+  FastAPI or Starlette. This is *layering*.
+* **Horizontal** -- the module-boundary rule. `app/modules/<x>` may not import
+  `app/modules/<y>`. This is *module separation*, and it is the property the phrase
+  "modular monolith" actually names.
+
+Everything down to `test_the_check_has_something_to_check` is the vertical rule; the
+horizontal rule is at the bottom of the file.
+
+--- The vertical rule ---
 
 `app/core/**`, `app/db/constraints.py` and every `service.py` state in their docstrings
 that importing them must not drag FastAPI, Starlette or the ASGI stack into a process
@@ -188,3 +202,136 @@ def test_the_check_has_something_to_check():
     -- the failure mode where a meta-test reports green while enumerating an empty set."""
     assert len(FRAMEWORK_FREE) > 20, f"only found {len(FRAMEWORK_FREE)} framework-free modules"
     assert FRAMEWORK_BOUND, "expected at least one framework-bound module"
+
+
+# --------------------------------------------------------------------------------- #
+# The horizontal rule: modules do not import each other.
+# --------------------------------------------------------------------------------- #
+#
+# This is the one the monolith argument rests on. A modular monolith and a plain
+# monolith are identical on every externally visible axis -- one deployable, one
+# codebase, one schema, one migration history. The *only* difference is whether the
+# import graph has a deliberate shape, so "our boundaries are real" is precisely this
+# assertion and nothing else.
+#
+# Until this existed the property was true but unguarded: `patients/service.py` could
+# import `providers/service.py` and the entire suite stayed green. Week 2 is when that
+# stops being hypothetical -- `scheduling/service.py` needs patient, provider, slot and
+# clinic data, and a direct import is the path of least resistance and looks perfectly
+# reasonable in a diff.
+#
+# Note what this rule does *not* touch: the database. `appointments` carries foreign
+# keys into five other modules' tables and that is fine -- they are declared as table
+# name strings, so there is no Python edge. Shared schema is the definition of a modular
+# monolith, not a violation of it. The modularity lives in the import graph.
+
+#: Cross-module imports that are allowed, as explicit (importer, imported) pairs.
+#:
+#: Pairs rather than a package-level allowlist, because "patients may use identity" is a
+#: much broader permission than the one actually needed, and the broad version is how an
+#: allowlist stops meaning anything. Every entry here is auth at the HTTP edge: the one
+#: dependency nobody would extract.
+CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("app.modules.patients.router", "app.modules.identity.deps"),
+        ("app.modules.patients.router", "app.modules.identity.models"),
+        ("app.modules.patients.router", "app.modules.identity.security"),
+        ("app.modules.providers.router", "app.modules.identity.deps"),
+        ("app.modules.providers.router", "app.modules.identity.models"),
+        ("app.modules.providers.router", "app.modules.identity.security"),
+    }
+)
+
+#: Files that may never cross a module boundary, allowlist or not.
+#:
+#: The service layer is the unit of extraction and the models are what it owns, so an
+#: edge here is the difference between "move three tables" and "find every call site".
+#: The router is a composition point and is allowed a declared exception; these are not.
+NEVER_CROSS = ("service", "models", "schemas")
+
+
+def _owning_module(name: str) -> str | None:
+    """`app.modules.patients.service` -> `app.modules.patients`.
+
+    Returns None for anything that is not inside a domain module, including the
+    `app.modules` package itself.
+    """
+    parts = name.split(".")
+    if len(parts) >= 3 and parts[0] == "app" and parts[1] == "modules":
+        return ".".join(parts[:3])
+    return None
+
+
+#: Every (importer, imported) edge that crosses from one domain module into another.
+CROSS_MODULE_EDGES: list[tuple[str, str]] = sorted(
+    (module, imported)
+    for module in MODULES
+    if (owner := _owning_module(module)) is not None
+    for imported in IMPORTS[module][1]
+    if (target := _owning_module(imported)) is not None and target != owner
+)
+
+MODULE_FILES = sorted(name for name in MODULES if _owning_module(name) is not None)
+
+
+@pytest.mark.parametrize("module", MODULE_FILES)
+def test_modules_do_not_import_each_other(module: str):
+    """Rule 3: a cross-module import must be a declared exception, or it is a bug.
+
+    The failure message names the alternatives rather than just refusing, because the
+    right answer depends on what is being reached for: a published interface on the
+    owning module, or a domain event once Week 3's Kafka exists. Reaching straight into
+    another module's internals is the one option that quietly turns this codebase into a
+    plain monolith with nobody deciding to.
+    """
+    undeclared = sorted(
+        imported
+        for importer, imported in CROSS_MODULE_EDGES
+        if importer == module and (importer, imported) not in CROSS_MODULE_ALLOWED
+    )
+    assert not undeclared, (
+        f"{module} imports {', '.join(undeclared)}, crossing a module boundary. "
+        f"Modules stay independently extractable only while this graph has a shape: go "
+        f"through a published interface on the owning module, or a domain event -- or, "
+        f"if this edge is genuinely correct, add it to CROSS_MODULE_ALLOWED in this file "
+        f"and say why in the commit."
+    )
+
+
+@pytest.mark.parametrize("module", [m for m in MODULE_FILES if m.rsplit(".", 1)[-1] in NEVER_CROSS])
+def test_the_service_layer_never_crosses_a_module_boundary(module: str):
+    """Rule 4: no exception exists for the layer that would be extracted.
+
+    Stricter than rule 3 on purpose. CROSS_MODULE_ALLOWED is a router-layer escape
+    hatch; if it ever grows an entry for a service, the allowlist would be granting
+    exactly the coupling the boundary exists to prevent.
+    """
+    crossing = sorted(imported for importer, imported in CROSS_MODULE_EDGES if importer == module)
+    assert not crossing, (
+        f"{module} imports {', '.join(crossing)}. The service layer and the models it "
+        f"owns are the unit of extraction, so they take no allowlist entry -- move the "
+        f"dependency to the router, an interface, or an event."
+    )
+
+
+def test_the_cross_module_allowlist_has_no_stale_entries():
+    """Keeps the allowlist honest, the same way FRAMEWORK_BOUND is kept honest.
+
+    An entry for an edge that no longer exists silently pre-authorises coupling that
+    nobody has argued for, and a list that is only ever appended to stops meaning
+    anything.
+    """
+    stale = sorted(set(CROSS_MODULE_ALLOWED) - set(CROSS_MODULE_EDGES))
+    assert not stale, (
+        f"CROSS_MODULE_ALLOWED declares edges that no longer exist: {stale}. "
+        f"Remove them so the exemption does not outlive its reason."
+    )
+
+
+def test_the_cross_module_check_has_something_to_check():
+    """The empty-set failure mode: a green check that enumerated nothing."""
+    owners = {_owning_module(name) for name in MODULE_FILES}
+    assert len(owners) >= 4, f"expected at least four domain modules, found {sorted(owners)}"
+    assert any(
+        name.endswith(".service") for name in MODULE_FILES
+    ), "found no service modules, so rule 4 asserted nothing"

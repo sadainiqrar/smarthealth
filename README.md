@@ -61,11 +61,26 @@ flowchart TB
     class redis,temporal,kafka,celery,otel todo
 ```
 
-**The layering rule:** services never import FastAPI. They raise domain errors that the
+**This is a modular monolith, deliberately.** One deployable, one schema, one migration
+history — and an import graph with a shape that two meta-tests enforce rather than
+document. A plain monolith and a modular one are indistinguishable from the outside; the
+only difference is whether anything may import anything, and here it may not.
+
+**The layering rule** (vertical): services never import FastAPI. They raise domain errors that the
 router layer translates to HTTP. That is what allows Week 2's Temporal activities to call
 the same service functions from a worker process with no web request — and to distinguish
 a permanent failure (*"the slot is taken"*) from a retryable one (*"the connection
 dropped"*), which an HTTP status code cannot express.
+
+**The module rule** (horizontal): `app/modules/<x>` does not import `app/modules/<y>`.
+Every `service.py` imports only shared infrastructure and its own module; the only
+cross-module edges in the codebase are the router-layer auth dependency onto `identity`,
+declared as six explicit pairs in `tests/meta/test_import_boundaries.py`. Scheduling shows
+why the rule is about code and not data: `appointments` carries foreign keys into five
+other modules' tables, declared as table-name strings, so it is fully coupled in the
+database and not coupled at all in Python. Shared schema is what a modular monolith *is*;
+the modularity lives in the import graph, and that is what keeps each module extractable
+as bounded work rather than archaeology.
 
 ### Request lifecycle — `POST /patients`
 

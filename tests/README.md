@@ -27,6 +27,20 @@ python -m tests.runner.route_check --write-catalog --write-traceability
 | `integration` | T3 | compose test stack | schema constraints, repositories, consumers, tasks, idempotency |
 | `journey` | T4 | full stack | business journeys, chaos, traces, invariants |
 
+`meta` is the sixth marker and sits outside the tier ladder: it asserts properties of the
+*codebase* rather than of its behaviour, so it needs no infrastructure and no fixtures.
+`tests/meta/test_import_boundaries.py` is the one that constrains how you write application
+code, and it enforces two independent rules from one `ast`-built import graph:
+
+| Rule | Assertion | Exceptions |
+|---|---|---|
+| **Vertical** — layering | No module outside the HTTP layer reaches `fastapi`/`starlette`, directly **or transitively** | `FRAMEWORK_BOUND`, an allowlist of module names |
+| **Horizontal** — module separation | `app/modules/<x>` does not import `app/modules/<y>` | `CROSS_MODULE_ALLOWED`, explicit `(importer, imported)` pairs — and **none at all** for `service.py`, `models.py`, `schemas.py` |
+
+Both allowlists are checked for staleness, so an exemption that stops being needed fails
+the suite rather than quietly pre-authorising future coupling. Adding an entry to either is
+a visible line in a diff, which is where that argument belongs.
+
 Choose the cheapest tier that can prove the property. Most reliability invariants belong
 in `workflow`, which runs in about a second against the SDK's time-skipping environment —
 not in `journey`.

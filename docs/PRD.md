@@ -146,6 +146,7 @@ Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 | **D-5** | Reliability invariants are enforced by database constraints, not application code | Validate in the service layer | A constraint binds every writer forever, including future code paths and manual intervention |
 | **D-6** | Services never import FastAPI; routers own the transaction boundary | Services raise `HTTPException` and commit | Week 2's Temporal activities call the same functions with no HTTP request, and need to distinguish retryable from permanent failure — which a status code cannot express |
 | **D-7** | Temporal owns durable multi-step workflows; Kafka carries domain events; Celery/RabbitMQ runs fire-and-forget jobs | Use one of the three for everything | Reaching for the wrong one is the most likely architectural error in this project |
+| **D-8** | A modular monolith: one deployable, one schema, with module boundaries enforced by meta-tests | Microservices per domain | The assignment says "services/**modules**" (`part-a-core-platform.md:112`) — separation of *responsibilities* is graded, separation of *processes* is not. The headline invariants are PostgreSQL constraints (D-5) and constraints do not cross a service boundary: splitting scheduling would convert a GiST exclusion constraint, a partial unique index and composite foreign keys into distributed sagas. **Accepted cost:** blast radius and all-or-nothing API scaling — see R-8 |
 
 ## 9. Known gaps and accepted risks
 
@@ -158,6 +159,7 @@ Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 | **R-5** | A patient cannot read their own record. This needs per-object authorisation, not per-role | **Deferred to Week 2**, with patient self-service |
 | **R-6** | Authentication failures (401/403) did not carry the `error` key used by every other error response | **Closed.** `require_role` now raises `DomainError` subclasses instead of `HTTPException`, so 401/403 route through the same handler as everything else. `DomainError` gained a `headers` attribute so the RFC 9110 `WWW-Authenticate` challenge survives the change. Guarded by `sys-007` |
 | **R-7** | Redis is connected and health-checked but used by no feature | **Open.** Intended use is caching and rate limiting in Week 3 |
+| **R-8** | The monolith's blast radius: one bad deploy takes down every module, and the API scales as a unit | **Accepted** for the five-week horizon, and stated rather than mitigated. Temporal and Celery workers scale independently from Week 2, which covers the loads most likely to spike first. The trigger for revisiting is release contention between teams or a measured load profile — neither of which exists yet, since **nothing has been load-measured** |
 
 ## 10. Delivery milestones
 
