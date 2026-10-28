@@ -165,3 +165,12 @@ async def update_patient(
         )
     )
     return patient
+
+
+async def get_patient_for_user(session: AsyncSession, user_id: uuid.UUID) -> Patient:
+    """The patient record linked to a login. 404 for a login with none -- a patient
+    account created before its record was linked, or a misissued role."""
+    patient = await session.scalar(select(Patient).where(Patient.user_id == user_id))
+    if patient is None:
+        raise NotFound("no patient record is linked to this login")
+    return patient

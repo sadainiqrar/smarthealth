@@ -40,6 +40,16 @@ async def register_patient(
     return PatientRead.model_validate(patient)
 
 
+@router.get("/me", response_model=PatientRead)
+async def get_my_patient_record(
+    session: AsyncSession = Depends(get_session),
+    claims: TokenClaims = Depends(require_role(UserRole.PATIENT)),
+) -> PatientRead:
+    """Declared before /{patient_id}: otherwise FastAPI parses "me" as a UUID and 422s."""
+    patient = await service.get_patient_for_user(session, uuid.UUID(claims.subject))
+    return PatientRead.model_validate(patient)
+
+
 @router.get("/{patient_id}", response_model=PatientRead)
 async def get_patient(
     patient_id: uuid.UUID,
