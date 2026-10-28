@@ -11,6 +11,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import delete, update
 from temporalio.client import WorkflowFailureError
 
 from app.components import build_activities, register_all
@@ -20,7 +21,9 @@ from app.core.temporal import TASK_QUEUE, WORKFLOWS, build_worker, connect_clien
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
-from app.modules.identity.models import UserRole
+from app.modules.identity.models import User, UserRole
+from app.modules.identity.security import hash_password
+from app.modules.patients.models import Patient
 from app.modules.scheduling.booking import booking_workflow_id
 from app.modules.scheduling.models import ProviderSlot, SlotStatus
 from tests.tiers.t3_integration import scheduling_helpers
@@ -144,3 +147,107 @@ async def test_two_bookings_for_one_slot_confirm_exactly_one(api, token_for, boo
     assert statuses == ["confirmed", "failed"]
     async with factory() as session:
         assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.BOOKED
+
+
+# --- Patient-role authorisation -------------------------------------------------------
+# These need real rows: the ownership check resolves the caller's user id to a patient
+# through patients.public, which T1 cannot fake without faking the very check under test.
+
+
+@pytest.fixture
+async def patient_login(booking_stack, token_for):
+    """Make a PATIENT user, optionally linked to a patient, and return its auth headers.
+    Torn down before `booking_stack` purges the patients, so it unlinks first."""
+    factory, _ = booking_stack
+    made: list[uuid.UUID] = []
+
+    async def _make(patient_id: uuid.UUID | None) -> dict[str, str]:
+        async with factory() as session:
+            user = User(
+                email=f"{uuid.uuid4().hex[:12]}@example.com",
+                password_hash=hash_password("x" * 12), role=UserRole.PATIENT,
+            )
+            session.add(user)
+            await session.flush()
+            if patient_id is not None:
+                await session.execute(
+                    update(Patient).where(Patient.id == patient_id).values(user_id=user.id)
+                )
+            await session.commit()
+            made.append(user.id)
+        return token_for(UserRole.PATIENT, subject=str(user.id))
+
+    yield _make
+    async with factory() as session:
+        await session.execute(
+            update(Patient).where(Patient.user_id.in_(made)).values(user_id=None)
+        )
+        await session.execute(delete(User).where(User.id.in_(made)))
+        await session.commit()
+
+
+async def test_a_patient_may_not_book_for_another_patient(booking_stack, api, patient_login):
+    factory, _ = booking_stack
+    async with factory() as session:
+        mine = await seed_bookable(session)
+        theirs = await seed_bookable(session, starts_in=timedelta(days=3))
+    headers = await patient_login(mine.patient_id)
+
+    response = await api.post(
+        "/appointments",
+        json={"patient_id": str(theirs.patient_id), "slot_id": str(theirs.slot_id)},
+        headers=headers,
+    )
+    assert response.status_code == 403
+
+
+async def test_a_patient_books_for_themselves(booking_stack, api, patient_login):
+    factory, client = booking_stack
+    async with factory() as session:
+        mine = await seed_bookable(session)
+    headers = await patient_login(mine.patient_id)
+
+    response = await api.post(
+        "/appointments",
+        json={"patient_id": str(mine.patient_id), "slot_id": str(mine.slot_id)},
+        headers=headers,
+    )
+    assert response.status_code == 202
+    assert await _finish(client, response.json()["appointment_id"]) == "confirmed"
+
+
+async def test_a_patient_login_with_no_patient_record_may_not_book(
+    booking_stack, api, patient_login
+):
+    """None != patient_id: an unlinked login owns no patient, so it books for nobody."""
+    factory, _ = booking_stack
+    async with factory() as session:
+        b = await seed_bookable(session)
+    headers = await patient_login(None)
+
+    response = await api.post(
+        "/appointments", json={"patient_id": str(b.patient_id), "slot_id": str(b.slot_id)},
+        headers=headers,
+    )
+    assert response.status_code == 403
+
+
+async def test_a_patient_cannot_read_another_patients_appointment(
+    booking_stack, api, token_for, patient_login
+):
+    """404, not 403: a patient must not be able to probe which appointment ids exist."""
+    factory, client = booking_stack
+    async with factory() as session:
+        mine = await seed_bookable(session)
+        theirs = await seed_bookable(session, starts_in=timedelta(days=3))
+    accepted = await api.post(
+        "/appointments",
+        json={"patient_id": str(theirs.patient_id), "slot_id": str(theirs.slot_id)},
+        headers=token_for(UserRole.FRONT_DESK),
+    )
+    appointment_id = accepted.json()["appointment_id"]
+    await _finish(client, appointment_id)
+    headers = await patient_login(mine.patient_id)
+
+    response = await api.get(f"/appointments/{appointment_id}", headers=headers)
+    assert response.status_code == 404

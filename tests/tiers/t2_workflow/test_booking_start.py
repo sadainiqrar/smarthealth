@@ -48,7 +48,14 @@ async def test_a_repeat_after_completion_does_not_book_again(temporal_env):
     ):
         first = await start_booking(temporal_env.client, request, task_queue=queue)
         await temporal_env.client.get_workflow_handle(first).result()
+        first_run = (await temporal_env.client.get_workflow_handle(first).describe()).run_id
         second = await start_booking(temporal_env.client, request, task_queue=queue)
+        # Inside the worker context, so that if the repeat *had* started a second run it
+        # would execute here and count a second create_pending. An unpinned handle
+        # follows the latest run, which is the second one if it exists.
+        latest = temporal_env.client.get_workflow_handle(second)
+        await latest.result()
+        assert (await latest.describe()).run_id == first_run
 
     assert first == second
     assert counter["create_pending"] == 1
