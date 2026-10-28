@@ -8,13 +8,16 @@ A patient books and reads only their own appointments; staff act for anyone.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client
 
-from app.api.deps import get_session, get_temporal
+from app.api.deps import get_session, get_temporal, page_params
+from app.core.clock import Clock, get_clock
 from app.core.errors import NotFound, PermissionDenied
+from app.core.pagination import Page, PageParams
 from app.core.temporal import TASK_QUEUE
 from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
@@ -28,9 +31,15 @@ from app.modules.scheduling.booking import (
 )
 from app.modules.scheduling.contracts import BookingRequest
 from app.modules.scheduling.models import AppointmentStatus
-from app.modules.scheduling.schemas import AppointmentRead, BookingAccepted, BookingCreate
+from app.modules.scheduling.schemas import (
+    AppointmentRead,
+    BookingAccepted,
+    BookingCreate,
+    SlotRead,
+)
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
+slots_router = APIRouter(prefix="/slots", tags=["slots"])
 
 BOOKERS = (UserRole.PATIENT, UserRole.FRONT_DESK, UserRole.ADMIN)
 READERS = (UserRole.PATIENT, UserRole.PROVIDER, UserRole.FRONT_DESK, UserRole.ADMIN)
@@ -98,3 +107,24 @@ async def get_appointment(
         if await _own_patient_id(session, claims) != appointment.patient_id:
             raise NotFound(f"appointment {appointment_id} does not exist")
     return AppointmentRead.model_validate(appointment)
+
+
+@slots_router.get("", response_model=Page[SlotRead])
+async def list_slots(
+    provider_id: uuid.UUID,
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+    page: PageParams = Depends(page_params),
+    session: AsyncSession = Depends(get_session),
+    clock: Clock = Depends(get_clock),
+    _: TokenClaims = Depends(require_role(*UserRole)),
+) -> Page[SlotRead]:
+    slots, total = await service.list_free_slots(
+        session, provider_id=provider_id, now=clock.now(), start=from_, end=to, page=page
+    )
+    return Page[SlotRead](
+        items=[SlotRead.model_validate(s) for s in slots],
+        total=total,
+        limit=page.limit,
+        offset=page.offset,
+    )

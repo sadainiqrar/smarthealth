@@ -20,13 +20,14 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound, Unprocessable
+from app.core.pagination import PageParams
 from app.db.constraints import violated_constraint
 from app.modules.scheduling.models import (
     Appointment,
@@ -271,3 +272,39 @@ async def fail_booking(
     appointment.status = AppointmentStatus.FAILED
     await session.flush()
     await _audit(audit, appointment, "booking_failed", actor_user_id, before)
+
+
+async def list_free_slots(
+    session: AsyncSession,
+    *,
+    provider_id: uuid.UUID,
+    now: datetime,
+    start: datetime | None,
+    end: datetime | None,
+    page: PageParams,
+) -> tuple[list[ProviderSlot], int]:
+    """Free slots of one provider that have not started, earliest first.
+
+    The same two conditions `claim_slot` enforces -- `status = 'free'` and
+    `starts_at > now` -- so every listed slot is one a booking could take. It can still
+    lose a race to another booking; the claim, not this list, is the authority.
+    """
+    lower = max(now, start) if start is not None else now
+    conditions = [
+        ProviderSlot.provider_id == provider_id,
+        ProviderSlot.status == SlotStatus.FREE,
+        ProviderSlot.starts_at > lower,
+    ]
+    if end is not None:
+        conditions.append(ProviderSlot.starts_at < end)
+    total = await session.scalar(
+        select(func.count()).select_from(ProviderSlot).where(*conditions)
+    )
+    rows = await session.scalars(
+        select(ProviderSlot)
+        .where(*conditions)
+        .order_by(ProviderSlot.starts_at, ProviderSlot.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    )
+    return list(rows), int(total or 0)

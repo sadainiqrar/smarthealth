@@ -37,3 +37,14 @@ class AppointmentRead(BaseModel):
     reason: str | None = None
     confirmed_at: datetime | None = None
     created_at: datetime | None = None
+
+
+class SlotRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    provider_id: uuid.UUID
+    clinic_id: uuid.UUID
+    department_id: uuid.UUID | None
+    starts_at: datetime
+    ends_at: datetime
