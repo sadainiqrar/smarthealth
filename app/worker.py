@@ -16,6 +16,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Sequence
+from datetime import timedelta
 
 from temporalio.service import RPCError
 
@@ -32,6 +33,11 @@ from app.core.temporal import (
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
+
+#: Overall bound on `--check`, connect included. Connecting to a blackholed host takes
+#: tens of seconds in the SDK, which would outlive compose's healthcheck timeout (10 s);
+#: staying below it makes the probe fail by its own exit code rather than be killed.
+CHECK_TIMEOUT = timedelta(seconds=8)
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -60,6 +66,14 @@ async def _run(settings: Settings) -> None:
 
 
 async def _check(settings: Settings) -> bool:
+    try:
+        return await asyncio.wait_for(_probe(settings), CHECK_TIMEOUT.total_seconds())
+    except TimeoutError:
+        logger.warning("worker check timed out", extra={"timeout": str(CHECK_TIMEOUT)})
+        return False
+
+
+async def _probe(settings: Settings) -> bool:
     try:
         client = await connect_client(settings, lazy=False)
     except (RPCError, RuntimeError) as exc:

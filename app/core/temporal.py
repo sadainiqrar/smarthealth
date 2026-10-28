@@ -28,8 +28,9 @@ from app.settings import Settings
 #: use it bare: the test isolation layer namespaces queues through that prefix.
 TASK_QUEUE = "scheduling"
 
-#: Long enough for a healthy worker under load, short enough to fail a healthcheck
-#: before compose's own timeout.
+#: Long enough for a healthy worker under load. This bounds only the canary phase;
+#: connecting has its own, much longer, SDK timeout, so `app.worker --check` wraps
+#: connect and canary together in `CHECK_TIMEOUT` to stay inside compose's timeout.
 CANARY_TIMEOUT = timedelta(seconds=5)
 
 WORKFLOWS: Registry[type] = Registry("workflow")

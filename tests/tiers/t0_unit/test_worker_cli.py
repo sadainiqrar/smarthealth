@@ -1,3 +1,6 @@
+import asyncio
+from datetime import timedelta
+
 import pytest
 
 from app import worker
@@ -13,8 +16,13 @@ def test_check_flag_selects_the_probe():
     assert worker.parse_args(["--check"]).check is True
 
 
-def test_check_exits_nonzero_when_temporal_is_unreachable(monkeypatch):
-    """The compose healthcheck relies on the exit code, so a dead server must fail it."""
-    monkeypatch.setenv("SMARTHEALTH_TEMPORAL_HOST", "127.0.0.1")
-    monkeypatch.setenv("SMARTHEALTH_TEMPORAL_PORT", "1")
+def test_check_exits_nonzero_when_connect_hangs(monkeypatch):
+    """A blackholed host makes the SDK connect for tens of seconds; the probe must give
+    up on its own, inside compose's healthcheck timeout."""
+
+    async def hang(*args, **kwargs):
+        await asyncio.sleep(3600)
+
+    monkeypatch.setattr(worker, "connect_client", hang)
+    monkeypatch.setattr(worker, "CHECK_TIMEOUT", timedelta(seconds=0.2))
     assert worker.main(["--check"]) == 1
