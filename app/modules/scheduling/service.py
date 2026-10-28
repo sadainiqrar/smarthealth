@@ -18,7 +18,7 @@ The caller owns the transaction: these flush, the caller commits -- the Week 1 r
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -34,10 +34,18 @@ from app.modules.scheduling.models import (
     AppointmentStatus,
     ProviderSlot,
     SlotStatus,
+    Visit,
+    VisitStatus,
 )
-from app.modules.scheduling.state import require_transition
+from app.modules.scheduling.state import (
+    VISIT_RESULT,
+    VisitAction,
+    require_transition,
+)
+from app.modules.scheduling.state import require_visit_action as check_visit_action
 
 ENTITY = "appointment"
+VISIT_ENTITY = "visit"
 
 #: The partial unique index that allows one live appointment per slot. Named here
 #: because a claim that loses to it must become a Conflict, not a 500.
@@ -272,6 +280,178 @@ async def fail_booking(
     appointment.status = AppointmentStatus.FAILED
     await session.flush()
     await _audit(audit, appointment, "booking_failed", actor_user_id, before)
+
+
+# --- visit lifecycle (spec 4.2) -------------------------------------------------------
+#
+# The same discipline as booking: every function is idempotent, the caller owns the
+# transaction, and the appointment row is locked first (`_require`) so racing signals for
+# one visit serialise. Unlike booking, none of these writes a slot: a completed or no-show
+# appointment's slot is in the past and stays `booked` (spec 2, the R-2 table).
+
+
+def _visit_snapshot(visit: Visit) -> dict[str, object]:
+    return {
+        "appointment_id": str(visit.appointment_id),
+        "status": visit.status,
+        "checked_in_at": visit.checked_in_at.isoformat(),
+        "seen_at": visit.seen_at.isoformat() if visit.seen_at else None,
+        "completed_at": visit.completed_at.isoformat() if visit.completed_at else None,
+    }
+
+
+async def _audit_visit(
+    audit: AuditLog, visit: Visit, action: str, actor_user_id: str | None,
+    before: dict[str, object] | None,
+) -> None:
+    await audit.record(
+        AuditEvent(
+            entity_type=VISIT_ENTITY, entity_id=str(visit.id), action=action,
+            actor_user_id=actor_user_id, before=before, after=_visit_snapshot(visit),
+        )
+    )
+
+
+async def get_visit(
+    session: AsyncSession, appointment_id: uuid.UUID, *, for_update: bool = False
+) -> Visit | None:
+    """The appointment's visit, or None. A fresh read, for the reason `get_appointment`
+    is."""
+    statement = (
+        select(Visit)
+        .where(Visit.appointment_id == appointment_id)
+        .execution_options(populate_existing=True)
+    )
+    if for_update:
+        statement = statement.with_for_update()
+    return await session.scalar(statement)
+
+
+async def require_visit_action(
+    session: AsyncSession, *, appointment_id: uuid.UUID, action: VisitAction
+) -> None:
+    """Raise NotFound or Conflict unless `action` is legal for the appointment now.
+
+    What the endpoints call *before* signalling the workflow, so an illegal request is a
+    synchronous 409 rather than a signal the workflow later ignores. A read only; it locks
+    nothing, so it can be stale by the time the activity runs -- which is why every write
+    below re-checks under a lock."""
+    appointment = await get_appointment(session, appointment_id)
+    if appointment is None:
+        raise NotFound(f"appointment {appointment_id} does not exist")
+    visit = await get_visit(session, appointment_id)
+    check_visit_action(action, appointment.status, visit.status if visit else None)
+
+
+async def no_show_deadline(
+    session: AsyncSession, *, appointment_id: uuid.UUID, grace: timedelta
+) -> datetime:
+    """When the appointment becomes a no-show if nobody has checked in: the slot's end
+    plus `grace`. The workflow turns this into a timer; reading it here keeps the slot
+    lookup in the service."""
+    appointment = await get_appointment(session, appointment_id)
+    if appointment is None:
+        raise NotFound(f"appointment {appointment_id} does not exist")
+    slot = await session.get(ProviderSlot, appointment.slot_id) if appointment.slot_id else None
+    if slot is None:
+        raise NotFound(f"appointment {appointment_id} holds no slot")
+    return slot.ends_at + grace
+
+
+async def check_in(
+    session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
+    actor_user_id: str | None,
+) -> None:
+    """Insert the visit row. A visit that already exists is a retried activity.
+
+    `ON CONFLICT (appointment_id) DO NOTHING` backs the check under the lock: only the call
+    that actually inserted writes the audit entry (and, as in booking, a first run whose
+    commit failed leaves an entry for a write that never landed -- PRD R-1)."""
+    appointment = await _require(session, appointment_id)
+    if await get_visit(session, appointment_id, for_update=True) is not None:
+        return
+    check_visit_action(VisitAction.CHECK_IN, appointment.status, None)
+    result = await session.execute(
+        insert(Visit)
+        .values(
+            appointment_id=appointment_id, checked_in_at=now,
+            status=VISIT_RESULT[VisitAction.CHECK_IN],
+        )
+        .on_conflict_do_nothing(index_elements=[Visit.appointment_id])
+    )
+    if result.rowcount == 1:
+        visit = await get_visit(session, appointment_id)
+        await _audit_visit(audit, visit, "checked_in", actor_user_id, None)
+
+
+async def mark_seen(
+    session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
+    actor_user_id: str | None,
+) -> None:
+    """checked_in -> in_progress. A visit already in_progress or completed is a retry."""
+    appointment = await _require(session, appointment_id)
+    visit = await get_visit(session, appointment_id, for_update=True)
+    if visit is not None and visit.status in (VisitStatus.IN_PROGRESS, VisitStatus.COMPLETED):
+        return
+    check_visit_action(VisitAction.SEEN, appointment.status, visit.status if visit else None)
+    before = _visit_snapshot(visit)
+    visit.seen_at = now
+    visit.status = VISIT_RESULT[VisitAction.SEEN]
+    await session.flush()
+    await _audit_visit(audit, visit, "seen", actor_user_id, before)
+
+
+async def complete_visit(
+    session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
+    actor_user_id: str | None,
+) -> None:
+    """in_progress -> completed, and the appointment confirmed -> completed, together.
+
+    No slot write: the slot is in the past and stays `booked` (R-2). Already completed on
+    both sides is a retry."""
+    appointment = await _require(session, appointment_id)
+    visit = await get_visit(session, appointment_id, for_update=True)
+    if (
+        visit is not None
+        and visit.status is VisitStatus.COMPLETED
+        and appointment.status is AppointmentStatus.COMPLETED
+    ):
+        return
+    check_visit_action(VisitAction.COMPLETE, appointment.status, visit.status if visit else None)
+    require_transition(appointment.status, AppointmentStatus.COMPLETED)
+    visit_before = _visit_snapshot(visit)
+    appointment_before = _snapshot(appointment)
+    visit.completed_at = now
+    visit.status = VISIT_RESULT[VisitAction.COMPLETE]
+    appointment.status = AppointmentStatus.COMPLETED
+    await session.flush()
+    await _audit_visit(audit, visit, "completed", actor_user_id, visit_before)
+    await _audit(audit, appointment, "completed", actor_user_id, appointment_before)
+
+
+async def mark_no_show(
+    session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
+    actor_user_id: str | None,
+) -> bool:
+    """confirmed -> no_show if nobody checked in. True when the appointment is (now) a
+    no-show; False when it is not one -- a visit exists, or the appointment was cancelled
+    or otherwise left `confirmed` -- and nothing was written.
+
+    The workflow's timer fires at a fixed time while staff act on their own; this is where
+    the race is settled, under the appointment lock `check_in` also takes. No slot write."""
+    appointment = await _require(session, appointment_id)
+    if appointment.status is AppointmentStatus.NO_SHOW:
+        return True
+    if appointment.status is not AppointmentStatus.CONFIRMED:
+        return False
+    if await get_visit(session, appointment_id) is not None:
+        return False
+    require_transition(appointment.status, AppointmentStatus.NO_SHOW)
+    before = _snapshot(appointment)
+    appointment.status = AppointmentStatus.NO_SHOW
+    await session.flush()
+    await _audit(audit, appointment, "no_show", actor_user_id, before)
+    return True
 
 
 async def list_free_slots(

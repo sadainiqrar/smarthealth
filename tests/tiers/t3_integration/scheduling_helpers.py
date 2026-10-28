@@ -10,8 +10,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import Clock
 from app.modules.patients.models import Patient
 from app.modules.providers.models import Clinic, Provider
+from app.modules.scheduling import service
 from app.modules.scheduling.models import Appointment, ProviderSlot
 
 
@@ -48,6 +50,45 @@ async def seed_bookable(
     made = Bookable(patient.id, slot.id, provider.id, clinic.id)
     CREATED.append(made)
     return made
+
+
+class RecordingAudit:
+    """An `AuditLog` stand-in that keeps what it was asked to record."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def record(self, event) -> None:
+        self.events.append(event)
+
+
+async def confirmed_appointment(factory, audit=None) -> tuple[Bookable, uuid.UUID]:
+    """Seed a bookable slot and take a booking all the way to `confirmed` through the
+    service functions, each in its own committed transaction -- the same shape the
+    booking activities give it. Pair with `purge` like `seed_bookable`."""
+    audit = audit or RecordingAudit()
+    async with factory() as session:
+        b = await seed_bookable(session)
+    appointment_id = uuid.uuid4()
+    async with factory() as session:
+        await service.create_pending(
+            session, audit, appointment_id=appointment_id, patient_id=b.patient_id,
+            slot_id=b.slot_id, reason=None, actor_user_id=None,
+        )
+        await session.commit()
+    async with factory() as session:
+        await service.claim_slot(
+            session, audit, appointment_id=appointment_id, slot_id=b.slot_id,
+            now=Clock().now(), actor_user_id=None,
+        )
+        await session.commit()
+    async with factory() as session:
+        await service.confirm_booking(
+            session, audit, appointment_id=appointment_id, now=Clock().now(),
+            actor_user_id=None,
+        )
+        await session.commit()
+    return b, appointment_id
 
 
 async def add_slot(

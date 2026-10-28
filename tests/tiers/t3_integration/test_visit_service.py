@@ -1,0 +1,329 @@
+"""Visit operations against real Postgres: idempotency, the legal order, and R-2 -- a
+completed or no-show appointment's slot stays `booked`, untouched.
+
+Tests say which mutation of `service.py` they exist to kill.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import timedelta
+
+import pytest
+from sqlalchemy import select
+
+from app.core.clock import Clock
+from app.core.errors import Conflict, NotFound
+from app.db.engine import create_engine
+from app.db.session import create_session_factory
+from app.modules.scheduling import service
+from app.modules.scheduling.models import (
+    Appointment,
+    AppointmentStatus,
+    ProviderSlot,
+    SlotStatus,
+    Visit,
+    VisitStatus,
+)
+from app.modules.scheduling.state import VisitAction
+from tests.tiers.t3_integration import scheduling_helpers
+from tests.tiers.t3_integration.scheduling_helpers import RecordingAudit, confirmed_appointment
+
+pytestmark = [pytest.mark.integration, pytest.mark.docker]
+
+NO_SHOW_ACTOR = "system:visit-workflow"
+
+
+@pytest.fixture
+async def factory(db_settings):
+    engine = create_engine(db_settings)
+    factory = create_session_factory(engine)
+    yield factory
+    async with factory() as session:
+        await scheduling_helpers.purge(session, scheduling_helpers.CREATED)
+    scheduling_helpers.CREATED.clear()
+    await engine.dispose()
+
+
+async def _slot(factory, slot_id) -> ProviderSlot:
+    async with factory() as session:
+        return await session.get(ProviderSlot, slot_id)
+
+
+async def _appointment(factory, appointment_id) -> Appointment:
+    async with factory() as session:
+        return await session.get(Appointment, appointment_id)
+
+
+async def _visits(factory, appointment_id) -> list[Visit]:
+    async with factory() as session:
+        rows = await session.scalars(
+            select(Visit).where(Visit.appointment_id == appointment_id)
+        )
+        return list(rows)
+
+
+async def _set_status(factory, appointment_id, status: AppointmentStatus) -> None:
+    """Put an appointment into a state the visit path must refuse. Tests only."""
+    async with factory() as session:
+        appointment = await session.get(Appointment, appointment_id)
+        appointment.status = status
+        await session.commit()
+
+
+async def _check_in(factory, audit, appointment_id) -> None:
+    async with factory() as session:
+        await service.check_in(
+            session, audit, appointment_id=appointment_id, now=Clock().now(),
+            actor_user_id="u-1",
+        )
+        await session.commit()
+
+
+async def _seen(factory, audit, appointment_id) -> None:
+    async with factory() as session:
+        await service.mark_seen(
+            session, audit, appointment_id=appointment_id, now=Clock().now(),
+            actor_user_id="u-1",
+        )
+        await session.commit()
+
+
+async def _complete(factory, audit, appointment_id) -> None:
+    async with factory() as session:
+        await service.complete_visit(
+            session, audit, appointment_id=appointment_id, now=Clock().now(),
+            actor_user_id="u-1",
+        )
+        await session.commit()
+
+
+async def _no_show(factory, audit, appointment_id) -> bool:
+    async with factory() as session:
+        result = await service.mark_no_show(
+            session, audit, appointment_id=appointment_id, actor_user_id=NO_SHOW_ACTOR
+        )
+        await session.commit()
+        return result
+
+
+def _actions(audit: RecordingAudit, entity: str) -> list[str]:
+    return [e.action for e in audit.events if e.entity_type == entity]
+
+
+# --- check_in ------------------------------------------------------------------------
+
+
+async def test_check_in_inserts_one_visit_and_a_retry_writes_nothing(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    before = len(audit.events)
+    for _ in range(2):
+        await _check_in(factory, audit, appointment_id)
+
+    visits = await _visits(factory, appointment_id)
+    assert len(visits) == 1
+    assert visits[0].status is VisitStatus.CHECKED_IN and visits[0].checked_in_at is not None
+    assert len(audit.events) - before == 1
+    assert _actions(audit, "visit") == ["checked_in"]
+
+
+@pytest.mark.parametrize(
+    "status",
+    [AppointmentStatus.PENDING, AppointmentStatus.CANCELLED, AppointmentStatus.NO_SHOW],
+)
+async def test_check_in_needs_a_confirmed_appointment(factory, status):
+    """Kills: the CONFIRMED requirement removed from `state.require_visit_action`."""
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _set_status(factory, appointment_id, status)
+    with pytest.raises(Conflict):
+        await _check_in(factory, audit, appointment_id)
+    assert await _visits(factory, appointment_id) == []
+
+
+async def test_check_in_for_a_missing_appointment_is_not_found(factory):
+    async with factory() as session:
+        with pytest.raises(NotFound):
+            await service.check_in(
+                session, RecordingAudit(), appointment_id=uuid.uuid4(),
+                now=Clock().now(), actor_user_id=None,
+            )
+
+
+# --- mark_seen -----------------------------------------------------------------------
+
+
+async def test_seen_before_check_in_is_a_conflict(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    with pytest.raises(Conflict):
+        await _seen(factory, audit, appointment_id)
+
+
+async def test_seen_twice_is_one_write(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _check_in(factory, audit, appointment_id)
+    await _seen(factory, audit, appointment_id)
+    first = (await _visits(factory, appointment_id))[0]
+    before = len(audit.events)
+    await _seen(factory, audit, appointment_id)
+
+    visit = (await _visits(factory, appointment_id))[0]
+    assert visit.status is VisitStatus.IN_PROGRESS
+    assert visit.seen_at == first.seen_at and visit.seen_at is not None
+    assert visit.seen_at >= visit.checked_in_at
+    assert len(audit.events) == before
+    assert _actions(audit, "visit") == ["checked_in", "seen"]
+
+
+# --- complete_visit ------------------------------------------------------------------
+
+
+async def test_complete_before_seen_is_a_conflict(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _check_in(factory, audit, appointment_id)
+    with pytest.raises(Conflict):
+        await _complete(factory, audit, appointment_id)
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
+
+
+async def test_complete_finishes_visit_and_appointment_and_leaves_the_slot_booked(factory):
+    """R-2: a completed appointment's slot is in the past and stays `booked`.
+    Kills: `complete_visit` writing the slot (status or version)."""
+    audit = RecordingAudit()
+    b, appointment_id = await confirmed_appointment(factory, audit)
+    slot_before = await _slot(factory, b.slot_id)
+    confirmed_at = (await _appointment(factory, appointment_id)).confirmed_at
+    await _check_in(factory, audit, appointment_id)
+    await _seen(factory, audit, appointment_id)
+    await _complete(factory, audit, appointment_id)
+
+    visit = (await _visits(factory, appointment_id))[0]
+    assert visit.status is VisitStatus.COMPLETED and visit.completed_at is not None
+    appointment = await _appointment(factory, appointment_id)
+    assert appointment.status is AppointmentStatus.COMPLETED
+    assert appointment.confirmed_at == confirmed_at
+    slot = await _slot(factory, b.slot_id)
+    assert slot.status is SlotStatus.BOOKED
+    assert slot.version == slot_before.version
+
+
+async def test_complete_twice_writes_nothing_the_second_time(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _check_in(factory, audit, appointment_id)
+    await _seen(factory, audit, appointment_id)
+    await _complete(factory, audit, appointment_id)
+    before = len(audit.events)
+    completed_at = (await _visits(factory, appointment_id))[0].completed_at
+    await _complete(factory, audit, appointment_id)
+
+    assert len(audit.events) == before
+    assert (await _visits(factory, appointment_id))[0].completed_at == completed_at
+    assert _actions(audit, "visit")[-1] == "completed"
+    assert _actions(audit, "appointment")[-1] == "completed"
+
+
+# --- mark_no_show --------------------------------------------------------------------
+
+
+async def test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked(factory):
+    """Kills: `mark_no_show` writing the slot."""
+    audit = RecordingAudit()
+    b, appointment_id = await confirmed_appointment(factory, audit)
+    slot_before = await _slot(factory, b.slot_id)
+
+    assert await _no_show(factory, audit, appointment_id) is True
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.NO_SHOW
+    slot = await _slot(factory, b.slot_id)
+    assert slot.status is SlotStatus.BOOKED and slot.version == slot_before.version
+    assert audit.events[-1].action == "no_show"
+    assert audit.events[-1].actor_user_id == NO_SHOW_ACTOR
+
+
+async def test_no_show_twice_is_true_and_audits_once(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    assert await _no_show(factory, audit, appointment_id) is True
+    before = len(audit.events)
+    assert await _no_show(factory, audit, appointment_id) is True
+    assert len(audit.events) == before
+
+
+async def test_no_show_after_check_in_changes_nothing(factory):
+    """Someone checked in, so the timer firing late is not a no-show.
+    Kills: the 'visit exists -> False' guard removed from `mark_no_show`."""
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _check_in(factory, audit, appointment_id)
+    before = len(audit.events)
+
+    assert await _no_show(factory, audit, appointment_id) is False
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
+    assert len(audit.events) == before
+
+
+async def test_no_show_on_a_cancelled_appointment_is_false(factory):
+    """Kills: the `confirmed` requirement removed from `mark_no_show`."""
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    await _set_status(factory, appointment_id, AppointmentStatus.CANCELLED)
+    before = len(audit.events)
+
+    assert await _no_show(factory, audit, appointment_id) is False
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CANCELLED
+    assert len(audit.events) == before
+
+
+# --- no_show_deadline and require_visit_action ---------------------------------------
+
+
+async def test_no_show_deadline_is_the_slots_end_plus_grace(factory):
+    b, appointment_id = await confirmed_appointment(factory)
+    slot = await _slot(factory, b.slot_id)
+    async with factory() as session:
+        deadline = await service.no_show_deadline(
+            session, appointment_id=appointment_id, grace=timedelta(minutes=15)
+        )
+    assert deadline == slot.ends_at + timedelta(minutes=15)
+
+
+async def test_no_show_deadline_for_a_missing_appointment_is_not_found(factory):
+    async with factory() as session:
+        with pytest.raises(NotFound):
+            await service.no_show_deadline(
+                session, appointment_id=uuid.uuid4(), grace=timedelta(minutes=15)
+            )
+
+
+async def test_require_visit_action_maps_a_missing_appointment_to_not_found(factory):
+    async with factory() as session:
+        with pytest.raises(NotFound):
+            await service.require_visit_action(
+                session, appointment_id=uuid.uuid4(), action=VisitAction.CHECK_IN
+            )
+
+
+async def test_require_visit_action_reads_both_rows(factory):
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+    async with factory() as session:
+        await service.require_visit_action(
+            session, appointment_id=appointment_id, action=VisitAction.CHECK_IN
+        )
+        with pytest.raises(Conflict):
+            await service.require_visit_action(
+                session, appointment_id=appointment_id, action=VisitAction.SEEN
+            )
+    await _check_in(factory, audit, appointment_id)
+    async with factory() as session:
+        await service.require_visit_action(
+            session, appointment_id=appointment_id, action=VisitAction.SEEN
+        )
+        with pytest.raises(Conflict):
+            await service.require_visit_action(
+                session, appointment_id=appointment_id, action=VisitAction.CHECK_IN
+            )
