@@ -2,8 +2,8 @@
 
 **Product:** SmartHealth — Intelligent Healthcare Operations & Patient Engagement Platform
 **Customer:** MediNova (hospitals, clinics, diagnostic centres, telemedicine providers)
-**Status:** Week 1 of 5 complete · Part A in progress
-**Last verified against the codebase:** 2026-09-13
+**Status:** Week 1 of 5 complete; Week 2 in progress (slice 2 of 5, the booking workflow, built) · Part A in progress
+**Last verified against the codebase:** 2026-10-28
 
 > Requirement ids defined here are the anchors used by the test catalog
 > (`tests/cases/*.yaml`) and by the generated coverage report at
@@ -93,7 +93,7 @@ credentials; a login may be linked later. See §7 D-1.
 | `PART-A-FR-1.4` | User account creation | Week 1 | Partial — CLI only, no endpoint |
 | `PART-A-FR-1.5` | Clinic and department management | Week 2 | **Not started** — schema only |
 | `PART-A-FR-1.6` | Audit trail with actor, action, before/after | Week 1 | Done |
-| **PART-A-FR-2** | **Appointment scheduling workflow** — validate patient eligibility, reserve the provider slot, prevent conflicts, schedule notifications, initiate billing pre-check, and mark the appointment `confirmed` **only after** all of it succeeds. Partial failure must not corrupt scheduling state. Cancellation and reschedule are first-class flows triggering slot release, waitlist movement, billing updates and notifications | Week 2 | **Not started** — schema and constraints only |
+| **PART-A-FR-2** | **Appointment scheduling workflow** — validate patient eligibility, reserve the provider slot, prevent conflicts, schedule notifications, initiate billing pre-check, and mark the appointment `confirmed` **only after** all of it succeeds. Partial failure must not corrupt scheduling state. Cancellation and reschedule are first-class flows triggering slot release, waitlist movement, billing updates and notifications | Week 2 | **In progress** — booking built (Week 2 slice 2): `POST /appointments` starts `BookAppointmentWorkflow`, which confirms last and compensates on any failure; `GET /appointments/{id}` reads the result. Billing pre-check and reminder scheduling are stand-in activities until Week 3. Cancel/reschedule and the waitlist land in slice 4 |
 | **PART-A-FR-3** | **Visit & service workflow** — check-in recorded, visit progress updated, completion stored, billing and follow-up triggered. Must be idempotent under retry, prevent duplicates, and recover from mid-flight failure | Week 2 | **Not started** — schema only |
 | **PART-A-FR-4** | **Distributed & event-driven behaviour** — domain events (appointment booked, cancelled/rescheduled, schedule changed, reminder due, billing updated, visit completed) processed independently of user-facing flows, traceable, recoverable, without double-processing | Week 3 | **Not started** |
 | **PART-A-FR-5** | **Analytics** — Total Patients; Appointments Booked Over Time; Completed Visits; Cancellation Rate; Average Wait Time | Week 3 | **Not started** — schema supports all five |
@@ -122,8 +122,8 @@ credentials; a login may be linked later. See §7 D-1.
 
 | Id | Requirement | Verified by |
 | --- | --- | --- |
-| **PART-A-NFR-1** | **Correctness under concurrency.** Two simultaneous bookings for one slot must not both succeed. Enforced by the database, not by application logic | Partial unique index `ux_appointments_live_slot`; T3 integration tests |
-| **PART-A-NFR-2** | **No corrupt scheduling state after partial failure.** A workflow that fails midway leaves no orphaned slot or half-confirmed appointment | T2 workflow tier (Week 2) |
+| **PART-A-NFR-1** | **Correctness under concurrency.** Two simultaneous bookings for one slot must not both succeed. Enforced by the database, not by application logic | The conditional claim in `scheduling/service.py` `claim_slot` (D-2), backed by the partial unique index `ux_appointments_live_slot`; T3 `bkg-003` (a claim blocked behind a winner loses on the `status = 'free'` predicate) and `test_two_bookings_for_one_slot_confirm_exactly_one` |
+| **PART-A-NFR-2** | **No corrupt scheduling state after partial failure.** A workflow that fails midway leaves no orphaned slot or half-confirmed appointment | T2 `bkg-002` (every failing booking step compensates and never confirms); the paired compensation write by T3 `test_fail_booking_releases_its_held_slot` |
 | **PART-A-NFR-3** | **Idempotency.** All asynchronous consumers assume at-least-once delivery and take an explicit idempotency key | Registry-driven meta-tests (Week 3) |
 | **PART-A-NFR-4** | **Background work never blocks a user-facing request** | Week 3 |
 | **PART-A-NFR-5** | **Scale.** Tens of thousands of appointment requests; concurrent schedule updates; peak booking windows; multi-clinic operation | Week 3 load exercise |
@@ -135,7 +135,10 @@ credentials; a login may be linked later. See §7 D-1.
 
 ## 8. Key design decisions
 
-Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`.
+Full rationale for D-1 … D-8 in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`;
+for D-9 onwards in `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md` §2.
+D-12 … D-14 (visit workflow, waitlist promotion, reschedule ordering) are decided in that
+spec and are added here when the slice that builds them lands.
 
 | Id | Decision | Rejected alternative | Why |
 | --- | --- | --- | --- |
@@ -147,19 +150,28 @@ Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 | **D-6** | Services never import FastAPI; routers own the transaction boundary | Services raise `HTTPException` and commit | Week 2's Temporal activities call the same functions with no HTTP request, and need to distinguish retryable from permanent failure — which a status code cannot express |
 | **D-7** | Temporal owns durable multi-step workflows; Kafka carries domain events; Celery/RabbitMQ runs fire-and-forget jobs | Use one of the three for everything | Reaching for the wrong one is the most likely architectural error in this project |
 | **D-8** | A modular monolith: one deployable, one schema, with module boundaries enforced by meta-tests | Microservices per domain | The assignment says "services/**modules**" (`part-a-core-platform.md:112`) — separation of *responsibilities* is graded, separation of *processes* is not. The headline invariants are PostgreSQL constraints (D-5) and constraints do not cross a service boundary: splitting scheduling would convert a GiST exclusion constraint, a partial unique index and composite foreign keys into distributed sagas. **Accepted cost:** blast radius and all-or-nothing API scaling — see R-8 |
+| **D-9** | `ProviderSlot` moves from `providers` into `scheduling` (`app/modules/scheduling/models.py`) | (a) `providers` publishes claim/release functions, one allowed edge; (b) scheduling writes raw SQL on `provider_slots` | Slots are bookable inventory and scheduling is the only module that mutates them. The paired write (appointment + slot in one transaction) stays inside one module, and the horizontal import rule needs no exception for it. (a) makes the paired write straddle a boundary; (b) passes the import test while coupling to another module's table behind its back. The table, constraints and migrations are untouched — only the Python class moved |
+| **D-10** | The booking workflow creates the `pending` row; the router only starts the workflow | Router inserts the row, then starts the workflow | Two systems cannot be written atomically. Workflow-first means a failed start leaves nothing behind, and a started workflow either confirms or compensates to `failed`. Router-first leaves a permanently `pending` orphan whenever the start fails, which needs a reconciler. Workflow-first needs none — **unless a workflow is terminated**: termination runs no workflow code, so compensation is skipped. The operational rule is "cancel, never terminate", and a reconciler for stale `pending` rows is deferred (R-9) |
+| **D-11** | Duplicate submission is prevented by deterministic workflow ids: `Idempotency-Key` → `appointment_id` (a `uuid5` of caller and key) → `booking-<appointment_id>`, started with `USE_EXISTING` + `REJECT_DUPLICATE` | Dedupe table keyed on request hash | Temporal already refuses a second start under one workflow id; a second store would be a second source of truth for the same fact. A key reused with a *different* request is a 422, detected by a request fingerprint in the workflow memo (`start_booking`, `app/modules/scheduling/booking.py`) |
+| **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py` (`ensure_bookable_patient`, `patient_id_for_user`); scheduling imports that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. Two declared edges onto one file — from `scheduling.activities` and `scheduling.router` — are visible in a diff and in `CROSS_MODULE_ALLOWED`. `scheduling/service.py` takes none: `NEVER_CROSS` forbids it (D-8) |
 
 ## 9. Known gaps and accepted risks
 
 | Id | Gap | Status |
 | --- | --- | --- |
 | **R-1** | The audit write (MongoDB) and the business commit (PostgreSQL) are not atomic. If the commit fails after the audit write, MongoDB records a change that never took effect | **Accepted** for Week 1. The chosen ordering makes the *detectable* failure the likely one; the reverse would silently lose the record entirely |
-| **R-2** | Releasing a slot is a paired write. Moving an appointment out of `pending`/`confirmed` frees the partial index, but `provider_slots.status` is unchanged | **Week 2 contract.** Cancel, reschedule, no-show and completion must update both in one transaction |
-| **R-3** | A slot in the past is still bookable. `CHECK (starts_at > now())` is impossible — PostgreSQL requires CHECK conditions to be immutable | **Week 2 contract.** The booking activity must reject it |
-| **R-4** | `provider_slots.version` does not self-increment. The claim statement must say `version = version + 1` | **Week 2 contract** |
+| **R-2** | *Restated 2026-10-28* (Week 2 spec §2). The Week 1 wording — "cancel, reschedule, no-show and completion must free the slot" — was wrong for two of the four: a completed or no-show slot is in the past and must not return to `free`. The invariant is **slot status agrees with appointment status, written in one transaction**: `confirmed` → slot `booked`; `failed` (compensation) → `free` if this appointment held it; `cancelled` / `rescheduled` → `free`; `completed` / `no_show` → stays `booked` | **Booking and compensation paths done; cancel/reschedule/visit paths pending** (slices 3–4). `confirm_booking` (`held → booked`) and `fail_booking` (`held → free`) in `app/modules/scheduling/service.py` write the slot in the appointment's transaction (T3 `test_confirm_books_the_slot_and_is_idempotent`, `test_fail_booking_releases_its_held_slot`). `tests/meta/test_slot_writes.py` fails if any other file in `app/` writes slot status |
+| **R-3** | A slot in the past is still bookable. `CHECK (starts_at > now())` is impossible — PostgreSQL requires CHECK conditions to be immutable | **Closed.** `service.ensure_slot_bookable` rejects a slot whose `starts_at <= now` with `Unprocessable` — a permanent, non-retried failure that compensates — in the `validate_booking` activity, and `service.claim_slot` re-checks at time of use with a `starts_at > now` predicate in the claim's `WHERE` — a retry or a backlogged worker can reach the claim after the slot started. Proven by T3 `test_a_past_slot_is_rejected`, `test_a_slot_that_started_before_the_claim_is_unprocessable` and, end to end, `test_a_past_slot_fails_and_leaves_the_slot_free` |
+| **R-4** | `provider_slots.version` does not self-increment. The claim statement must say `version = version + 1` | **Closed.** Every slot write in `app/modules/scheduling/service.py` — `claim_slot`, `confirm_booking`, `fail_booking` — sets `version = ProviderSlot.version + 1`. Proven by T3 `test_claim_increments_version_and_is_idempotent` (1 after a claim and its retry), `test_confirm_books_the_slot_and_is_idempotent` and `test_fail_booking_releases_its_held_slot` (2 each), and the round trip `test_a_booking_is_confirmed_end_to_end` (2) |
 | **R-5** | A patient cannot read their own record. This needs per-object authorisation, not per-role | **Deferred to Week 2**, with patient self-service |
 | **R-6** | Authentication failures (401/403) did not carry the `error` key used by every other error response | **Closed.** `require_role` now raises `DomainError` subclasses instead of `HTTPException`, so 401/403 route through the same handler as everything else. `DomainError` gained a `headers` attribute so the RFC 9110 `WWW-Authenticate` challenge survives the change. Guarded by `sys-007` |
 | **R-7** | Redis is connected and health-checked but used by no feature | **Open.** Intended use is caching and rate limiting in Week 3 |
 | **R-8** | The monolith's blast radius: one bad deploy takes down every module, and the API scales as a unit | **Accepted** for the five-week horizon, and stated rather than mitigated. Temporal and Celery workers scale independently from Week 2, which covers the loads most likely to spike first. The trigger for revisiting is release contention between teams or a measured load profile — neither of which exists yet, since **nothing has been load-measured** |
+| **R-9** | A booking workflow **terminated** (not cancelled) from the Temporal UI or CLI runs no workflow code, so `fail_booking` never runs: a `held` slot and a `pending` appointment are stranded | **Accepted; operational rule "cancel, never terminate".** Cancellation raises inside the workflow and compensates (Week 2 spec §6, verified on temporalio 1.34). A reconciler for stale `pending` rows is **deferred** — needed only if someone terminates a workflow (D-10) |
+| **R-10** | A failed appointment keeps its `slot_id`. The partial index ignores failed rows, but the `appointments.slot_id` foreign key's `ON DELETE RESTRICT` blocks deleting a slot that has failed bookings | **Accepted.** The one code path that deletes slots, `seed --clear` (`app/seed.py`), therefore fails on any seeded slot an appointment references, failed ones included. Slot regeneration (deferred, ARCHITECTURE §3.6) must account for it (`fail_booking` docstring, `app/modules/scheduling/service.py`) |
+| **R-11** | `GET /appointments/{id}` for an id with **no row yet** answers from Temporal — `pending` while the workflow runs, `failed` once it has closed — with no ownership check, because there is no row to read the patient from | **Accepted.** The synthetic answer exposes only `id`, `status` and `in_progress`. Once the row exists, a patient reading another patient's appointment gets 404 (T3 `test_a_patient_cannot_read_another_patients_appointment`) |
+| **R-12** | A duplicate audit entry. The audit write precedes the commit, so a booking activity whose commit fails and which Temporal then retries records the change twice. Extends R-1 to the activities | **Accepted**, as R-1. Each booking operation audits only when it actually wrote, so a retry after a *committed* first run adds no entry (`app/modules/scheduling/service.py` module docstring) |
+| **R-13** | `POST /appointments` can answer 503 after the workflow **did** start: the start succeeded, then the fingerprint check's `describe()` could not reach Temporal | **Accepted.** Retrying with the same `Idempotency-Key` is safe and returns the same booking (D-11). A client that sent no key cannot tell, and a retry books afresh — which is what the key is for |
 
 ## 10. Delivery milestones
 
@@ -180,7 +192,7 @@ Three links connect a requirement to shipped, tested code.
 | Requirement | Module / artefact |
 | --- | --- |
 | `PART-A-FR-1` | `app/modules/identity`, `app/modules/patients`, `app/modules/providers`, `app/core/audit.py`, `app/cli.py` |
-| `PART-A-FR-2` | `app/modules/scheduling` (models only) |
+| `PART-A-FR-2` | `app/modules/scheduling/` — `router.py`, `booking.py`, `workflows.py`, `activities.py`, `service.py`, `state.py`, `contracts.py`, `schemas.py`, `models.py`; `app/modules/patients/public.py`; registered in `app/components.py`, run by `app/worker.py` |
 | `PART-A-FR-3` | `app/modules/scheduling` (`Visit` model only) |
 | `PART-A-FR-4` | — not started |
 | `PART-A-FR-5` | — not started; schema support in `app/modules/scheduling/models.py` |
@@ -191,19 +203,22 @@ Three links connect a requirement to shipped, tested code.
 **② Requirement → test case.** Every case in `tests/cases/*.yaml` declares a `requirement`
 field carrying an id from this document. A case declaring none is a traceability gap.
 
-**③ Generated coverage report.** `tests/reports/traceability.md` is regenerated by
-`python -m tests.runner.route_check --write-catalog` and lists each requirement id with the
-cases covering it. Current state:
+**③ Generated coverage report.** `tests/reports/traceability.md` (git-ignored) is
+regenerated by `python -m tests.runner.route_check --write-traceability` and lists each
+requirement id with the cases covering it; `--write-catalog` regenerates the tracked
+`tests/cases/CATALOG.md`. Current state:
 
 | requirement | cases |
 | --- | --- |
 | `PART-A-FR-1` | 7 |
-| `PART-A-NFR-2` | 1 — precondition only (sys-008: every workflow registered and sandbox-valid); no booking workflow exists yet |
+| `PART-A-FR-2` | 5 — `bkg-001`, `bkg-004`, `bkg-005`, `bkg-006`, `bkg-007` |
+| `PART-A-NFR-1` | 1 — `bkg-003` |
+| `PART-A-NFR-2` | 2 — `bkg-002`, and `sys-008` (every workflow registered and sandbox-valid) |
 | `PART-A-NFR-5` | 2 |
 | `PART-A-OBS-1` | 6 |
 | `PART-A-OBS-4` | 1 |
 
-As of 2026-10-28. All other ids are uncovered because the features they describe are not
+24 cases, as of 2026-10-28. All other ids are uncovered because the features they describe are not
 yet built. Recount with `grep -h '^requirement:' tests/cases/*.yaml | sort | uniq -c`.
 
 ---

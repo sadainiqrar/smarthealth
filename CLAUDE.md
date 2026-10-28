@@ -11,11 +11,16 @@ provider management with role-gated writes, paginated and filtered reads, and ev
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
 Dockerfile plus an `app` service behind a compose profile.
 
-**Week 2 in progress.** Its first slice has landed: a Temporal worker process
-(`app/worker.py`, the `worker` compose service) with workflow/activity registries, a canary
-workflow as its readiness probe, and Temporal in `/ready`. **No business workflow exists
-yet** — booking, cancellation and the visit lifecycle are designed in
-`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
+**Week 2 in progress — slices 1 and 2 of 5 have landed.** Slice 1: a Temporal worker
+process (`app/worker.py`, the `worker` compose service) with workflow/activity registries,
+a canary workflow as its readiness probe, and Temporal in `/ready`. Slice 2, the booking
+workflow: `POST /appointments` (202) starts `BookAppointmentWorkflow`, which creates the
+`pending` row, validates, claims the slot, runs the billing pre-check and reminder
+scheduling (both **stand-ins** until Week 3) and confirms last, compensating on any failure;
+`GET /appointments/{id}` reads the result. Code in `app/modules/scheduling/`. **Not built
+yet:** slice 3, the visit workflow (check-in → seen → complete, no-show timer); slice 4,
+cancel/reschedule and the waitlist; slice 5, patient self-service (PRD R-5). All five are
+designed in `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
 the list of what was deliberately deferred are in
@@ -25,8 +30,8 @@ Two documents carry the things code cannot state, and are the first stop for "wh
 
 | Document | Use it for |
 | --- | --- |
-| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the seven design decisions with their rejected alternatives (§8), and the seven known gaps with dispositions (§9) |
-| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, and the **designed** event flows — the Temporal/Kafka/Celery split, the booking workflow, cancellation as a paired write |
+| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-11 and D-15), and the known gaps with dispositions (§9, R-1 … R-13) |
+| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2), and the **designed** event flows — the Temporal/Kafka/Celery split, cancellation as a paired write, the event catalogue |
 
 **Treat every document here as a source, not as proof.** Docs drift from code, and a stale
 claim is worse than a missing one because it gets trusted. Two real examples found on
@@ -38,7 +43,7 @@ Commands that work today:
 
 | Command | Purpose |
 | --- | --- |
-| `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract, meta |
+| `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract, T2 workflow (Temporal time-skipping server), meta |
 | `python -m pytest -m docker` | integration tests against the compose test stack |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
 | `python -m ruff check app tests` | lint |
@@ -106,12 +111,15 @@ These are the requirements most likely to be violated by an obvious implementati
   (`tests/meta/test_import_boundaries.py`), not by convention. *Vertical:* nothing outside
   the HTTP layer may reach FastAPI/Starlette, directly or transitively. *Horizontal:*
   `app/modules/<x>` may not import `app/modules/<y>` — `service.py`, `models.py` and
-  `schemas.py` take no exception at all, and the router layer's six auth edges onto
-  `identity` are declared as explicit pairs. When a module needs another's data, the
-  answer is a published interface or a domain event, never a direct import. Week 2's
-  `scheduling/service.py` is the first code with a real reason to break this, and one
-  import is the whole difference between a modular monolith and a monolith. Decision D-8
-  in `docs/PRD.md`; rationale in `docs/ARCHITECTURE.md` §1.3.
+  `schemas.py` take no exception at all, and every other edge is an explicit pair in
+  `CROSS_MODULE_ALLOWED`: nine router-layer auth edges onto `identity`, and two onto
+  `patients.public`. When a module needs another's data, the answer is a published
+  interface or a domain event, never a direct import. Booking was the first real test, and
+  it held: `scheduling.activities` (the patient check) and `scheduling.router` (patient
+  ownership) reach `app/modules/patients/public.py` through declared pairs, while
+  `scheduling/service.py` takes no cross-module import — the activity does the patient check
+  and hands the service ids only. Decisions D-8 and D-15 in `docs/PRD.md`; rationale in
+  `docs/ARCHITECTURE.md` §1.3.
 - **Appointments confirm only after the whole workflow succeeds.** Slot reservation, conflict
   checks, notification scheduling, and billing pre-check all happen before an appointment is
   marked confirmed. Partial failures must leave scheduling state uncorrupted — this is why
@@ -175,7 +183,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 484 fast tests in ~17s |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 633 fast tests (plus 1 skip) in ~22s, measured 2026-10-28; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -200,13 +208,15 @@ harness it serves.
 **6** and **7** are satisfied today, and **1** and **3** for Temporal only; the rest await the code they
 constrain.
 
-- **1** — for Temporal only: the worker takes its queue from `Settings.task_queue()`
-  (`app/worker.py`, `app/core/temporal.py:TASK_QUEUE`). `topic()` and `queue()` have no
-  callers, because no Kafka or RabbitMQ code exists yet.
+- **1** — for Temporal only: the worker and the booking router take the queue from
+  `Settings.task_queue()` (`app/worker.py`, `app/modules/scheduling/router.py`, with
+  `app/core/temporal.py:TASK_QUEUE`). `topic()` and `queue()` have no callers, because no
+  Kafka or RabbitMQ code exists yet.
 - **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
-  `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. The only
-  registrant is the canary. Kafka consumers and Celery tasks have no registries yet.
+  `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:
+  the canary, `BookAppointmentWorkflow`, and the seven `booking.*` activities. Kafka consumers
+  and Celery tasks have no registries yet.
 - **6** — `app/core/clock.py`.
 - **7** — `app/api/health.py` for the API; the worker has no HTTP endpoint, and its
   readiness probe is `python -m app.worker --check`, the `worker` service's healthcheck.
@@ -247,13 +257,18 @@ Proven by integration tests, not by convention:
   `clock_timestamp()`). SQLAlchemy's `onupdate` does not fire for raw statements, and
   `now()` would record when the transaction began rather than when the row changed.
 
-### What it cannot guarantee — Week 2's contract
+### What it cannot guarantee — and where the code does instead
 
-- **Releasing a slot is a paired write.** Moving an appointment out of `pending`/
-  `confirmed` frees the partial index, but `provider_slots.status` stays as it was, so
-  the slot never reappears in a `status = 'free'` query. Cancel, reschedule, no-show and
-  completion must flip both in one transaction.
-- **A past slot is still bookable.** `CHECK (starts_at > now())` is impossible — Postgres
-  requires check constraints to be immutable. The booking activity must reject it.
-- **`version` is not self-incrementing.** The claim statement must say
-  `version = version + 1`, or the column is decoration.
+- **Slot status must agree with appointment status, in one transaction** (PRD R-2,
+  restated in Week 2). Leaving `pending`/`confirmed` frees the partial index but not
+  `provider_slots.status`. Confirmed → `booked`; failed, cancelled, rescheduled → `free`;
+  completed and no-show stay `booked` (their slot is in the past). Booking and compensation
+  do this today (`confirm_booking`, `fail_booking`); cancel, reschedule and the visit paths
+  must too. Slot status is written **only** in `app/modules/scheduling/service.py` —
+  `tests/meta/test_slot_writes.py` fails if anything else in `app/` writes it, so new
+  release paths go there.
+- **A past slot is still bookable** at the database level — `CHECK (starts_at > now())` is
+  impossible, Postgres requires check constraints to be immutable. Closed in code (R-3):
+  `service.ensure_slot_bookable`, and a `starts_at > now` predicate in `claim_slot`'s UPDATE.
+- **`version` is not self-incrementing.** Closed in code (R-4): every slot write in
+  `scheduling/service.py` says `version = version + 1`. Any new slot write must too.
