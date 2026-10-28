@@ -19,7 +19,8 @@ from app.core.clock import Clock
 from app.modules.identity.models import User
 from app.modules.identity.service import authenticate
 from app.modules.patients.models import Patient
-from app.modules.providers.models import Clinic, Provider, ProviderSlot, SlotStatus
+from app.modules.providers.models import Clinic, Provider
+from app.modules.scheduling.models import ProviderSlot, SlotStatus
 from app.seed import (
     CLINICS,
     DEPARTMENTS,

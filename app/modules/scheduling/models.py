@@ -19,8 +19,10 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -70,6 +72,77 @@ def _enum_column(enum_class: type[enum.Enum], length: int) -> Enum:
         create_constraint=True,
         length=length,
         values_callable=lambda cls: [member.value for member in cls],
+    )
+
+
+class SlotStatus(str, enum.Enum):
+    FREE = "free"
+    HELD = "held"
+    BOOKED = "booked"
+    BLOCKED = "blocked"
+
+
+#: VARCHAR + CHECK, not a native enum. `create_constraint=True` is required —
+#: SQLAlchemy 2.0 defaults it to False, leaving a bare VARCHAR that accepts anything.
+slot_status_column = Enum(
+    SlotStatus,
+    native_enum=False,
+    create_constraint=True,
+    length=16,
+    values_callable=lambda enum_class: [member.value for member in enum_class],
+)
+
+
+class ProviderSlot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """One bookable interval.
+
+    Lives in scheduling, not providers (D-9): scheduling is the only module that writes it.
+
+    Booking is an atomic conditional update — `SET status='held' WHERE id=:id AND
+    status='free'` — so zero rows affected *is* the conflict signal, enforced by the
+    database rather than by application logic (design spec 3.2).
+
+    A GiST exclusion constraint preventing overlapping slots for one provider is
+    added in the baseline migration; SQLAlchemy cannot express it portably, and it
+    needs the `btree_gist` extension.
+    """
+
+    __tablename__ = "provider_slots"
+
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("providers.id", ondelete="CASCADE")
+    )
+    clinic_id: Mapped[uuid.UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("clinics.id", ondelete="CASCADE")
+    )
+    department_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("departments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[SlotStatus] = mapped_column(
+        slot_status_column, server_default=text("'free'")
+    )
+    #: Optimistic-concurrency counter for the Week 2 booking workflow.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    __table_args__ = (
+        CheckConstraint("ends_at > starts_at", name="end_after_start"),
+        Index("ix_provider_slots_provider_starts", "provider_id", "starts_at"),
+        Index("ix_provider_slots_status_starts", "status", "starts_at"),
+        # Composite target for appointments' coherence FK: lets an appointment prove
+        # its slot really belongs to the provider and clinic it claims.
+        UniqueConstraint(
+            "id", "provider_id", "clinic_id", name="uq_provider_slots_id_provider_clinic"
+        ),
+        # A slot's department must belong to the slot's own clinic.
+        ForeignKeyConstraint(
+            ["department_id", "clinic_id"],
+            ["departments.id", "departments.clinic_id"],
+            name="fk_provider_slots_department_clinic",
+        ),
     )
 
 

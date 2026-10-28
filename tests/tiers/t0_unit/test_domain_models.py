@@ -5,9 +5,9 @@ from app.modules.providers.models import (
     Clinic,
     Department,
     Provider,
-    ProviderSlot,
     provider_departments,
 )
+from app.modules.scheduling.models import ProviderSlot
 
 pytestmark = pytest.mark.unit
 

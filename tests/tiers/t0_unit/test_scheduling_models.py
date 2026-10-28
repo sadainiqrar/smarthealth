@@ -86,3 +86,15 @@ def test_all_ten_persistent_tables_are_registered_for_migrations():
     }
     assert len(expected) == 10
     assert expected <= ALL_TABLES
+
+
+def test_slots_belong_to_scheduling_not_providers():
+    """D-9: slots are bookable inventory, mutated only by scheduling. Keeping the class in
+    providers would make the paired write (appointment + slot) straddle a module boundary."""
+    import app.modules.providers.models as providers_models
+    import app.modules.scheduling.models as scheduling_models
+
+    assert scheduling_models.ProviderSlot.__tablename__ == "provider_slots"
+    assert hasattr(scheduling_models, "SlotStatus")
+    assert not hasattr(providers_models, "ProviderSlot")
+    assert not hasattr(providers_models, "SlotStatus")

@@ -8,7 +8,8 @@ from sqlalchemy.exc import IntegrityError
 from app.db.all_models import ALL_TABLES
 from app.modules.identity.models import User, UserRole
 from app.modules.patients.models import Patient
-from app.modules.providers.models import Clinic, Provider, ProviderSlot, SlotStatus
+from app.modules.providers.models import Clinic, Provider
+from app.modules.scheduling.models import ProviderSlot, SlotStatus
 from app.modules.scheduling.models import Appointment, AppointmentStatus
 
 pytestmark = [pytest.mark.integration, pytest.mark.docker]

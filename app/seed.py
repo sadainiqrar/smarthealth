@@ -42,10 +42,9 @@ from app.modules.providers.models import (
     Clinic,
     Department,
     Provider,
-    ProviderSlot,
-    SlotStatus,
     provider_departments,
 )
+from app.modules.scheduling.models import ProviderSlot, SlotStatus
 
 # --- The fixed shape of the demonstration network -------------------------------
 #
