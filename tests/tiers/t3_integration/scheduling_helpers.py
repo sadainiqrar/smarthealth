@@ -50,13 +50,31 @@ async def seed_bookable(
     return made
 
 
+async def add_slot(
+    session: AsyncSession, b: Bookable, *, starts_in: timedelta = timedelta(days=2)
+) -> uuid.UUID:
+    """Another slot for the same provider and clinic. `purge` removes it with the rest.
+    The default start keeps it clear of `seed_bookable`'s, which the GiST exclusion
+    constraint would otherwise reject as an overlap."""
+    start = datetime.now(UTC).replace(microsecond=0) + starts_in
+    slot = ProviderSlot(
+        provider_id=b.provider_id, clinic_id=b.clinic_id,
+        starts_at=start, ends_at=start + timedelta(minutes=30),
+    )
+    session.add(slot)
+    await session.commit()
+    return slot.id
+
+
 async def purge(session: AsyncSession, bookables: list[Bookable]) -> None:
-    """Remove what `seed_bookable` committed. The database is shared across the run and
-    other tests (the seed's) assert on whole-table counts, so committed rows must not
-    outlive the test that made them."""
+    """Remove what `seed_bookable` and `add_slot` committed. The database is shared across
+    the run and other tests (the seed's) assert on whole-table counts, so committed rows
+    must not outlive the test that made them."""
     for b in bookables:
         await session.execute(delete(Appointment).where(Appointment.patient_id == b.patient_id))
-        await session.execute(delete(ProviderSlot).where(ProviderSlot.id == b.slot_id))
+        await session.execute(
+            delete(ProviderSlot).where(ProviderSlot.provider_id == b.provider_id)
+        )
         await session.execute(delete(Provider).where(Provider.id == b.provider_id))
         await session.execute(delete(Patient).where(Patient.id == b.patient_id))
         await session.execute(delete(Clinic).where(Clinic.id == b.clinic_id))
