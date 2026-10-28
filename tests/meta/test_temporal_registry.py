@@ -11,8 +11,9 @@ the T2 tier covers that, because every T2 test executes inside the same sandbox.
 
 Discovery only recognises the literal spellings `@workflow.defn` and `@activity.defn`,
 so `test_temporal_is_imported_only_in_the_discoverable_form` forbids every import that
-would evade it. The two tests together make discovery complete: the spelling is
-enforced, and anything spelled that way is found.
+would evade it. Together they close the static bypasses: the spelling is enforced,
+and anything spelled that way is found. A dynamic import (`importlib`) would still evade
+both.
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def _undiscoverable_temporal_imports(tree: ast.AST) -> list[str]:
             bad += [
                 f"import {a.name}"
                 for a in node.names
-                if a.name in ("temporalio", "temporalio.workflow", "temporalio.activity")
+                if a.name == "temporalio" or a.name.startswith("temporalio.")
             ]
         elif isinstance(node, ast.ImportFrom) and node.level == 0:
             if node.module in ("temporalio.workflow", "temporalio.activity"):
@@ -79,7 +80,7 @@ def _undiscoverable_temporal_imports(tree: ast.AST) -> list[str]:
                 bad += [
                     f"from temporalio import {a.name} as {a.asname}"
                     for a in node.names
-                    if a.name in ("workflow", "activity") and a.asname
+                    if a.name == "*" or (a.name in ("workflow", "activity") and a.asname)
                 ]
     return bad
 

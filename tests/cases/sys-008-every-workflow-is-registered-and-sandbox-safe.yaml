@@ -15,9 +15,10 @@ status: ready
 #
 # Discovery reads the source with `ast` rather than trusting the registry, because the
 # definition the registry does not know about is the one being hunted. Sibling tests in
-# the same file close the bypasses: activities are checked the same way, Temporal may
-# only be imported as `from temporalio import workflow|activity` (the spelling discovery
-# matches), Temporal type names must be unique, and each registered workflow is
+# the same file close the bypasses: activities are checked the same way, the `workflow`
+# and `activity` namespaces may only be imported as `from temporalio import
+# workflow|activity` (the spelling discovery matches; other temporalio imports are
+# fine), Temporal type names must be unique, and each registered workflow is
 # prepared inside the sandbox. `impl` names the registration test; the file runs whole
 # in the fast lane, as sys-005's meta-test does.
 #
