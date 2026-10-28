@@ -16,7 +16,8 @@ how the asynchronous half of Part A is designed to work before any of it is writ
 
 **Week 1 of 5 is complete; Week 2 is in progress**, and its first slice — the Temporal
 worker — has landed. Everything in §1 and §2 describes code that exists and is exercised by
-tests. **§3 is design, not code**, apart from the Temporal plumbing its opening banner names
+tests, with one exception: the worker's signal handling depends on POSIX signals and is
+not exercised by tests (verified manually with `docker stop`). **§3 is design, not code**, apart from the Temporal plumbing its opening banner names
 — it is labelled as such at the top of the section and at every subsection.
 
 What is *not* built, stated plainly so a reviewer does not have to discover it:
@@ -31,7 +32,7 @@ What is *not* built, stated plainly so a reviewer does not have to discover it:
 | Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
 | Prometheus / Grafana / Jaeger / OpenTelemetry | **no container at all** | **no** | **no** |
 
-Verified by `grep -rni --include="*.py" "kafka\|celery\|opentelemetry" app/` — the only occurrences are in
+Verified by `grep -rni --include="*.py" "kafka\|rabbitmq\|celery\|opentelemetry" app/` — the only occurrences are in
 prose comments and docstrings, plus `Settings.topic()` / `queue()` (`app/settings.py:93-99`),
 the naming helpers Kafka and RabbitMQ will use when they arrive. Temporal code lives in
 `app/core/temporal.py`, `app/core/temporal_canary.py`, `app/components.py` and
@@ -113,6 +114,7 @@ flowchart TD
     cli --> models
     worker --> components
     worker --> core
+    worker --> settings
     components --> core
     api --> core
     api --> db
@@ -228,7 +230,7 @@ false in a worker process.
 | `router.py:12-16` | `api_router` | The only place a module's router is mounted. |
 | `deps.py:27,42` | `get_audit_log`, `page_params` | The framework / framework-free seam (§1.2). `get_audit_log` declares `clock` as a `Depends` rather than calling `get_clock()` inline, because only a declared dependency can be replaced through `app.dependency_overrides` (`app/api/deps.py:28-36`). |
 | `error_handlers.py:33` | `register_error_handlers` | One handler on `DomainError` covers every subclass via Starlette's MRO walk; a second on `Exception` keeps `{"error", "detail"}` as the shape of *every* failure, including unanticipated ones. |
-| `health.py:37,79` | `GET /health`, `GET /ready` | See §2.6. |
+| `health.py:37,89` | `GET /health`, `GET /ready` | See §2.6. |
 
 May import: `fastapi`, `app.core`, `app.db`, `app.settings`. Must not import: any
 `app/modules/*/service.py` (routers do that).
@@ -350,7 +352,7 @@ to promote when a slot frees up (`WaitlistEntry`).
 | --- | --- | --- |
 | `app/settings.py:39-144` | Every DSN and every externally-visible resource name. `topic()`, `queue()`, `task_queue()` (`:93-103`) namespace Kafka/RabbitMQ/Temporal names through one prefix — harness requirement 1, so a test run can isolate itself on a shared stack. No call site may hardcode a name. | implemented; `task_queue()` is called by `app/worker.py`, `topic()` and `queue()` have **no callers yet** |
 | `app/main.py:27-57` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. | implemented |
-| `app/worker.py` | The Temporal worker process. `python -m app.worker` registers every component and polls `Settings.task_queue("scheduling")`; SIGTERM and SIGINT drain it through `worker.shutdown()`, so `docker stop` does not wait out its grace period. `python -m app.worker --check` executes the canary and exits 0/1 — it is the `worker` service's compose healthcheck, bounded to 8 s overall (`CHECK_TIMEOUT`) so it fails by exit code inside compose's 10 s timeout. | implemented |
+| `app/worker.py` | The Temporal worker process. `python -m app.worker` registers every component and polls `Settings.task_queue("scheduling")`; SIGTERM and SIGINT call `worker.shutdown()`, which gives in-flight activities `GRACEFUL_SHUTDOWN` (8 s, `app/core/temporal.py`) to finish before cancelling them, so `docker stop` neither waits out its grace period nor cuts activities off; the compose `stop_grace_period` (15 s) sits above it. `python -m app.worker --check` executes the canary and exits 0/1 — it is the `worker` service's compose healthcheck, connect and canary bounded to 8 s overall (`CHECK_TIMEOUT`) so it fails by exit code inside compose's 12 s timeout. | implemented |
 | `app/components.py` | `register_all()`, the one place Temporal workflows and activities are registered — not in the workflow modules, because the sandbox re-imports those. Idempotent. | implemented |
 | `app/cli.py:43-123` | `create-user`, the only way to put a login into the system outside a test fixture. Must never import `app.main` or a router (`cli.py:5-6`). | implemented |
 | `migrations/versions/` | `0001_baseline` (ten tables, `btree_gist`, the GiST exclusion constraint, `ux_appointments_live_slot`, the `updated_at` trigger on nine tables), `0002_coherence_constraints` (composite FKs and `confirmed_requires_slot`), `0003_updated_at_clock_timestamp` | implemented |
@@ -888,7 +890,7 @@ maps each to a producer, consumers, and a payload sketch.
 `appointments.booked`, in the harness design's example case
 (`2026-09-01-testing-harness-design.md` §7.1). The rest follow its `<entity>.<past-tense>`
 convention but are proposed here, not previously decided. Every one of them must be
-constructed through `Settings.topic()` (`app/settings.py:84-86`) — harness requirement 1
+constructed through `Settings.topic()` (`app/settings.py:93-95`) — harness requirement 1
 namespaces a shared stack through that prefix, so a literal at the call site breaks test
 isolation.
 

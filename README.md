@@ -38,7 +38,7 @@ flowchart TB
     mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
     redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
 
-    temporal["<b>Temporal</b><br/><i>Week 2 — worker running; workflows landing</i><br/>booking &amp; visit workflows"]
+    temporal["<b>Temporal</b><br/><i>Week 2 — worker (--profile app); workflows landing</i><br/>booking &amp; visit workflows"]
     kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
     celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
     otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]

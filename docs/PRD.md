@@ -198,7 +198,7 @@ cases covering it. Current state:
 | requirement | cases |
 | --- | --- |
 | `PART-A-FR-1` | 7 |
-| `PART-A-NFR-2` | 1 |
+| `PART-A-NFR-2` | 1 — precondition only (sys-008: every workflow registered and sandbox-valid); no booking workflow exists yet |
 | `PART-A-NFR-5` | 2 |
 | `PART-A-OBS-1` | 6 |
 | `PART-A-OBS-4` | 1 |

@@ -44,7 +44,7 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
-| `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, bounded to 8 s) |
+| `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 
 **Anything reaching Postgres from the host needs connection settings.** The *test* stack
@@ -197,7 +197,7 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-Of these, **1**, **3**, **6** and **7** are satisfied today; the rest await the code they
+**6** and **7** are satisfied today, and **1** and **3** for Temporal only; the rest await the code they
 constrain.
 
 - **1** — for Temporal only: the worker takes its queue from `Settings.task_queue()`
