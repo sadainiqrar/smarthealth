@@ -80,7 +80,7 @@ app/modules/scheduling/
     workflows.py    BookAppointment, CancelAppointment, RescheduleAppointment, Visit
     schemas.py      request/response models
     router.py       HTTP surface (framework-bound)
-app/modules/patients/public.py   get_bookable_patient(), patient_id_for_user() (D-15)
+app/modules/patients/public.py   ensure_bookable_patient(), patient_id_for_user() (D-15)
 app/core/temporal.py             client construction from Settings
 app/core/registry.py             + WORKFLOWS and ACTIVITIES registries
 app/worker.py                    python -m app.worker — runs every registered workflow/activity
@@ -106,10 +106,12 @@ PRD R-8 claims.
 - `providers` loses `ProviderSlot`/`SlotStatus`; `app/seed.py` and `app/db/all_models.py`
   import them from `scheduling`.
 
-**The single release path.** Slot status is written by exactly two service functions:
-`claim_slot` (`free → held`) and `transition_appointment` (which applies the R-2 table in
-the same transaction as the appointment write). A meta-test fails if any other code writes
-`ProviderSlot.status` or `provider_slots.status`.
+**The single release path.** Slot status is written only in `scheduling/service.py`, each
+write in the same transaction as the appointment write that justifies it (the R-2 table):
+`claim_slot` (`free → held`), `confirm_booking` (`held → booked`) and `fail_booking`
+(`held → free`), joined by the cancel and visit paths as later slices add them there. The
+meta-test (`tests/meta/test_slot_writes.py`) enforces the file, not a list of functions: it
+fails if any other code in `app/` writes `ProviderSlot.status` or `provider_slots.status`.
 
 ## 4. Flows
 
