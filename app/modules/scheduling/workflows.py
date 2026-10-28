@@ -16,9 +16,14 @@ from datetime import datetime, timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError, ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
 
-from app.modules.scheduling.contracts import BookingRequest, VisitRequest, VisitSignal
+from app.modules.scheduling.contracts import (
+    BookingRequest,
+    VisitRequest,
+    VisitSignal,
+    visit_workflow_id,
+)
 
 with workflow.unsafe.imports_passed_through():
     from app.modules.scheduling.activities import SchedulingActivities
@@ -78,6 +83,19 @@ class BookAppointmentWorkflow:
                 f"booking {request.appointment_id} failed: {err.cause}",
                 type="BookingFailed", non_retryable=True,
             ) from err
+        # After the try/except, so a failure here can never compensate a confirmed
+        # booking. Slice 3 added this command; `patched` keeps bookings that were already
+        # in flight when it deployed replaying their original history (spec §8).
+        if workflow.patched("booking-starts-visit"):
+            try:
+                await workflow.start_child_workflow(
+                    VisitWorkflow.run, VisitRequest(request.appointment_id),
+                    id=visit_workflow_id(request.appointment_id),
+                    # The visit outlives the booking: it runs until the patient is seen.
+                    parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                )
+            except WorkflowAlreadyStartedError:
+                pass  # a visit endpoint signal-with-started it first
         return "confirmed"
 
 

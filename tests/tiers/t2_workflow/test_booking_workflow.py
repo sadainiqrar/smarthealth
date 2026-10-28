@@ -4,16 +4,24 @@ the workflow under test is the real one, executing in the real sandbox."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
 from temporalio import activity
-from temporalio.client import WorkflowFailureError
+from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.exceptions import ApplicationError
+from temporalio.service import RPCError
 
 from app.core.temporal import build_worker
-from app.modules.scheduling.contracts import BookingRequest
-from app.modules.scheduling.workflows import BookAppointmentWorkflow
+from app.modules.scheduling.contracts import (
+    BookingRequest,
+    VisitRequest,
+    VisitSignal,
+    visit_workflow_id,
+)
+from app.modules.scheduling.workflows import BookAppointmentWorkflow, VisitWorkflow
+from tests.tiers.t2_workflow.visit_fakes import finish_visit, open_visit_fakes
 
 pytestmark = [pytest.mark.workflow, pytest.mark.asyncio(loop_scope="session")]
 
@@ -54,19 +62,25 @@ def _request() -> BookingRequest:
 
 
 async def _run(env, activities) -> str:
+    request = _request()
+    release = asyncio.Event()
     queue = f"t2-book-{uuid.uuid4().hex[:8]}"
     async with build_worker(
-        env.client, queue, workflows=[BookAppointmentWorkflow], activities=activities
+        env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
+        activities=[*activities, *open_visit_fakes(env, release)],
     ):
-        return await env.client.execute_workflow(
-            BookAppointmentWorkflow.run, _request(),
+        result = await env.client.execute_workflow(
+            BookAppointmentWorkflow.run, request,
             id=f"booking-{uuid.uuid4()}", task_queue=queue,
         )
+        # A confirmed booking started a child visit; let it end inside the worker.
+        await finish_visit(env, request.appointment_id, release)
+        return result
 
 
-async def test_confirms_only_after_every_step_in_order(temporal_env):
+async def test_confirms_only_after_every_step_in_order(isolated_env):
     calls: list[str] = []
-    assert await _run(temporal_env, _fakes(calls)) == "confirmed"
+    assert await _run(isolated_env, _fakes(calls)) == "confirmed"
     assert calls == STEPS
 
 
@@ -90,19 +104,90 @@ async def test_a_failed_create_is_compensated_too(temporal_env):
     assert calls == ["create_pending", "fail_booking"]
 
 
-async def test_a_transient_error_is_retried_not_compensated(temporal_env):
+async def test_a_transient_error_is_retried_not_compensated(isolated_env):
     calls: list[str] = []
-    assert await _run(temporal_env, _fakes(calls, transient=2)) == "confirmed"
+    assert await _run(isolated_env, _fakes(calls, transient=2)) == "confirmed"
     assert calls.count("claim_slot") == 3
     assert "fail_booking" not in calls
 
 
-async def test_confirm_outlasts_the_step_retry_budget(temporal_env):
+async def test_confirm_outlasts_the_step_retry_budget(isolated_env):
     """Ordinary steps give up after 5 attempts; confirm must not. A transient failure
     there could follow a committed confirm, and ending the workflow failed would leave
     Temporal saying failed while the database says confirmed."""
     calls: list[str] = []
     activities = _fakes(calls, transient=7, transient_step="confirm")
-    assert await _run(temporal_env, activities) == "confirmed"
+    assert await _run(isolated_env, activities) == "confirmed"
     assert calls.count("confirm") == 8
     assert "fail_booking" not in calls
+
+
+async def test_a_confirmed_booking_starts_the_visit(isolated_env):
+    request = _request()
+    release = asyncio.Event()
+    queue = f"t2-book-{uuid.uuid4().hex[:8]}"
+    async with build_worker(
+        isolated_env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
+        activities=[*_fakes([]), *open_visit_fakes(isolated_env, release)],
+    ):
+        result = await isolated_env.client.execute_workflow(
+            BookAppointmentWorkflow.run, request,
+            id=f"booking-{uuid.uuid4()}", task_queue=queue,
+        )
+        visit = isolated_env.client.get_workflow_handle(visit_workflow_id(request.appointment_id))
+        # The booking has completed, yet the visit outlives it: the child is abandoned.
+        assert result == "confirmed"
+        assert (await visit.describe()).status == WorkflowExecutionStatus.RUNNING
+        await visit.signal(VisitWorkflow.cancel)
+        release.set()
+        assert await visit.result() == "cancelled"
+
+
+async def test_a_visit_already_started_does_not_fail_the_booking(isolated_env):
+    """A check-in can signal-with-start the visit before the booking's own child start
+    runs; that start then finds the id taken, and must not undo a confirmed booking."""
+    request = _request()
+    release = asyncio.Event()
+    queue = f"t2-book-{uuid.uuid4().hex[:8]}"
+    calls: list[str] = []
+    async with build_worker(
+        isolated_env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
+        activities=[*_fakes(calls), *open_visit_fakes(isolated_env, release)],
+    ):
+        # Signal-with-start, as a check-in does. Checked in, the visit waits on a signal
+        # rather than a timer: awaiting the booking below would otherwise let the
+        # time-skipping server fire the no-show timer first.
+        visit = await isolated_env.client.start_workflow(
+            VisitWorkflow.run, VisitRequest(request.appointment_id),
+            id=visit_workflow_id(request.appointment_id), task_queue=queue,
+            start_signal="check_in", start_signal_args=[VisitSignal(actor_user_id=None)],
+        )
+        result = await isolated_env.client.execute_workflow(
+            BookAppointmentWorkflow.run, request,
+            id=f"booking-{uuid.uuid4()}", task_queue=queue,
+        )
+        assert result == "confirmed"
+        assert "fail_booking" not in calls
+        await visit.signal(VisitWorkflow.cancel)
+        release.set()
+        assert await visit.result() == "cancelled"
+        assert calls.count("confirm") == 1
+
+
+async def test_a_failed_booking_starts_no_visit(temporal_env):
+    request = _request()
+    release = asyncio.Event()
+    queue = f"t2-book-{uuid.uuid4().hex[:8]}"
+    async with build_worker(
+        temporal_env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
+        activities=[*_fakes([], fail="claim_slot"), *open_visit_fakes(temporal_env, release)],
+    ):
+        with pytest.raises(WorkflowFailureError):
+            await temporal_env.client.execute_workflow(
+                BookAppointmentWorkflow.run, request,
+                id=f"booking-{uuid.uuid4()}", task_queue=queue,
+            )
+        with pytest.raises(RPCError, match="not found"):
+            await temporal_env.client.get_workflow_handle(
+                visit_workflow_id(request.appointment_id)
+            ).describe()

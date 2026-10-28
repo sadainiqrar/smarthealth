@@ -25,3 +25,21 @@ async def temporal_env() -> AsyncIterator[WorkflowEnvironment]:
         yield env
     finally:
         await env.shutdown()
+
+
+@pytest_asyncio.fixture(loop_scope="session")
+async def isolated_env() -> AsyncIterator[WorkflowEnvironment]:
+    """A private time-skipping environment, for tests whose workflow starts a child.
+
+    On temporalio 1.34's test server, a workflow that starts a child and closes (even
+    with the child already finished, ABANDON or not) leaves time skipping disabled for
+    the rest of that server's life -- every later timer or retry backoff in the session
+    then waits in real time. Reproduced outside this repo with a bare parent/child pair.
+    A booking that confirms starts a child visit, so those tests get their own server
+    rather than poisoning the shared one. Production Temporal is not affected.
+    """
+    env = await WorkflowEnvironment.start_time_skipping()
+    try:
+        yield env
+    finally:
+        await env.shutdown()
