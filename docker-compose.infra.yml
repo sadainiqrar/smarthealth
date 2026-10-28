@@ -38,6 +38,8 @@ services:
       SMARTHEALTH_MONGO_DB: ${MONGO_DB:-smarthealth}
       SMARTHEALTH_REDIS_HOST: redis
       SMARTHEALTH_REDIS_PORT: 6379
+      SMARTHEALTH_TEMPORAL_HOST: temporal
+      SMARTHEALTH_TEMPORAL_PORT: 7233
       SMARTHEALTH_JWT_SECRET: ${SMARTHEALTH_JWT_SECRET:-dev-secret-change-me-before-deploying-anywhere}
     ports: ["${APP_PORT:-8000}:8000"]
     depends_on:
@@ -47,12 +49,49 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      temporal:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 12
+
+  worker:
+    # The Temporal worker: same image as the API, different process (PRD R-8 -- the
+    # two scale independently). Waits for `app` to be healthy because the app
+    # container applies migrations, and an activity must never meet an unmigrated
+    # schema.
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "app.worker"]
+    environment:
+      SMARTHEALTH_ENVIRONMENT: docker
+      SMARTHEALTH_POSTGRES_HOST: postgres
+      SMARTHEALTH_POSTGRES_PORT: 5432
+      SMARTHEALTH_POSTGRES_USER: ${POSTGRES_USER:-smarthealth}
+      SMARTHEALTH_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthealth}
+      SMARTHEALTH_POSTGRES_DB: ${POSTGRES_DB:-smarthealth}
+      SMARTHEALTH_MONGO_HOST: mongo
+      SMARTHEALTH_MONGO_PORT: 27017
+      SMARTHEALTH_MONGO_DB: ${MONGO_DB:-smarthealth}
+      SMARTHEALTH_TEMPORAL_HOST: temporal
+      SMARTHEALTH_TEMPORAL_PORT: 7233
+    depends_on:
+      app:
+        condition: service_healthy
+      temporal:
+        condition: service_healthy
+    healthcheck:
+      # Executes the canary workflow: proves a worker is polling AND executing, which
+      # "the process is up" does not. Each check leaves one tiny closed workflow in
+      # Temporal's history; at this interval that is negligible. `--check` bounds
+      # itself to 8 s, so this timeout sits above it.
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
 
   postgres:
     image: postgres:16-alpine
