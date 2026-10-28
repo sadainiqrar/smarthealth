@@ -20,6 +20,7 @@ from app.core.clock import Clock
 from app.core.temporal import ACTIVITIES, WORKFLOWS, bind_activities
 from app.core.temporal_canary import CanaryWorkflow
 from app.modules.scheduling.activities import SchedulingActivities
+from app.modules.scheduling.workflows import BookAppointmentWorkflow
 
 _registered = False
 
@@ -40,6 +41,7 @@ def register_all() -> None:
     if _registered:
         return
     WORKFLOWS.register(CanaryWorkflow.__name__, CanaryWorkflow)
+    WORKFLOWS.register(BookAppointmentWorkflow.__name__, BookAppointmentWorkflow)
     for function in _SCHEDULING_ACTIVITIES:
         ACTIVITIES.register(function.__name__, function)
     _registered = True
