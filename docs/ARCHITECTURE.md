@@ -217,7 +217,7 @@ never a `Patient` ORM object:
 - `scheduling.activities` → `ensure_bookable_patient` — the `validate_booking` activity
   checks the patient exists (`app/modules/scheduling/activities.py:104`).
 - `scheduling.router` → `patient_id_for_user` — a `patient` caller may book and read only
-  their own appointments (`app/modules/scheduling/router.py:39-40`).
+  their own appointments (`app/modules/scheduling/router.py:48-49`).
 
 Every `service.py` imports only `app/core`, `app/db` and its own module — no exceptions,
 `scheduling/service.py` included. Week 1 expected that file to be the first with a real
@@ -268,7 +268,7 @@ false in a worker process.
 
 | File | Public surface | Notes |
 | --- | --- | --- |
-| `router.py:13-18` | `api_router` | The only place a module's router is mounted. |
+| `router.py:13-19` | `api_router` | The only place a module's router is mounted. |
 | `deps.py:31,46,54,77` | `get_audit_log`, `page_params`, `get_session`, `get_temporal` | The framework / framework-free seam (§1.2). `get_audit_log` declares `clock` as a `Depends` rather than calling `get_clock()` inline, because only a declared dependency can be replaced through `app.dependency_overrides` (`app/api/deps.py:32-40`). `get_temporal` hands routers the app's lazy Temporal client, and is what contract tests override so they never reach a real server. |
 | `error_handlers.py:33` | `register_error_handlers` | One handler on `DomainError` covers every subclass via Starlette's MRO walk; a second on `Exception` keeps `{"error", "detail"}` as the shape of *every* failure, including unanticipated ones. |
 | `health.py:37,89` | `GET /health`, `GET /ready` | See §2.6. |
@@ -345,10 +345,10 @@ on having credentials (`models.py:1-5`).
 | `models.py:19-33` | `Patient` — `mrn` unique, names, DOB, contact, nullable-unique `user_id` | implemented |
 | `schemas.py` | `PatientCreate`, `PatientUpdate`, `PatientRead` | implemented. `PatientUpdate` rejects an explicit `null` on NOT NULL columns (`app/modules/patients/schemas.py:33-46`) — without it `{"first_name": null}` becomes a client-triggerable 500 instead of a 422 — and requires at least one field (`app/modules/patients/schemas.py:48-52`). |
 | `service.py:54,82,98,132` | `register_patient`, `get_patient`, `list_patients`, `update_patient` | implemented |
-| `router.py:30,44,54,70` | `POST /patients`, `GET /patients/{id}`, `GET /patients`, `PATCH /patients/{id}` | implemented |
-| `router.py:43`, `service.py:170` | `GET /patients/me` → `service.get_patient_for_user` | implemented — `patient` only; 404 when no record is linked to the login. Declared before `/{patient_id}` (`router.py:43-48`), or FastAPI parses `me` as a UUID and answers 422 |
+| `router.py:30,54,64,80` | `POST /patients`, `GET /patients/{id}`, `GET /patients`, `PATCH /patients/{id}` | implemented |
+| `router.py:43`, `service.py:170` | `GET /patients/me` → `service.get_patient_for_user` | implemented — `patient` only; 404 when no record is linked to the login. Declared before `/{patient_id}` (`router.py:43-51`), or FastAPI parses `me` as a UUID and answers 422 |
 
-Writers are `front_desk` and `admin`; readers add `provider` (`router.py:26-27`). A patient
+Writers are `front_desk` and `admin`; readers add `provider` (`router.py:25-26`). A patient
 reads their own record through `GET /patients/me` only, never `/patients/{id}`: the role
 gate stays per-role, and the per-object part is the lookup by `user_id` (PRD R-5, read half
 closed; the appointment list is slice 5).
@@ -430,7 +430,7 @@ Everything in this section is built and running.
 ### 2.1 The transaction boundary rule
 
 **The router owns the transaction; services only flush.** Every mutating handler ends with
-an explicit `await session.commit()` — `app/modules/patients/router.py:39,81` and
+an explicit `await session.commit()` — `app/modules/patients/router.py:39,91` and
 `app/modules/providers/router.py:44,89` — and no service function commits. Outside HTTP the
 same rule holds with a different owner: each booking activity opens a session, makes one
 service call and commits (`SchedulingActivities._unit_of_work`,
@@ -835,7 +835,7 @@ failed start leaves nothing behind, and a started workflow either confirms or co
 `uuid5(IDEMPOTENCY_NAMESPACE, f"{caller}:{key}")` (`app/modules/scheduling/booking.py:29-39`),
 so the same caller and key always name the same appointment and two callers cannot collide
 on one key. Without one it is a `uuid7`, time-ordered like every other key. An empty header
-is a 422 (`min_length=1`, `router.py:49-51`): an empty key is still a key, and would collapse
+is a 422 (`min_length=1`, `router.py:58-60`): an empty key is still a key, and would collapse
 every such request from one caller onto one booking. The start policies
 (`booking.py:76-81`) make a repeat land on the first workflow whether it is still running
 (`USE_EXISTING`) or has closed (`REJECT_DUPLICATE` — Temporal's default would start a
@@ -1087,7 +1087,7 @@ lock re-evaluates `status = 'free'` once the winner commits and matches nothing
 
 **Why the router returns 202, not 201.** The booking is `pending` when the request returns;
 confirmation happens when the workflow completes. A 201 would claim a resource in a state it
-is not yet in (`app/modules/scheduling/router.py:43`).
+is not yet in (`app/modules/scheduling/router.py:52`).
 
 ### 3.3 Cancellation and reschedule
 
