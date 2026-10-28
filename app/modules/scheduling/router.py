@@ -44,7 +44,11 @@ async def _own_patient_id(session: AsyncSession, claims: TokenClaims) -> uuid.UU
 async def book_appointment(
     body: BookingCreate,
     request: Request,
-    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key", max_length=200),
+    # min_length=1: an empty key is still a key, and every keyless-looking request from
+    # one caller would collapse onto a single appointment id.
+    idempotency_key: str | None = Header(
+        default=None, alias="Idempotency-Key", min_length=1, max_length=200
+    ),
     session: AsyncSession = Depends(get_session),
     temporal: Client = Depends(get_temporal),
     claims: TokenClaims = Depends(require_role(*BOOKERS)),

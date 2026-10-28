@@ -17,6 +17,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
 from app.core.errors import ServiceUnavailable, Unprocessable
+from app.core.ids import uuid7
 from app.modules.scheduling.contracts import BookingRequest
 from app.modules.scheduling.workflows import BookAppointmentWorkflow
 
@@ -27,9 +28,14 @@ IDEMPOTENCY_NAMESPACE = uuid.UUID("6f1d3a52-6a7e-4f5b-9c51-0b1f7d0e2a11")
 
 def appointment_id_for(caller: str, idempotency_key: str | None) -> uuid.UUID:
     """With a key, the same caller and key always name the same appointment; the caller
-    is part of the name so two users cannot collide on one key. Without, a new id."""
+    is part of the name so two users cannot collide on one key. Without, a new id.
+
+    A keyless id is a uuid7, time-ordered like every other primary key (PART-A-NFR-5).
+    A keyed id is a uuid5 by necessity: it must be a pure function of caller and key,
+    so a retry derives the same id, and no time-ordered scheme can be. Those rows
+    insert at random points in the index; that is the price of idempotency."""
     if idempotency_key is None:
-        return uuid.uuid4()
+        return uuid7()
     return uuid.uuid5(IDEMPOTENCY_NAMESPACE, f"{caller}:{idempotency_key}")
 
 

@@ -103,6 +103,16 @@ async def test_the_same_idempotency_key_names_the_same_appointment(api_client, t
     assert first.json()["appointment_id"] == second.json()["appointment_id"]
 
 
+async def test_an_empty_idempotency_key_is_a_422(api_client, temporal):
+    """An empty key would collapse every such request from one caller onto one id."""
+    response = await api_client.post(
+        "/appointments", json=BODY,
+        headers={**auth(UserRole.FRONT_DESK), "Idempotency-Key": ""},
+    )
+    assert response.status_code == 422
+    assert temporal.starts == []
+
+
 async def test_a_key_reused_with_a_different_body_is_a_422(api_client):
     """The IETF Idempotency-Key draft's answer: the key names a request, and this is
     not that request. Silently answering with the first booking would let the client

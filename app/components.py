@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from temporalio import activity
 
 from app.core.audit import AuditLog
 from app.core.clock import Clock
@@ -35,6 +36,15 @@ _SCHEDULING_ACTIVITIES = (
 )
 
 
+def _activity_name(function: Callable[..., Any]) -> str:
+    """The name Temporal routes the activity by (`@activity.defn(name=...)`), so two
+    activities that would collide on a worker collide here first, loudly. `__name__`
+    would miss exactly that: `confirm` in two classes is two distinct registry keys
+    but one Temporal activity. Private API, used knowingly as the meta-test does for
+    workflows; verified on temporalio 1.34."""
+    return activity._Definition.must_from_callable(function).name
+
+
 def register_all() -> None:
     """Populate the registries. Idempotent."""
     global _registered
@@ -43,7 +53,7 @@ def register_all() -> None:
     WORKFLOWS.register(CanaryWorkflow.__name__, CanaryWorkflow)
     WORKFLOWS.register(BookAppointmentWorkflow.__name__, BookAppointmentWorkflow)
     for function in _SCHEDULING_ACTIVITIES:
-        ACTIVITIES.register(function.__name__, function)
+        ACTIVITIES.register(_activity_name(function), function)
     _registered = True
 
 

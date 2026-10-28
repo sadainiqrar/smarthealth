@@ -6,6 +6,10 @@ non-retryable `ApplicationError`s -- a lost slot race or a past slot will not ch
 retry, and retrying it only delays compensation. Anything else (a dropped connection)
 propagates and Temporal retries it.
 
+Every activity carries an explicit `booking.` name. Temporal routes activities by name
+alone, and the default is the bare method name -- slice 3's visit activities (another
+`confirm`, say) would otherwise collide with these on the shared task queue.
+
 Billing and reminders are stand-ins until Week 3 (spec §1): the workflow has its final
 shape now, and Week 3 replaces these bodies, not the workflow.
 """
@@ -67,11 +71,20 @@ class SchedulingActivities:
                 raise ApplicationError(
                     exc.detail, type=type(exc).__name__, non_retryable=True
                 ) from exc
-            except BaseException:
-                await session.rollback()
+            except Exception:
+                # `Exception`, not `BaseException`: a cancellation (CancelledError) must
+                # propagate untouched, and awaiting a rollback in the middle of one can
+                # itself be cancelled. The session's `async with` exit rolls back an open
+                # transaction on any exit, so nothing is left dirty either way.
+                try:
+                    await session.rollback()
+                except Exception:
+                    # A rollback on a dead connection fails too; that second error must
+                    # not replace the original, which is the one worth retrying on.
+                    logger.warning("rollback failed after an activity error", exc_info=True)
                 raise
 
-    @activity.defn
+    @activity.defn(name="booking.create_pending")
     async def create_pending(self, request: BookingRequest) -> None:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         patient_id = parse_id(request.patient_id, "patient_id")
@@ -83,7 +96,7 @@ class SchedulingActivities:
                 reason=request.reason, actor_user_id=request.actor_user_id,
             )
 
-    @activity.defn
+    @activity.defn(name="booking.validate_booking")
     async def validate_booking(self, request: BookingRequest) -> None:
         patient_id = parse_id(request.patient_id, "patient_id")
         slot_id = parse_id(request.slot_id, "slot_id")
@@ -91,7 +104,7 @@ class SchedulingActivities:
             await ensure_bookable_patient(session, patient_id)
             await service.ensure_slot_bookable(session, slot_id=slot_id, now=self._clock.now())
 
-    @activity.defn
+    @activity.defn(name="booking.claim_slot")
     async def claim_slot(self, request: BookingRequest) -> None:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         slot_id = parse_id(request.slot_id, "slot_id")
@@ -102,7 +115,7 @@ class SchedulingActivities:
                 actor_user_id=request.actor_user_id,
             )
 
-    @activity.defn
+    @activity.defn(name="booking.billing_precheck")
     async def billing_precheck(self, request: BookingRequest) -> None:
         """Stand-in: approves. Week 3 replaces the body; a decline must raise
         `ApplicationError(non_retryable=True)` so the workflow compensates."""
@@ -111,7 +124,7 @@ class SchedulingActivities:
             extra={"appointment_id": request.appointment_id},
         )
 
-    @activity.defn
+    @activity.defn(name="booking.schedule_reminders")
     async def schedule_reminders(self, request: BookingRequest) -> None:
         """Stand-in: logs. Week 3 enqueues delivery through Celery."""
         logger.info(
@@ -119,7 +132,7 @@ class SchedulingActivities:
             extra={"appointment_id": request.appointment_id},
         )
 
-    @activity.defn
+    @activity.defn(name="booking.confirm")
     async def confirm(self, request: BookingRequest) -> None:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
@@ -128,7 +141,7 @@ class SchedulingActivities:
                 now=self._clock.now(), actor_user_id=request.actor_user_id,
             )
 
-    @activity.defn
+    @activity.defn(name="booking.fail_booking")
     async def fail_booking(self, request: BookingRequest) -> None:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:

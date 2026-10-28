@@ -26,7 +26,7 @@ NAMES = [
 
 def _counting_fakes(counter: dict[str, int]):
     def make(name):
-        @activity.defn(name=name)
+        @activity.defn(name=f"booking.{name}")
         async def fake(request: BookingRequest) -> None:
             counter[name] = counter.get(name, 0) + 1
 
@@ -92,7 +92,7 @@ async def test_a_key_reused_while_the_first_still_runs_is_refused(temporal_env):
     queue = f"t2-start-{uuid.uuid4().hex[:8]}"
     entered, release = asyncio.Event(), asyncio.Event()
 
-    @activity.defn(name="create_pending")
+    @activity.defn(name="booking.create_pending")
     async def held_create(request: BookingRequest) -> None:
         entered.set()
         await release.wait()

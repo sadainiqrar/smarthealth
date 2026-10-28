@@ -32,7 +32,7 @@ def _fakes(
     remaining = {"transient": transient}
 
     def make(name: str):
-        @activity.defn(name=name)
+        @activity.defn(name=f"booking.{name}")
         async def fake(request: BookingRequest) -> None:
             calls.append(name)
             if name == transient_step and remaining["transient"]:
