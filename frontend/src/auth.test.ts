@@ -14,6 +14,10 @@ describe("decodeToken", () => {
     });
   });
 
+  it("rejects a role outside the four fixed ones", () => {
+    expect(decodeToken(token({ sub: "u1", role: "superuser", exp: 2000000000 }))).toBeNull();
+  });
+
   it("returns null for garbage", () => {
     expect(decodeToken("not.a.jwt")).toBeNull();
   });

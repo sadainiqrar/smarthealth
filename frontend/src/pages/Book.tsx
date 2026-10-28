@@ -41,6 +41,7 @@ function PatientPicker({ value, onPick }: { value: Patient | null; onPick: (p: P
       {value && <p>Selected: <strong>{label(value)}</strong> ({value.mrn})</p>}
       <input type="search" placeholder="Search patients" value={search} onChange={(e) => setSearch(e.target.value)} />
       <ErrorText error={found.error} />
+      {found.data?.items.length === 0 && <p>No matches.</p>}
       <ul className="picker">
         {found.data?.items.map((p) => (
           <li key={p.id}>
@@ -67,6 +68,7 @@ function ProviderPicker({ value, onPick }: { value: Provider | null; onPick: (p:
       {value && <p>Selected: <strong>{label(value)}</strong> ({value.specialty})</p>}
       <input type="search" placeholder="Search providers" value={search} onChange={(e) => setSearch(e.target.value)} />
       <ErrorText error={found.error} />
+      {found.data?.items.length === 0 && <p>No matches.</p>}
       <ul className="picker">
         {found.data?.items.map((p) => (
           <li key={p.id}>
@@ -89,6 +91,9 @@ function SlotPicker({ providerId, value, onPick }: { providerId: string; value: 
     <div>
       <h2>Free slot</h2>
       <ErrorText error={slots.error} />
+      {slots.data && slots.data.total > slots.data.items.length && (
+        <p>Showing {slots.data.items.length} of {slots.data.total} free slots.</p>
+      )}
       {slots.data?.items.length === 0 && <p>No free slots for this provider.</p>}
       <ul className="picker">
         {slots.data?.items.map((s) => (
@@ -115,20 +120,27 @@ export default function Book() {
   const [provider, setProvider] = useState<Provider | null>(null);
   const [slot, setSlot] = useState<Slot | null>(null);
   const [reason, setReason] = useState("");
-  // One key per submission attempt: a Retry click reuses it so the API can dedupe,
-  // and it is replaced whenever the patient or slot changes (a different booking).
-  const key = useRef(crypto.randomUUID());
-  const rekey = () => { key.current = crypto.randomUUID(); };
+  // The server fingerprints patient+slot+reason, so a key is only reusable with an
+  // identical body: a Retry click reuses the last attempt's key so the API can dedupe,
+  // and any change to the body mints a new one.
+  const last = useRef<{ key: string; body: string } | null>(null);
 
   const patient = session?.role === "patient" ? own.data ?? null : chosen;
   const mutation = useMutation({
-    mutationFn: () => api<BookingAccepted>("/appointments", {
-      method: "POST",
-      headers: { "Idempotency-Key": key.current },
-      json: { patient_id: patient!.id, slot_id: slot!.id, ...(reason ? { reason } : {}) },
-    }),
+    mutationFn: () => {
+      const json = { patient_id: patient!.id, slot_id: slot!.id, ...(reason ? { reason } : {}) };
+      const body = JSON.stringify(json);
+      if (last.current?.body !== body) last.current = { key: crypto.randomUUID(), body };
+      return api<BookingAccepted>("/appointments", {
+        method: "POST",
+        headers: { "Idempotency-Key": last.current.key },
+        json,
+      });
+    },
     onSuccess: (accepted) => navigate(`/bookings/${accepted.appointment_id}`),
   });
+  // A new selection is a new booking: drop the previous attempt's error/Retry state.
+  const reset = mutation.reset;
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -138,9 +150,9 @@ export default function Book() {
   return (
     <section>
       <h1>Book an appointment</h1>
-      <PatientPicker value={chosen} onPick={(p) => { setChosen(p); rekey(); }} />
-      <ProviderPicker value={provider} onPick={(p) => { setProvider(p); setSlot(null); rekey(); }} />
-      {provider && <SlotPicker providerId={provider.id} value={slot} onPick={(s) => { setSlot(s); rekey(); }} />}
+      <PatientPicker value={chosen} onPick={(p) => { setChosen(p); reset(); }} />
+      <ProviderPicker value={provider} onPick={(p) => { setProvider(p); setSlot(null); reset(); }} />
+      {provider && <SlotPicker providerId={provider.id} value={slot} onPick={(s) => { setSlot(s); reset(); }} />}
       <form onSubmit={submit}>
         <label>Reason (optional)
           <textarea value={reason} maxLength={2000} onChange={(e) => setReason(e.target.value)} />

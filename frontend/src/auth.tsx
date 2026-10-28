@@ -1,11 +1,13 @@
 // Session state. The token is kept in sessionStorage (cleared with the tab). Its payload
 // is decoded for DISPLAY only -- which nav items to show. The API re-verifies every
 // request, so a forged payload buys nothing (spec F-2).
+import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { TOKEN_KEY, api, readToken, setUnauthorisedHandler } from "./api";
 
 export type Role = "patient" | "provider" | "front_desk" | "admin";
+const ROLES: readonly string[] = ["patient", "provider", "front_desk", "admin"];
 export interface Session {
   subject: string;
   role: Role;
@@ -16,7 +18,7 @@ export function decodeToken(token: string): Session | null {
   try {
     const part = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
     const payload = JSON.parse(atob(part.padEnd(part.length + ((4 - (part.length % 4)) % 4), "=")));
-    if (typeof payload.sub !== "string" || typeof payload.role !== "string") return null;
+    if (typeof payload.sub !== "string" || !ROLES.includes(payload.role)) return null;
     return { subject: payload.sub, role: payload.role as Role, expiresAt: payload.exp * 1000 };
   } catch {
     return null;
@@ -47,10 +49,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return decoded && decoded.expiresAt > Date.now() ? decoded : null;
   });
 
+  const queryClient = useQueryClient();
+
+  // The cache holds the previous user's patients and appointments; drop it on every
+  // identity change so the next login never sees it.
   const logout = useCallback(() => {
     store(null);
     setSession(null);
-  }, []);
+    queryClient.clear();
+  }, [queryClient]);
 
   useEffect(() => setUnauthorisedHandler(logout), [logout]);
 
@@ -59,9 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       json: { email, password },
     });
+    queryClient.clear();
     store(access_token);
     setSession(decodeToken(access_token));
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo(() => ({ session, login, logout }), [session, login, logout]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

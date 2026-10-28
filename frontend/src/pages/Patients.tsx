@@ -86,6 +86,7 @@ export default function Patients() {
                   <td>{p.date_of_birth ?? ""}</td><td>{p.phone ?? ""}</td>
                 </tr>
               ))}
+              {query.data.items.length === 0 && <tr><td colSpan={4}>No matches.</td></tr>}
             </tbody>
           </table>
           <Pager page={query.data} onOffset={setOffset} />

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api";
+import { ApiError, api } from "../api";
 import { POLL_MS, isTerminal } from "../poll";
 import { ErrorText } from "../shared";
 import type { Appointment } from "../types";
@@ -11,7 +11,11 @@ export default function Booking() {
     queryKey: ["appointment", id],
     queryFn: () => api<Appointment>(`/appointments/${id}`),
     // Poll on status, never on in_progress (see poll.ts).
-    refetchInterval: (q) => (q.state.data && isTerminal(q.state.data.status) ? false : POLL_MS),
+    // A 4xx (not found, forbidden) will not fix itself; 5xx/503 may, so keep polling those.
+    refetchInterval: (q) => {
+      if (q.state.error instanceof ApiError && q.state.error.status < 500) return false;
+      return q.state.data && isTerminal(q.state.data.status) ? false : POLL_MS;
+    },
   });
   const appt = query.data;
 

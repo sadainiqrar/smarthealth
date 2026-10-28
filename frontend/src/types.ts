@@ -1,4 +1,5 @@
-// Hand-written mirrors of the Pydantic read models (spec F-3).
+// The fields the client uses from the Pydantic read models (spec F-3): hand-written,
+// not full mirrors -- the API may return more.
 export interface Page<T> { items: T[]; total: number; limit: number; offset: number }
 export interface Patient {
   id: string; mrn: string; first_name: string; last_name: string;

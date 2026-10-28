@@ -31,6 +31,7 @@ export default function Providers() {
                   <td>{p.first_name} {p.last_name}</td><td>{p.specialty}</td><td>{p.is_active ? "yes" : "no"}</td>
                 </tr>
               ))}
+              {query.data.items.length === 0 && <tr><td colSpan={3}>No matches.</td></tr>}
             </tbody>
           </table>
           <Pager page={query.data} onOffset={setOffset} />
