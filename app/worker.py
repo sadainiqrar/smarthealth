@@ -34,6 +34,7 @@ from app.core.temporal import (
     check_worker,
     connect_client,
 )
+from app.db import all_models  # noqa: F401  - registers every table; see below
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
@@ -67,6 +68,9 @@ async def _run(settings: Settings) -> None:
             "activities": ACTIVITIES.names(),
         },
     )
+    # `all_models` is imported above for its side effect: this process never loads the
+    # app's routers, so without it a foreign key to a table whose module nothing imported
+    # fails on the first activity's first query.
     # Activities hold real resources: a session factory for Postgres and the audit log's
     # Mongo collection. Built here, disposed in the finally below.
     engine = create_engine(settings)
