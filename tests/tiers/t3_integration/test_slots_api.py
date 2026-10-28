@@ -66,4 +66,46 @@ async def test_the_window_narrows_the_list(api, token_for, factory):
         headers=token_for(UserRole.FRONT_DESK),
     )
 
-    assert [item["id"] for item in response.json()["items"]] == [str(b.slot_id)]
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [str(b.slot_id)]
+    assert body["total"] == 1
+
+
+async def test_a_from_in_the_past_still_excludes_started_slots(api, token_for, factory):
+    """The lower bound is max(now, from): a past `from` must not resurrect a started slot."""
+    async with factory() as session:
+        b = await seed_bookable(session)  # tomorrow
+        past = await add_slot(session, b, starts_in=timedelta(hours=-2))
+    long_ago = datetime.now(UTC) - timedelta(days=30)
+
+    response = await api.get(
+        "/slots",
+        params={"provider_id": str(b.provider_id), "from": long_ago.isoformat()},
+        headers=token_for(UserRole.PATIENT),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] for item in body["items"]]
+    assert ids == [str(b.slot_id)]
+    assert str(past) not in ids
+    assert body["total"] == 1
+
+
+async def test_a_future_from_excludes_earlier_free_slots(api, token_for, factory):
+    async with factory() as session:
+        b = await seed_bookable(session)  # tomorrow, before the window
+        later = await add_slot(session, b, starts_in=timedelta(days=5))
+    window_start = datetime.now(UTC) + timedelta(days=3)
+
+    response = await api.get(
+        "/slots",
+        params={"provider_id": str(b.provider_id), "from": window_start.isoformat()},
+        headers=token_for(UserRole.PATIENT),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["id"] for item in body["items"]] == [str(later)]
+    assert body["total"] == 1
