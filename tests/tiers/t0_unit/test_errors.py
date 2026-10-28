@@ -53,3 +53,10 @@ def test_importing_errors_does_not_load_fastapi_or_starlette():
         check=True,
     )
     assert result.stdout.strip() == "False False"
+
+
+def test_unprocessable_and_unavailable_map_to_their_statuses():
+    from app.core.errors import ServiceUnavailable, Unprocessable
+
+    assert Unprocessable("x").status_code == 422
+    assert ServiceUnavailable("x").status_code == 503

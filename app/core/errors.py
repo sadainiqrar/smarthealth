@@ -48,3 +48,15 @@ class InvalidCredentials(DomainError):
 
     status_code = 401
     headers = {"WWW-Authenticate": "Bearer"}
+
+
+class Unprocessable(DomainError):
+    """The request is well-formed but cannot be acted on, e.g. booking a past slot."""
+
+    status_code = 422
+
+
+class ServiceUnavailable(DomainError):
+    """A dependency the request needs is down. Retrying later may succeed."""
+
+    status_code = 503
