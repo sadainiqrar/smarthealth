@@ -31,15 +31,42 @@ def auth(role: UserRole) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+class _StartedDescription:
+    def __init__(self, memo: dict) -> None:
+        self._memo = memo
+
+    async def memo_value(self, key, default=None):
+        return self._memo.get(key, default)
+
+
+class _StartedHandle:
+    def __init__(self, memo: dict) -> None:
+        self._memo = memo
+
+    async def describe(self):
+        return _StartedDescription(self._memo)
+
+
 class FakeTemporal:
-    def __init__(self, error: Exception | None = None) -> None:
+    """Records starts and, like Temporal, keeps the memo of the *first* start under an
+    id: a repeat under USE_EXISTING never replaces it. `memo` pins what describe()
+    reports instead, to simulate a workflow started by an earlier, different request."""
+
+    def __init__(self, error: Exception | None = None, memo: dict | None = None) -> None:
         self.starts: list[dict] = []
         self._error = error
+        self._pinned = memo
+        self._memos: dict[str, dict] = {}
 
     async def start_workflow(self, *args, **kwargs):
         if self._error:
             raise self._error
         self.starts.append(kwargs)
+        self._memos.setdefault(kwargs["id"], kwargs.get("memo") or {})
+
+    def get_workflow_handle(self, workflow_id: str) -> _StartedHandle:
+        memo = self._pinned if self._pinned is not None else self._memos[workflow_id]
+        return _StartedHandle(memo)
 
 
 @pytest.fixture
@@ -74,6 +101,31 @@ async def test_the_same_idempotency_key_names_the_same_appointment(api_client, t
     first = await api_client.post("/appointments", json=BODY, headers=headers)
     second = await api_client.post("/appointments", json=BODY, headers=headers)
     assert first.json()["appointment_id"] == second.json()["appointment_id"]
+
+
+async def test_a_key_reused_with_a_different_body_is_a_422(api_client):
+    """The IETF Idempotency-Key draft's answer: the key names a request, and this is
+    not that request. Silently answering with the first booking would let the client
+    believe its second request was accepted."""
+    fake = FakeTemporal(memo={"fingerprint": "the fingerprint of some other request"})
+    app.dependency_overrides[get_temporal] = lambda: fake
+    try:
+        response = await api_client.post(
+            "/appointments", json=BODY,
+            headers={**auth(UserRole.FRONT_DESK), "Idempotency-Key": "abc"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_temporal, None)
+    assert response.status_code == 422
+    assert response.json()["error"] == "Unprocessable"
+
+
+async def test_a_repeat_with_the_same_body_is_accepted_again(api_client, temporal):
+    headers = {**auth(UserRole.FRONT_DESK), "Idempotency-Key": "same"}
+    first = await api_client.post("/appointments", json=BODY, headers=headers)
+    second = await api_client.post("/appointments", json=BODY, headers=headers)
+    assert (first.status_code, second.status_code) == (202, 202)
+    assert temporal.starts[0]["memo"] == temporal.starts[1]["memo"]
 
 
 async def test_temporal_down_is_a_503_in_the_standard_envelope(api_client):

@@ -6,6 +6,8 @@ time-skipping server.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from typing import Literal
 
@@ -14,7 +16,7 @@ from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
-from app.core.errors import ServiceUnavailable
+from app.core.errors import ServiceUnavailable, Unprocessable
 from app.modules.scheduling.contracts import BookingRequest
 from app.modules.scheduling.workflows import BookAppointmentWorkflow
 
@@ -35,6 +37,19 @@ def booking_workflow_id(appointment_id: uuid.UUID | str) -> str:
     return f"booking-{appointment_id}"
 
 
+#: The workflow memo key holding the request fingerprint.
+FINGERPRINT_MEMO = "fingerprint"
+
+
+def request_fingerprint(request: BookingRequest) -> str:
+    """What the booking asks for, as a hash: patient, slot and reason. Not the
+    appointment id (derived from the key, so equal by construction) nor the actor
+    (already part of the id). JSON-encoded rather than delimiter-joined so no reason
+    text can make two different requests encode alike."""
+    payload = json.dumps([request.patient_id, request.slot_id, request.reason])
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 async def start_booking(client: Client, request: BookingRequest, *, task_queue: str) -> str:
     """Start the booking workflow, or answer for the one already started.
 
@@ -42,13 +57,21 @@ async def start_booking(client: Client, request: BookingRequest, *, task_queue: 
     REJECT_DUPLICATE makes a repeat after it closed raise instead of starting a second
     booking -- Temporal's default would allow it. Either way the caller gets the same
     workflow id back, which is the answer it got the first time.
+
+    A repeat must also be the *same request*. The workflow carries the request's
+    fingerprint in its memo, and a key reused with a different body is refused with
+    422 (the IETF Idempotency-Key draft's answer) rather than silently answered with
+    the first booking -- the client would otherwise believe its second request was
+    accepted.
     """
     workflow_id = booking_workflow_id(request.appointment_id)
+    fingerprint = request_fingerprint(request)
     try:
         await client.start_workflow(
             BookAppointmentWorkflow.run, request, id=workflow_id, task_queue=task_queue,
             id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
             id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            memo={FINGERPRINT_MEMO: fingerprint},
         )
     except WorkflowAlreadyStartedError:
         pass
@@ -56,7 +79,21 @@ async def start_booking(client: Client, request: BookingRequest, *, task_queue: 
         # RuntimeError: a lazy client raises it ("Failed client connect") when the
         # server is unreachable on first use -- verified on temporalio 1.34.
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
+    # Checked after every start, not only on WorkflowAlreadyStartedError: under
+    # USE_EXISTING a repeat while the first still runs returns normally.
+    if await _started_fingerprint(client, workflow_id) not in (fingerprint, None):
+        raise Unprocessable("Idempotency-Key reused with a different request")
     return workflow_id
+
+
+async def _started_fingerprint(client: Client, workflow_id: str) -> str | None:
+    """The fingerprint the workflow was started with. None for a workflow started
+    before fingerprints existed, which is accepted rather than refused."""
+    try:
+        description = await client.get_workflow_handle(workflow_id).describe()
+        return await description.memo_value(FINGERPRINT_MEMO, None)
+    except (RPCError, RuntimeError) as exc:
+        raise ServiceUnavailable("the scheduling service is unavailable") from exc
 
 
 BookingState = Literal["running", "closed", "unknown"]
