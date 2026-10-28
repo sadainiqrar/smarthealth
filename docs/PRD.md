@@ -184,7 +184,7 @@ Three links connect a requirement to shipped, tested code.
 | `PART-A-FR-3` | `app/modules/scheduling` (`Visit` model only) |
 | `PART-A-FR-4` | — not started |
 | `PART-A-FR-5` | — not started; schema support in `app/modules/scheduling/models.py` |
-| `PART-A-OBS-1` | `app/api/health.py`, `app/core/logging.py`, `app/api/error_handlers.py` |
+| `PART-A-OBS-1` | `app/api/health.py`, `app/core/logging.py`, `app/api/error_handlers.py`, `app/worker.py` (`--check`) |
 | `PART-A-NFR-1` | `migrations/versions/0001_baseline.py` (`ux_appointments_live_slot`, GiST exclusion) |
 | `PART-A-NFR-6` | `migrations/versions/0002_coherence_constraints.py`, `app/db/mongo.py` |
 
@@ -197,10 +197,14 @@ cases covering it. Current state:
 
 | requirement | cases |
 | --- | --- |
-| `PART-A-FR-1` | 5 |
-| `PART-A-OBS-1` | 3 |
+| `PART-A-FR-1` | 7 |
+| `PART-A-NFR-2` | 1 |
+| `PART-A-NFR-5` | 2 |
+| `PART-A-OBS-1` | 6 |
+| `PART-A-OBS-4` | 1 |
 
-All other ids are uncovered because the features they describe are not yet built.
+As of 2026-10-28. All other ids are uncovered because the features they describe are not
+yet built. Recount with `grep -h '^requirement:' tests/cases/*.yaml | sort | uniq -c`.
 
 ---
 
