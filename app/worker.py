@@ -67,10 +67,16 @@ async def _run(settings: Settings) -> None:
     loop = asyncio.get_running_loop()
     running = asyncio.ensure_future(worker.run())
 
+    # The loop holds tasks only weakly; an unreferenced shutdown task can be
+    # garbage-collected before it finishes draining.
+    stopping: set[asyncio.Task[None]] = set()
+
     def _stop() -> None:
         logger.info("worker stopping", extra={"task_queue": queue})
         # shutdown() waits for completion, so run it as a task; run() then returns.
-        loop.create_task(worker.shutdown())
+        task = loop.create_task(worker.shutdown())
+        stopping.add(task)
+        task.add_done_callback(stopping.discard)
 
     # The container runs this as PID 1, which ignores SIGTERM unless a handler is
     # installed: without one `docker stop` waits out its grace period and SIGKILLs,
