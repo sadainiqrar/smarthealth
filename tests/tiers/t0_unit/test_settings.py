@@ -29,6 +29,10 @@ def test_settings_read_the_environment(monkeypatch):
     get_settings.cache_clear()
 
 
+def test_no_show_grace_defaults_to_fifteen_minutes():
+    assert Settings().no_show_grace_minutes == 15
+
+
 def test_llm_mode_defaults_to_fixture():
     assert Settings().llm_mode == "fixture"
 

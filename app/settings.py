@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     temporal_host: str = "localhost"
     temporal_port: int = 7233
     temporal_namespace: str = "default"
+    #: Minutes after a slot's end before an appointment nobody checked in for becomes a
+    #: no-show (spec 4.2). Read by the worker, which hands it to the visit activities.
+    no_show_grace_minutes: int = 15
 
     # --- Auth ---
     # At least 32 bytes: below that PyJWT warns (InsecureKeyLengthWarning) on every

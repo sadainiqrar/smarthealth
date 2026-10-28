@@ -11,8 +11,11 @@ bug in the workflow would both have to happen for a slot-less confirmation to ex
 
 from __future__ import annotations
 
+import enum
+
 from app.core.errors import Conflict
 from app.modules.scheduling.models import AppointmentStatus as S
+from app.modules.scheduling.models import VisitStatus
 
 APPOINTMENT_TRANSITIONS: dict[S, frozenset[S]] = {
     S.PENDING: frozenset({S.CONFIRMED, S.FAILED, S.CANCELLED}),
@@ -31,4 +34,40 @@ def require_transition(source: S, target: S) -> None:
     if not can_transition(source, target):
         raise Conflict(
             f"an appointment cannot move from {source.value} to {target.value}"
+        )
+
+
+class VisitAction(str, enum.Enum):
+    CHECK_IN = "check_in"
+    SEEN = "seen"
+    COMPLETE = "complete"
+
+
+#: What each staff action requires, stated as data like the appointment table above.
+#: check_in: appointment confirmed and no visit yet; seen: visit checked_in;
+#: complete: visit in_progress.
+VISIT_PRECONDITIONS: dict[VisitAction, VisitStatus | None] = {
+    VisitAction.CHECK_IN: None,
+    VisitAction.SEEN: VisitStatus.CHECKED_IN,
+    VisitAction.COMPLETE: VisitStatus.IN_PROGRESS,
+}
+VISIT_RESULT: dict[VisitAction, VisitStatus] = {
+    VisitAction.CHECK_IN: VisitStatus.CHECKED_IN,
+    VisitAction.SEEN: VisitStatus.IN_PROGRESS,
+    VisitAction.COMPLETE: VisitStatus.COMPLETED,
+}
+
+
+def require_visit_action(
+    action: VisitAction, appointment: S, visit: VisitStatus | None
+) -> None:
+    """Raise Conflict unless `action` is legal now. Pure; the service supplies states.
+
+    The appointment must be `confirmed` for every action: a cancelled or no-show
+    appointment takes no visit actions, and a completed one has nothing left to do. The
+    visit must then be exactly where the action expects it (`VISIT_PRECONDITIONS`)."""
+    if appointment is not S.CONFIRMED or visit is not VISIT_PRECONDITIONS[action]:
+        raise Conflict(
+            f"cannot {action.value}: appointment is {appointment.value}, "
+            f"visit is {visit.value if visit else 'none'}"
         )
