@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_prefix: str = ""
 
+    # --- Temporal: durable workflows (PRD D-7) ---
+    temporal_host: str = "localhost"
+    temporal_port: int = 7233
+    temporal_namespace: str = "default"
+
     # --- Auth ---
     # At least 32 bytes: below that PyJWT warns (InsecureKeyLengthWarning) on every
     # sign and verify, because HMAC-SHA256's security argument assumes a key at least
@@ -126,6 +131,11 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{_format_host(self.redis_host)}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def temporal_address(self) -> str:
+        """host:port for the Temporal frontend. No scheme: the SDK takes a bare target."""
+        return f"{_format_host(self.temporal_host)}:{self.temporal_port}"
 
 
 @lru_cache

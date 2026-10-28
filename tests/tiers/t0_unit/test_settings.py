@@ -48,3 +48,14 @@ def test_log_level_defaults_to_info_and_reads_the_environment(monkeypatch):
         assert get_settings().log_level == "DEBUG"
     finally:
         get_settings.cache_clear()
+
+
+def test_temporal_defaults_point_at_the_dev_stack():
+    settings = Settings()
+    assert settings.temporal_address == "localhost:7233"
+    assert settings.temporal_namespace == "default"
+
+
+def test_temporal_address_brackets_an_ipv6_host():
+    settings = Settings(temporal_host="::1", temporal_port=17233)
+    assert settings.temporal_address == "[::1]:17233"
