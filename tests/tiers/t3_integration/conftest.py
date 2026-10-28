@@ -107,6 +107,9 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
         "SMARTHEALTH_REDIS_HOST": db_settings.redis_host,
         "SMARTHEALTH_REDIS_PORT": str(db_settings.redis_port),
         "SMARTHEALTH_REDIS_DB": str(db_settings.redis_db),
+        "SMARTHEALTH_TEMPORAL_HOST": db_settings.temporal_host,
+        "SMARTHEALTH_TEMPORAL_PORT": str(db_settings.temporal_port),
+        "SMARTHEALTH_RESOURCE_PREFIX": db_settings.resource_prefix,
     }.items():
         monkeypatch.setenv(key, value)
 
@@ -124,6 +127,7 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
         assert live.mongo_db == db_settings.mongo_db
         assert live.mongo_port == db_settings.mongo_port
         assert live.redis_db == db_settings.redis_db
+        assert live.task_queue("x") == db_settings.task_queue("x")
 
         transport = httpx.ASGITransport(app=manager.app)
         async with httpx.AsyncClient(

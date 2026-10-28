@@ -20,8 +20,11 @@ from collections.abc import Sequence
 from datetime import timedelta
 
 from temporalio.service import RPCError
+from temporalio.worker import Worker
 
-from app.components import register_all
+from app.components import build_activities, register_all
+from app.core.audit import AuditLog
+from app.core.clock import Clock
 from app.core.logging import configure_logging
 from app.core.temporal import (
     ACTIVITIES,
@@ -31,6 +34,9 @@ from app.core.temporal import (
     check_worker,
     connect_client,
 )
+from app.db.engine import create_engine
+from app.db.mongo import create_mongo_client, get_audit_collection
+from app.db.session import create_session_factory
 from app.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -61,9 +67,21 @@ async def _run(settings: Settings) -> None:
             "activities": ACTIVITIES.names(),
         },
     )
-    worker = build_worker(
-        client, queue, workflows=list(WORKFLOWS), activities=list(ACTIVITIES)
-    )
+    # Activities hold real resources: a session factory for Postgres and the audit log's
+    # Mongo collection. Built here, disposed in the finally below.
+    engine = create_engine(settings)
+    mongo = create_mongo_client(settings)
+    try:
+        audit = AuditLog(get_audit_collection(mongo, settings), Clock())
+        activities = build_activities(create_session_factory(engine), audit, Clock())
+        worker = build_worker(client, queue, workflows=list(WORKFLOWS), activities=activities)
+        await _serve(worker, queue)
+    finally:
+        await engine.dispose()
+        await mongo.close()
+
+
+async def _serve(worker: Worker, queue: str) -> None:
     loop = asyncio.get_running_loop()
     running = asyncio.ensure_future(worker.run())
 
