@@ -46,7 +46,7 @@ async def booking_stack(db_settings):
     client = await connect_client(db_settings, lazy=False)
     worker = build_worker(
         client, db_settings.task_queue(TASK_QUEUE), workflows=list(WORKFLOWS),
-        activities=build_activities(factory, audit, Clock()),
+        activities=build_activities(factory, audit, Clock(), timedelta(minutes=15)),
     )
     try:
         async with worker:

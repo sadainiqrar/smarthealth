@@ -20,6 +20,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from temporalio import activity
@@ -30,7 +31,7 @@ from app.core.clock import Clock
 from app.core.errors import DomainError
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.scheduling import service
-from app.modules.scheduling.contracts import BookingRequest
+from app.modules.scheduling.contracts import BookingRequest, VisitRequest, VisitSignal
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,12 @@ def parse_id(value: str, field: str) -> uuid.UUID:
 class SchedulingActivities:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], audit: AuditLog,
-        clock: Clock,
+        clock: Clock, no_show_grace: timedelta = timedelta(minutes=15),
     ) -> None:
         self._session_factory = session_factory
         self._audit = audit
         self._clock = clock
+        self._no_show_grace = no_show_grace
 
     @asynccontextmanager
     async def _unit_of_work(self) -> AsyncIterator[AsyncSession]:
@@ -148,4 +150,53 @@ class SchedulingActivities:
             await service.fail_booking(
                 session, self._audit, appointment_id=appointment_id,
                 actor_user_id=request.actor_user_id,
+            )
+
+    @activity.defn(name="visit.deadline")
+    async def deadline(self, request: VisitRequest) -> str:
+        """When the appointment becomes a no-show: slot end plus grace, as an ISO string
+        so the default converter round-trips it."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            when = await service.no_show_deadline(
+                session, appointment_id=appointment_id, grace=self._no_show_grace
+            )
+        return when.isoformat()
+
+    @activity.defn(name="visit.check_in")
+    async def check_in(self, request: VisitRequest, signal: VisitSignal) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            await service.check_in(
+                session, self._audit, appointment_id=appointment_id,
+                now=self._clock.now(), actor_user_id=signal.actor_user_id,
+            )
+
+    @activity.defn(name="visit.seen")
+    async def seen(self, request: VisitRequest, signal: VisitSignal) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            await service.mark_seen(
+                session, self._audit, appointment_id=appointment_id,
+                now=self._clock.now(), actor_user_id=signal.actor_user_id,
+            )
+
+    @activity.defn(name="visit.complete")
+    async def complete(self, request: VisitRequest, signal: VisitSignal) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            await service.complete_visit(
+                session, self._audit, appointment_id=appointment_id,
+                now=self._clock.now(), actor_user_id=signal.actor_user_id,
+            )
+
+    @activity.defn(name="visit.no_show")
+    async def no_show(self, request: VisitRequest) -> bool:
+        """True when the appointment is (now) a no-show; False when a visit exists or the
+        appointment left `confirmed`, in which case nothing was written."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            return await service.mark_no_show(
+                session, self._audit, appointment_id=appointment_id,
+                actor_user_id="system:visit-workflow",
             )

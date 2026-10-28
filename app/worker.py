@@ -77,7 +77,10 @@ async def _run(settings: Settings) -> None:
     mongo = create_mongo_client(settings)
     try:
         audit = AuditLog(get_audit_collection(mongo, settings), Clock())
-        activities = build_activities(create_session_factory(engine), audit, Clock())
+        activities = build_activities(
+            create_session_factory(engine), audit, Clock(),
+            timedelta(minutes=settings.no_show_grace_minutes),
+        )
         worker = build_worker(client, queue, workflows=list(WORKFLOWS), activities=activities)
         await _serve(worker, queue)
     finally:

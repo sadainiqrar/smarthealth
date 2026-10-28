@@ -11,6 +11,7 @@ and bound to instances carrying their resources by `build_activities` at worker 
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -33,6 +34,11 @@ _SCHEDULING_ACTIVITIES = (
     SchedulingActivities.schedule_reminders,
     SchedulingActivities.confirm,
     SchedulingActivities.fail_booking,
+    SchedulingActivities.deadline,
+    SchedulingActivities.check_in,
+    SchedulingActivities.seen,
+    SchedulingActivities.complete,
+    SchedulingActivities.no_show,
 )
 
 
@@ -58,9 +64,10 @@ def register_all() -> None:
 
 
 def build_activities(
-    session_factory: async_sessionmaker[AsyncSession], audit: AuditLog, clock: Clock
+    session_factory: async_sessionmaker[AsyncSession], audit: AuditLog, clock: Clock,
+    no_show_grace: timedelta,
 ) -> list[Callable[..., Any]]:
     """Every registered activity, bound to instances holding the worker's resources."""
     register_all()
-    instances = [SchedulingActivities(session_factory, audit, clock)]
+    instances = [SchedulingActivities(session_factory, audit, clock, no_show_grace)]
     return bind_activities(list(ACTIVITIES), instances)
