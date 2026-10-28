@@ -48,7 +48,7 @@ Each is numbered so the PRD can adopt it (§8 continues from D-8).
 | Id | Decision | Rejected alternative | Why |
 | --- | --- | --- | --- |
 | **D-9** | `ProviderSlot` moves from `providers` into `scheduling` | (a) `providers` publishes claim/release functions, one allowed edge; (b) scheduling writes raw SQL on `provider_slots` | Slots are bookable inventory and scheduling is the only module that mutates them. The paired write (appointment + slot in one transaction) stays inside one module, and the horizontal import rule needs no exception for it. (a) makes the paired write straddle a boundary; (b) passes the import test while coupling to another module's table behind its back. The table, constraints and migrations are untouched — only the Python class moves |
-| **D-10** | The booking workflow creates the `pending` row; the router only starts the workflow | Router inserts the row, then starts the workflow | Two systems cannot be written atomically. Workflow-first means a failed start leaves nothing behind, and a started workflow is guaranteed by Temporal to reach `confirmed` or `failed`. Router-first leaves a permanently `pending` orphan whenever the start fails, which needs a reconciler to clean up |
+| **D-10** | The booking workflow creates the `pending` row; the router only starts the workflow | Router inserts the row, then starts the workflow | Two systems cannot be written atomically. Workflow-first means a failed start leaves nothing behind, and a started workflow is guaranteed by Temporal to reach `confirmed` or `failed`. Router-first leaves a permanently `pending` orphan whenever the start fails, which needs a reconciler to clean up. Workflow-first needs none — *unless someone terminates a workflow*: termination skips compensation, so the operational rule is "cancel, never terminate", and a reconciler for stale `pending` rows is deferred (§6) |
 | **D-11** | Duplicate submission is prevented by deterministic workflow ids: `Idempotency-Key` → `appointment_id` → `booking-<appointment_id>` | Dedupe table keyed on request hash | Temporal already refuses a second start under a running workflow id; a second store would be a second source of truth for the same fact |
 | **D-12** | The visit lifecycle is one long-running `VisitWorkflow` per confirmed appointment, driven by signals, with a durable no-show timer | Transactional endpoints with a state machine, no-show by periodic job | No-show detection needs no scheduler — Temporal is one. Every visit's history is inspectable, which is the "real-time status visibility" and "recovery from failures" `PART-A-FR-3` asks for |
 | **D-13** | Waitlist promotion is an activity of the cancel/reschedule workflows in Week 2 | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the activity is replaced by publishing `appointments.cancelled` and the promotion moves to a consumer |
@@ -125,10 +125,20 @@ Router:
 
 1. Authorise. A patient booking for anyone else is 403.
 2. `appointment_id = uuid5(NAMESPACE, f"{caller_user_id}:{key}")` if the header is present,
-   else `uuid4()`. The caller is part of the hash so two users cannot collide on a key.
+   else `uuid7()` (time-ordered like every other key; a keyed id is uuid5 by necessity, as it
+   must be derivable). The caller is part of the hash so two users cannot collide on a key.
+   An empty header is 422.
 3. Start `booking-<appointment_id>`. If that id is already running or completed, return the
    same 202 — the replay is answered, not rejected. Start with id_conflict_policy=USE_EXISTING and id_reuse_policy=REJECT_DUPLICATE: Temporal's default allows a closed id to be started again, which would book a repeated request twice.
 4. Return **202** `{appointment_id, status: "pending"}`. Temporal unreachable → 503.
+
+**Idempotency-Key fingerprint.** The key names a *request*, not only an id. The workflow is
+started with `memo={"fingerprint": sha256(patient_id, slot_id, reason)}`; after every start
+(including a repeat that Temporal answers with the existing workflow) the router describes
+the workflow and compares. A mismatch is **422** "Idempotency-Key reused with a different
+request", per the IETF Idempotency-Key draft — answering 202 would tell the client a booking
+was made that never was. A **failed** booking stays failed under its key: REJECT_DUPLICATE
+means the same key replays the failure, so retrying needs a new key.
 
 `BookAppointmentWorkflow(appointment_id, patient_id, slot_id, reason, rescheduled_from_id?, waitlist_entry_id?)`:
 
@@ -139,16 +149,24 @@ Router:
 | 3 | `claim_slot` — `UPDATE provider_slots SET status='held', version=version+1 WHERE id=:id AND status='free'` (**R-4**), and attach `slot_id` to the appointment, one transaction | 0 rows → `Conflict`, permanent, **not retried** |
 | 4 | `billing_precheck` (stand-in) | permanent if declined |
 | 5 | `schedule_reminders` (stand-in) | retryable |
-| 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retryable |
+| 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retried **without limit** (idempotent): it may have committed before a transient failure, and giving up would end the workflow failed while the row says confirmed. A non-retryable `Conflict` still ends it |
 | 7 | start `visit-<appointment_id>` as an independent workflow, not a child, so it outlives booking; if `waitlist_entry_id` was given, mark that entry `fulfilled` | retryable |
 
-Any failure after step 1 runs `compensate_booking`: set the appointment `failed` and, only
+Any failure from step 1 on runs `compensate_booking` (as built, `fail_booking`; step 1 is
+inside the compensated region because it may commit and still fail, and compensation no-ops
+with no row): set the appointment `failed` and, only
 if this appointment holds the slot, return it to `free`. Idempotent; re-running it is a
 no-op. The workflow then ends failed with the original cause.
 
-`GET /appointments/{id}` returns the row. If no row exists but `booking-<id>` is known to
-Temporal, it returns `{appointment_id, status: "pending", in_progress: true}` — the gap
-between 202 and step 1 is milliseconds, but a client polling immediately must not see 404.
+`GET /appointments/{id}` returns the row. If no row exists it asks Temporal for
+`booking-<id>`'s state; these synthetic answers carry only `id`, `status` and `in_progress`:
+
+| Workflow state | Response |
+| --- | --- |
+| running | `{status: "pending", in_progress: true}` — the gap between 202 and step 1 is milliseconds, but a client polling immediately must not see 404 |
+| closed (any terminal status) | `{status: "failed", in_progress: false}` — it ended before recording the appointment, so the booking failed; reporting pending would leave a poller waiting forever |
+| unknown (not found) | 404 |
+| Temporal unreachable | 503, never 404: we cannot tell whether the booking exists |
 Roles: the owning patient, `provider`, `front_desk`, `admin`.
 
 ### 4.2 Visit
@@ -248,7 +266,9 @@ An appointment may move to `completed` only from `confirmed` with a visit in `in
 | `Conflict`, `NotFound`, `ValidationError` in an activity | Converted to `ApplicationError(non_retryable=True)`; the workflow compensates at once |
 | Worker crash mid-workflow | Temporal replays the workflow on another worker; activities are idempotent so a re-run of a completed step changes nothing |
 | Worker crash mid-compensation | Same — compensation is idempotent |
-| Temporal unreachable at the API | 503 in the standard error envelope |
+| Temporal unreachable at the API | 503 in the standard error envelope — including `GET` for an id with no row, which returns 503, not 404 |
+| Malformed id reaching an activity | `ApplicationError(type="InvalidRequest", non_retryable=True)` before the unit of work opens; never retried |
+| Workflow **terminated** (not cancelled) from the Temporal UI/CLI | Termination runs no workflow code, so compensation is skipped: a held slot and a `pending` row are stranded. Operational rule: **cancel, never terminate** — cancellation raises inside the workflow and compensates (verified on temporalio 1.34: a booking cancelled mid-`claim_slot` runs `fail_booking` and ends failed). A reconciler for stale `pending` rows is **deferred**; it is needed only if someone terminates a workflow (D-10) |
 | Signal for an illegal transition | Rejected synchronously at the endpoint (409); the activity re-checks and no-ops if it slips through |
 
 Every appointment and visit transition is audited to Mongo with the same envelope Week 1
@@ -282,6 +302,13 @@ One branch per slice. Each lands when its tests pass, by fast-forwarding `main` 
 | 3 | `feat/visit-workflow` | `VisitWorkflow`, visit endpoints, no-show timer |
 | 4 | `feat/cancel-reschedule` | Cancel, reschedule, waitlist endpoints and promotion |
 | 5 | `feat/patient-self-service` | R-5 |
+
+**Replay safety.** Changing `BookAppointmentWorkflow`'s command sequence breaks replay of
+bookings already in flight when the new worker deploys. Slice 3's step 7 (starting
+`visit-<appointment_id>`) is exactly such a change, so it must be gated with
+`workflow.patched("booking-starts-visit")`: new executions take the new path, in-flight ones
+replay the old one. The patch is deprecated (`workflow.deprecate_patch`) once no pre-slice-3
+booking can still be running.
 
 Every slice updates, in the same branch: `docs/PRD.md` (milestone status, traceability,
 D-9…D-15, R-2…R-5 dispositions), `docs/ARCHITECTURE.md` §3 (moved from "design" to "built"
