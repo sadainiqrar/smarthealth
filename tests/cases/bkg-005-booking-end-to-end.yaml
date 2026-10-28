@@ -1,0 +1,13 @@
+id: bkg-005-booking-end-to-end
+title: "POST /appointments is confirmed end to end: 202, worker, slot booked, audit trail written"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P1
+status: ready
+# The full path through real infrastructure: HTTP answers 202 (the appointment is
+# pending, so 201 would claim a state it is not in), a worker running the real
+# activities confirms it, GET reads `confirmed`, the slot is `booked` at version 2
+# (claim and confirm each increment it, R-4), and Mongo holds booking_requested,
+# slot_claimed, confirmed in order. Runs in T3 with an in-process worker; T4 has no
+# harness yet.
+impl: "tests/tiers/t3_integration/test_booking_round_trip.py::test_a_booking_is_confirmed_end_to_end"

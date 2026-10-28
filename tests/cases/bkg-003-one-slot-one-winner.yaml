@@ -1,0 +1,13 @@
+id: bkg-003-one-slot-one-winner
+title: "A claim blocked behind a winning claim on the same slot loses on the conditional UPDATE"
+requirement: [PART-A-NFR-1]
+tier: integration
+priority: P0
+status: ready
+# PRD D-2: booking is `UPDATE provider_slots SET status='held', version=version+1
+# WHERE id=:id AND status='free'`, and zero rows affected *is* the conflict. The test
+# is deterministic rather than a hopeful `gather`: the first claim holds the slot's
+# row lock uncommitted, the second is shown to be blocked, the first commits, and the
+# second must fail with "no longer free" -- the UPDATE predicate, not the partial
+# unique index behind it -- with version incremented exactly once.
+impl: "tests/tiers/t3_integration/test_booking_service.py::test_a_claim_blocked_behind_a_winner_loses_on_the_update_predicate"

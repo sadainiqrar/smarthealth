@@ -1,0 +1,12 @@
+id: bkg-002-a-failed-step-compensates
+title: "Any failing booking step runs compensation, is not retried, and never confirms"
+requirement: [PART-A-NFR-2]
+tier: workflow
+priority: P0
+status: ready
+# "Partial failures must not corrupt the scheduling state." Parametrised over every
+# step after create: a permanent failure at that step must run `fail_booking` (slot
+# back to free, appointment failed, one transaction), must not be retried, and must
+# never reach `confirm`. Skipping compensation for any single step fails one
+# parameter of this test.
+impl: "tests/tiers/t2_workflow/test_booking_workflow.py::test_any_failing_step_compensates_and_never_confirms"

@@ -6,14 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 17 |
+| Total cases | 22 |
 | contract | 4 |
-| integration | 8 |
+| integration | 11 |
 | unit | 5 |
-| P0 | 9 |
-| P1 | 8 |
+| workflow | 2 |
+| P0 | 13 |
+| P1 | 9 |
 | declarative | 1 |
-| impl-backed | 16 |
+| impl-backed | 21 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -23,6 +24,11 @@
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
 | aut-002-login-does-not-block-the-event-loop | unit | P1 | impl | PART-A-NFR-5 | Password verification runs off the event loop, so one login cannot stall the worker |
+| bkg-001-confirmed-only-after-every-step | workflow | P0 | impl | PART-A-FR-2 | A booking is confirmed only after every workflow step has succeeded, in order |
+| bkg-002-a-failed-step-compensates | workflow | P0 | impl | PART-A-NFR-2 | Any failing booking step runs compensation, is not retried, and never confirms |
+| bkg-003-one-slot-one-winner | integration | P0 | impl | PART-A-NFR-1 | A claim blocked behind a winning claim on the same slot loses on the conditional UPDATE |
+| bkg-004-a-repeat-books-once | integration | P0 | impl | PART-A-FR-2 | Repeating a booking request with the same Idempotency-Key books once |
+| bkg-005-booking-end-to-end | integration | P1 | impl | PART-A-FR-2 | POST /appointments is confirmed end to end: 202, worker, slot booked, audit trail written |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |

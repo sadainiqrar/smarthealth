@@ -1,0 +1,16 @@
+id: bkg-001-confirmed-only-after-every-step
+title: "A booking is confirmed only after every workflow step has succeeded, in order"
+requirement: [PART-A-FR-2]
+tier: workflow
+priority: P0
+status: ready
+# The assignment's headline requirement: "appointment marked confirmed only after
+# successful processing". `confirm` is the workflow's last activity, so it is
+# unreachable unless create, validate, claim, billing pre-check and reminders all
+# succeeded first. The test runs the real BookAppointmentWorkflow in Temporal's
+# time-skipping environment with recording fakes in place of the activities, and
+# asserts the exact call order -- moving `confirm` earlier fails it.
+#
+# The database backs the same property independently: `confirmed` requires a slot
+# (ck_appointments_confirmed_requires_slot) and the status defaults to `pending`.
+impl: "tests/tiers/t2_workflow/test_booking_workflow.py::test_confirms_only_after_every_step_in_order"

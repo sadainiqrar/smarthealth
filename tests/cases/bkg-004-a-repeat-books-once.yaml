@@ -1,0 +1,13 @@
+id: bkg-004-a-repeat-books-once
+title: "Repeating a booking request with the same Idempotency-Key books once"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P0
+status: ready
+# Duplicate prevention (spec D-11), against real Temporal and Postgres. The appointment
+# id is derived from caller + Idempotency-Key, and the workflow id from the
+# appointment id, started with USE_EXISTING + REJECT_DUPLICATE. Temporal's default
+# would let a *finished* workflow id start again -- a client retrying after its booking
+# completed would book twice. A repeat after completion must answer with the same
+# appointment and start nothing new.
+impl: "tests/tiers/t3_integration/test_booking_round_trip.py::test_a_repeated_request_books_once"
