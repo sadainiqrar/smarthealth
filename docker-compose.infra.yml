@@ -96,6 +96,21 @@ services:
       timeout: 12s
       retries: 8
 
+  frontend:
+    # The demo client: nginx serving the built SPA and proxying /api to `app`.
+    profiles: ["app"]
+    build: ./frontend
+    ports: ["${FRONTEND_PORT:-5173}:80"]
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      # busybox wget ships in nginx:alpine; 127.0.0.1 because localhost may resolve to ::1.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   postgres:
     image: postgres:16-alpine
     environment:
