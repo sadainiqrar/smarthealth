@@ -1,0 +1,12 @@
+id: pat-003-a-patient-reads-their-own-record
+title: "A patient login reads its own linked patient record through GET /patients/me"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P1
+status: ready
+# Closes the read half of PRD R-5: a patient could not read their own record, because
+# authorisation was per-role and the patient role has no access to /patients. /me
+# resolves the login to its linked record (users.id -> patients.user_id), and a login
+# with no linked record gets a 404. A sibling contract test proves /me is routed before
+# /{patient_id} -- otherwise FastAPI parses "me" as a UUID and answers 422.
+impl: "tests/tiers/t3_integration/test_patients_me_api.py::test_a_patient_reads_their_own_record"

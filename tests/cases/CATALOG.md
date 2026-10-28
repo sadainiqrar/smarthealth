@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 24 |
+| Total cases | 26 |
 | contract | 5 |
-| integration | 11 |
+| integration | 13 |
 | unit | 5 |
 | workflow | 3 |
 | P0 | 14 |
-| P1 | 10 |
+| P1 | 12 |
 | declarative | 1 |
-| impl-backed | 23 |
+| impl-backed | 25 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -36,7 +36,9 @@
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
+| pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
+| slt-001-only-free-future-slots-are-listed | integration | P1 | impl | PART-A-FR-2 | GET /slots lists only a provider's free, future slots, earliest first |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
 | sys-003-an-unexpected-failure-keeps-the-error-shape | contract | P1 | impl | PART-A-OBS-1 | An unexpected exception answers the documented error shape, leaking nothing |

@@ -1,0 +1,12 @@
+id: slt-001-only-free-future-slots-are-listed
+title: "GET /slots lists only a provider's free, future slots, earliest first"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P1
+status: ready
+# The demo client books from this list, so a listed slot must be one the claim could
+# take: the same two conditions `claim_slot` enforces -- status 'free' and starts_at
+# after now. The test seeds a free future slot, a later one, a past one, a booked one
+# and another provider's slot, and expects exactly the first two, in start order. It
+# can still lose a race to another booking; the claim, not this list, is the authority.
+impl: "tests/tiers/t3_integration/test_slots_api.py::test_only_free_future_slots_of_the_provider_are_listed"
