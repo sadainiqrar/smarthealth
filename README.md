@@ -17,7 +17,7 @@ audited mutation path, a CLI to create the first user, and the application conta
 behind a compose profile. Week 2 has landed a Temporal worker and the **booking workflow**:
 an appointment is confirmed only after every step succeeds, and compensated to `failed`
 otherwise. The visit workflow, cancel/reschedule with the waitlist, and patient
-self-service are next. See [API surface](#api-surface) for what is callable today.
+self-service are next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
 
 ## Architecture
 
@@ -208,6 +208,8 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/providers` | `admin` |
 | PATCH | `/providers/{id}` | `admin` |
 | GET | `/providers`, `/providers/{id}` | any authenticated |
+| GET | `/patients/me` | `patient` — the record linked to the caller's login; 404 if none is linked |
+| GET | `/slots` | any authenticated — a provider's free, future slots; `provider_id` is required, and `from`/`to` must carry a timezone or the answer is a 422 |
 | POST | `/appointments` | `patient` (for themselves only), `front_desk`, `admin` — answers **202**; optional `Idempotency-Key` header |
 | GET | `/appointments/{id}` | the owning `patient`, `provider`, `front_desk`, `admin` |
 
@@ -230,8 +232,8 @@ documentation generated from the route definitions and response models:
 | <http://localhost:8000/redoc> | ReDoc — a reference-style read of the same schema |
 | <http://localhost:8000/openapi.json> | The raw OpenAPI schema |
 
-This is a backend; there is no UI by design (see [`docs/PRD.md`](docs/PRD.md) §2,
-non-goals). `/docs` is the intended way to exercise it by hand.
+The backend has no UI of its own (see [`docs/PRD.md`](docs/PRD.md) §2, non-goals). `/docs`
+is the way to exercise it by hand; the [demo client](#frontend) is a convenience on top.
 
 **Layering:** `router → service → SQLAlchemy`. Services never import FastAPI — they raise
 domain errors that exception handlers translate, so the booking workflow's Temporal
@@ -241,9 +243,9 @@ transaction boundary; services flush.
 **Every mutation is audited** to Mongo with actor, action and before/after, awaited so a
 Mongo outage fails the request rather than silently dropping the record.
 
-**Not yet implemented:** a patient reading their own record. That needs per-object
-authorisation rather than per-role, and the requirements group patient self-service with
-booking (Week 2).
+**Not yet implemented:** a patient listing their own appointments. A patient can read their
+own patient record (`GET /patients/me`) and an appointment they own, but there is no list
+endpoint (Week 2 slice 5).
 
 ### Running it
 
@@ -288,7 +290,8 @@ so hand-writing one would fabricate state no workflow ever ran — and Week 2 wo
 be tested against fiction. See [`app/seed.py`](app/seed.py).
 
 `--profile app` starts two services from the same image: `app` (the API) and `worker`
-(the Temporal worker, `python -m app.worker`). They sit behind a compose profile so the
+(the Temporal worker, `python -m app.worker`), plus `frontend`, the demo client (its own
+image; see [Frontend](#frontend)). They sit behind a compose profile so the
 test stack, which uses the same file, does not start them — the tests drive the
 application in-process. The worker starts only once `app` is healthy, because the `app`
 container applies the migrations. Its healthcheck, `python -m app.worker --check`,
@@ -298,8 +301,9 @@ remaining scheduling workflows are designed in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
-the password you gave `seed`. No endpoint lists free slots yet, so pick a slot and a
-patient straight from Postgres (bash / Git Bash):
+the password you gave `seed`. `GET /slots?provider_id=…` lists a provider's free slots, but
+the snippet below picks a slot and a patient straight from Postgres, which needs no
+provider id (bash / Git Bash):
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
@@ -352,3 +356,47 @@ allocated`:
 ```bash
 TEMPORAL_PORT=7234 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
 ```
+
+## Frontend
+
+`frontend/` is a small React + TypeScript demo client for the API. It is **not part of the
+graded backend** and not a requirement (PRD §2); it exists so the booking flow can be shown
+in a browser. Design: [`docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md`](docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md).
+It talks to the backend only over HTTP, through a same-origin `/api` proxy, so the backend
+needs no CORS configuration.
+
+Screens: login; patients (front desk, admin, provider); providers (every role); and Book
+(patient, front desk, admin), which picks a patient, provider and slot, then follows the
+appointment until it reads `confirmed` or `failed`. The navigation shows only what the
+login's role may use; the API still enforces it.
+
+**Dev mode** — the backend on `:8000`, then:
+
+```bash
+cd frontend && npm install && npm run dev     # http://localhost:5173
+```
+
+Vite proxies `/api` to `http://localhost:8000`; set `SMARTHEALTH_API` to point it elsewhere.
+
+**Compose mode** — the `frontend` service is in the `app` profile, so the command above
+that starts the system also serves the client, at <http://localhost:5173>: nginx serves the
+built client and proxies `/api/*` to `app`. If 5173 is taken (a local Vite dev server, say),
+pass `FRONTEND_PORT=5174`:
+
+```bash
+FRONTEND_PORT=5174 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
+```
+
+**Tests** — `cd frontend && npm test` (Vitest).
+
+**A patient login needs a linked record.** `GET /patients/me` finds the patient whose
+`user_id` is the caller's login, and there is no UI or CLI to link one yet. Create the login
+with `app.cli create-user --role patient`, then link it in SQL:
+
+```bash
+docker compose --profile app -f docker-compose.infra.yml exec -T postgres \
+  psql -U smarthealth -d smarthealth -c \
+  "UPDATE patients SET user_id = '<user id>' WHERE id = '<patient id>'"
+```
+
+Until it is linked, `/patients/me` answers 404.

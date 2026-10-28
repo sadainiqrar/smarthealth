@@ -45,6 +45,8 @@ Commands that work today:
 | --- | --- |
 | `python -m pytest -m "not docker"` | fast tests — T0 unit, T1 contract, T2 workflow (Temporal time-skipping server), meta |
 | `python -m pytest -m docker` | integration tests against the compose test stack |
+| `cd frontend && npm run dev` | the demo client's Vite dev server on :5173, proxying `/api` to the backend on :8000 |
+| `cd frontend && npm test` | the demo client's Vitest suite |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
@@ -68,6 +70,10 @@ Or copy `.env.example` to `.env` and set the offset ports there — `Settings` r
 Note that `docker compose --profile app` starts the *dev* project, a different database
 from the test stack — a user created against 15432 does not exist in the containerised
 one. `README.md` spells this out.
+
+`frontend/` is a demo client (React + TypeScript) for the HTTP API, not a graded deliverable
+and not a requirement — see `docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md`.
+The backend does not depend on it.
 
 ## What this project is
 
@@ -183,7 +189,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 633 fast tests (plus 1 skip) in ~22s, measured 2026-10-28; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 644 fast tests (plus 1 skip) in ~20s, measured 2026-10-28; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist

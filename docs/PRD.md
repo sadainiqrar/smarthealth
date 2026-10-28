@@ -49,7 +49,9 @@ held by an appointment that no longer exists.
 
 - Clinical decision support or diagnosis. The AI assistant routes to a provider; it does
   not practise medicine.
-- A patient- or staff-facing UI. This is a backend.
+- A patient- or staff-facing UI. This is a backend. `frontend/` is a demo client built to
+  show it (`docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md`); it is not a
+  requirement and nothing in the backend depends on it.
 - Payment processing. Billing is modelled as a pre-check and status, not a payment gateway.
 - Multi-tenancy across healthcare networks. Multi-clinic within one network is in scope.
 
@@ -163,7 +165,7 @@ spec and are added here when the slice that builds them lands.
 | **R-2** | *Restated 2026-10-28* (Week 2 spec §2). The Week 1 wording — "cancel, reschedule, no-show and completion must free the slot" — was wrong for two of the four: a completed or no-show slot is in the past and must not return to `free`. The invariant is **slot status agrees with appointment status, written in one transaction**: `confirmed` → slot `booked`; `failed` (compensation) → `free` if this appointment held it; `cancelled` / `rescheduled` → `free`; `completed` / `no_show` → stays `booked` | **Booking and compensation paths done; cancel/reschedule/visit paths pending** (slices 3–4). `confirm_booking` (`held → booked`) and `fail_booking` (`held → free`) in `app/modules/scheduling/service.py` write the slot in the appointment's transaction (T3 `test_confirm_books_the_slot_and_is_idempotent`, `test_fail_booking_releases_its_held_slot`). `tests/meta/test_slot_writes.py` fails if any other file in `app/` writes slot status |
 | **R-3** | A slot in the past is still bookable. `CHECK (starts_at > now())` is impossible — PostgreSQL requires CHECK conditions to be immutable | **Closed.** `service.ensure_slot_bookable` rejects a slot whose `starts_at <= now` with `Unprocessable` — a permanent, non-retried failure that compensates — in the `validate_booking` activity, and `service.claim_slot` re-checks at time of use with a `starts_at > now` predicate in the claim's `WHERE` — a retry or a backlogged worker can reach the claim after the slot started. Proven by T3 `test_a_past_slot_is_rejected`, `test_a_slot_that_started_before_the_claim_is_unprocessable` and, end to end, `test_a_past_slot_fails_and_leaves_the_slot_free` |
 | **R-4** | `provider_slots.version` does not self-increment. The claim statement must say `version = version + 1` | **Closed.** Every slot write in `app/modules/scheduling/service.py` — `claim_slot`, `confirm_booking`, `fail_booking` — sets `version = ProviderSlot.version + 1`. Proven by T3 `test_claim_increments_version_and_is_idempotent` (1 after a claim and its retry), `test_confirm_books_the_slot_and_is_idempotent` and `test_fail_booking_releases_its_held_slot` (2 each), and the round trip `test_a_booking_is_confirmed_end_to_end` (2) |
-| **R-5** | A patient cannot read their own record. This needs per-object authorisation, not per-role | **Deferred to Week 2**, with patient self-service |
+| **R-5** | A patient cannot read their own record. This needs per-object authorisation, not per-role | **Read half closed** (2026-10-28): `GET /patients/me` resolves the caller's login to its linked record (`patients.user_id`), 404 if none. T1 `test_me_requires_a_token`, `test_me_is_for_patients_only` (403, not 422, so `/me` is routed before `/{patient_id}`); T3 `test_a_patient_reads_their_own_record`, `test_a_login_with_no_linked_record_is_a_404`; case `pat-003`. **Open:** listing a patient's own appointments, slice 5 |
 | **R-6** | Authentication failures (401/403) did not carry the `error` key used by every other error response | **Closed.** `require_role` now raises `DomainError` subclasses instead of `HTTPException`, so 401/403 route through the same handler as everything else. `DomainError` gained a `headers` attribute so the RFC 9110 `WWW-Authenticate` challenge survives the change. Guarded by `sys-007` |
 | **R-7** | Redis is connected and health-checked but used by no feature | **Open.** Intended use is caching and rate limiting in Week 3 |
 | **R-8** | The monolith's blast radius: one bad deploy takes down every module, and the API scales as a unit | **Accepted** for the five-week horizon, and stated rather than mitigated. The Temporal worker scales independently from Week 2, the Celery worker from Week 3, which covers the loads most likely to spike first. The trigger for revisiting is release contention between teams or a measured load profile — neither of which exists yet, since **nothing has been load-measured** |
@@ -210,15 +212,15 @@ requirement id with the cases covering it; `--write-catalog` regenerates the tra
 
 | requirement | cases |
 | --- | --- |
-| `PART-A-FR-1` | 7 |
-| `PART-A-FR-2` | 5 — `bkg-001`, `bkg-004`, `bkg-005`, `bkg-006`, `bkg-007` |
+| `PART-A-FR-1` | 8 |
+| `PART-A-FR-2` | 6 — `bkg-001`, `bkg-004`, `bkg-005`, `bkg-006`, `bkg-007`, `slt-001` |
 | `PART-A-NFR-1` | 1 — `bkg-003` |
 | `PART-A-NFR-2` | 2 — `bkg-002`, and `sys-008` (every workflow registered and sandbox-valid) |
 | `PART-A-NFR-5` | 2 |
 | `PART-A-OBS-1` | 6 |
 | `PART-A-OBS-4` | 1 |
 
-24 cases, as of 2026-10-28. All other ids are uncovered because the features they describe are not
+26 cases, as of 2026-10-28. All other ids are uncovered because the features they describe are not
 yet built. Recount with `grep -h '^requirement:' tests/cases/*.yaml | sort | uniq -c`.
 
 ---

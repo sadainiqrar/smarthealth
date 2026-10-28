@@ -85,7 +85,8 @@ SmartHealth is one codebase and one image, run as two processes today: the FastA
 application (`app/main.py:50`) and the Temporal worker (`app/worker.py`, the `worker`
 compose service, which runs the booking workflow's activities), plus an operational CLI
 (`app/cli.py`) that is deliberately not part of the request path. Week 3 adds a Celery
-worker. Several processes sharing one codebase is the
+worker. Under `--profile app` compose also runs a third service, `frontend`, the demo client
+in its own nginx image (§1.4), which is not part of that codebase. Several processes sharing one codebase is the
 reason the internal layering is stricter than a single-process application would need.
 
 Inside the deployable, modules are grouped **by domain, not by technical layer**
@@ -345,10 +346,12 @@ on having credentials (`models.py:1-5`).
 | `schemas.py` | `PatientCreate`, `PatientUpdate`, `PatientRead` | implemented. `PatientUpdate` rejects an explicit `null` on NOT NULL columns (`app/modules/patients/schemas.py:33-46`) — without it `{"first_name": null}` becomes a client-triggerable 500 instead of a 422 — and requires at least one field (`app/modules/patients/schemas.py:48-52`). |
 | `service.py:54,82,98,132` | `register_patient`, `get_patient`, `list_patients`, `update_patient` | implemented |
 | `router.py:30,44,54,70` | `POST /patients`, `GET /patients/{id}`, `GET /patients`, `PATCH /patients/{id}` | implemented |
+| `router.py:43`, `service.py:170` | `GET /patients/me` → `service.get_patient_for_user` | implemented — `patient` only; 404 when no record is linked to the login. Declared before `/{patient_id}` (`router.py:43-48`), or FastAPI parses `me` as a UUID and answers 422 |
 
 Writers are `front_desk` and `admin`; readers add `provider` (`router.py:26-27`). A patient
-cannot read their own record — that needs per-object rather than per-role authorisation and
-is deferred with Week 2's self-service (PRD R-5).
+reads their own record through `GET /patients/me` only, never `/patients/{id}`: the role
+gate stays per-role, and the per-object part is the lookup by `user_id` (PRD R-5, read half
+closed; the appointment list is slice 5).
 
 #### `app/modules/providers` — clinics, departments, providers
 
@@ -381,13 +384,13 @@ schema only — the visit workflow, cancel/reschedule and the waitlist are slice
 | --- | --- |
 | `models.py` | `ProviderSlot` and `SlotStatus` (moved here from `providers`, PRD D-9), `Appointment`, `Visit`, `WaitlistEntry` and their status enums |
 | `state.py` | `APPOINTMENT_TRANSITIONS` as data, `can_transition`, `require_transition` (raises `Conflict`). Pure; every status write asks it first |
-| `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment`. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
+| `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment` — and the read `list_free_slots` (`service.py:277`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
 | `contracts.py` | `BookingRequest`, the frozen dataclass of strings passed between the workflow and its activities. Pure, so the workflow sandbox imports it directly |
 | `activities.py` | `SchedulingActivities`: seven `booking.*` activities, each one service call in its own session and transaction; domain errors become non-retryable `ApplicationError`s. `billing_precheck` and `schedule_reminders` are stand-ins until Week 3 |
 | `workflows.py` | `BookAppointmentWorkflow` (type name `BookAppointment`): the step sequence, the retry policies, and compensation. No I/O, no clock |
 | `booking.py` | Starting a booking from the API: `appointment_id_for` (id derivation), `start_booking` (start policy and fingerprint check), `booking_state` (what Temporal knows when no row exists). Framework-free |
 | `schemas.py` | `BookingCreate`, `BookingAccepted`, `AppointmentRead` |
-| `router.py` | `POST /appointments` (202) and `GET /appointments/{id}` — role gate, patient ownership, and nothing else |
+| `router.py` | `POST /appointments` (202) and `GET /appointments/{id}` — role gate, patient ownership, and nothing else — plus `GET /slots` on a second router, `slots_router` (`router.py:42,112`, mounted at `app/api/router.py:19`) |
 
 | Class | Notes |
 | --- | --- |
@@ -396,6 +399,16 @@ schema only — the visit workflow, cancel/reschedule and the waitlist are slice
 | `Appointment` (`models.py:149-214`) | Carries the three constraints §3.2 depends on: the composite FK proving the slot belongs to the named provider and clinic, the composite FK proving the department belongs to the named clinic, and `CHECK (status <> 'confirmed' OR slot_id IS NOT NULL)` |
 | `Visit` (`models.py:217-235`) | 1:1 with an appointment via a unique FK. Average Wait Time is `avg(seen_at - checked_in_at)` |
 | `WaitlistEntry` (`models.py:238-258`) | Patient plus an optional provider/department and a time window |
+
+#### `frontend/` — a client outside the monolith
+
+**Responsibility:** a demo web client (React + TypeScript), not a module and not a
+requirement (PRD §2). It is outside the modular monolith and imports nothing from `app/`:
+it talks only to the HTTP API, through a same-origin `/api` prefix that Vite (dev,
+`frontend/vite.config.ts`) and nginx (compose, `frontend/nginx.conf`: `/api/` to
+`http://app:8000/`) both strip and forward, so the backend needs no CORS. In compose it is
+the `frontend` service under `--profile app`, which waits for `app` to be healthy. Design:
+`docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md`.
 
 #### Supporting files
 
