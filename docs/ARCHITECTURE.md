@@ -642,10 +642,12 @@ default that does not use the mixin.
 
 **The trigger, and why `clock_timestamp()`.** `onupdate=func.now()` is a SQLAlchemy-level
 construct: verified against the live database, it fires for an ORM flush but **not** for a
-raw `text("UPDATE ...")`. Week 2's slot claim is exactly such a raw conditional update, so
-`migrations/versions/0001_baseline.py:207-227` installs a `BEFORE UPDATE` trigger on all
-nine timestamped tables. A trigger also covers hand-written statements and data migrations,
-which a coding convention cannot.
+raw `text("UPDATE ...")`. Week 2's slot writes are Core `update(ProviderSlot)` statements,
+and those *do* apply `onupdate` -- compiled, the claim reads `SET status=..., updated_at=now()`
+(checked 2026-10-28) -- but `now()` is the transaction's start time, not the moment the row
+changed. So `migrations/versions/0001_baseline.py:207-227` installs a `BEFORE UPDATE` trigger
+on all nine timestamped tables that overwrites it with `clock_timestamp()`. A trigger also
+covers raw statements, hand-written SQL and data migrations, which a coding convention cannot.
 
 `migrations/versions/0003_updated_at_clock_timestamp.py:32-41` then changes the trigger body
 from `now()` to `clock_timestamp()`. `now()` is `transaction_timestamp()` — frozen for the
