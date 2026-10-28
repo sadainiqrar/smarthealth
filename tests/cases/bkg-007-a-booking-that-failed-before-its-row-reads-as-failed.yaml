@@ -1,0 +1,12 @@
+id: bkg-007-a-booking-that-failed-before-its-row-reads-as-failed
+title: "GET of a booking whose workflow closed before writing its row reads failed, not pending forever"
+requirement: [PART-A-FR-2]
+tier: contract
+priority: P1
+status: ready
+# Found in review: GET answered "pending, in progress" whenever Temporal knew the
+# workflow -- including after it had *closed*, e.g. a booking for a slot that does not
+# exist, which fails before inserting the appointment row. A polling client never
+# terminated. GET now distinguishes running (pending, in progress), closed (failed)
+# and unknown (404); sibling tests cover the other two and Temporal being down (503).
+impl: "tests/tiers/t1_contract/test_appointments_contract.py::test_a_closed_booking_with_no_row_reads_as_failed"

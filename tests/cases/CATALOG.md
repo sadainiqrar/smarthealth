@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 22 |
-| contract | 4 |
+| Total cases | 24 |
+| contract | 5 |
 | integration | 11 |
 | unit | 5 |
-| workflow | 2 |
-| P0 | 13 |
-| P1 | 9 |
+| workflow | 3 |
+| P0 | 14 |
+| P1 | 10 |
 | declarative | 1 |
-| impl-backed | 21 |
+| impl-backed | 23 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -29,6 +29,8 @@
 | bkg-003-one-slot-one-winner | integration | P0 | impl | PART-A-NFR-1 | A claim blocked behind a winning claim on the same slot loses on the conditional UPDATE |
 | bkg-004-a-repeat-books-once | integration | P0 | impl | PART-A-FR-2 | Repeating a booking request with the same Idempotency-Key books once |
 | bkg-005-booking-end-to-end | integration | P1 | impl | PART-A-FR-2 | POST /appointments is confirmed end to end: 202, worker, slot booked, audit trail written |
+| bkg-006-a-reused-key-with-a-different-request-is-refused | workflow | P0 | impl | PART-A-FR-2 | An Idempotency-Key reused for a different booking request is refused, not silently merged |
+| bkg-007-a-booking-that-failed-before-its-row-reads-as-failed | contract | P1 | impl | PART-A-FR-2 | GET of a booking whose workflow closed before writing its row reads failed, not pending forever |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |

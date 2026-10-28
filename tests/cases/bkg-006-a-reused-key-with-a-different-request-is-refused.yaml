@@ -1,0 +1,14 @@
+id: bkg-006-a-reused-key-with-a-different-request-is-refused
+title: "An Idempotency-Key reused for a different booking request is refused, not silently merged"
+requirement: [PART-A-FR-2]
+tier: workflow
+priority: P0
+status: ready
+# Found in review: the workflow id is derived from caller + key, so a second request
+# reusing a key for a *different* patient or slot attached to the first workflow and
+# was answered 202 with the first booking's id -- the second booking silently never
+# happened. Each start now carries a fingerprint of its request in the workflow memo,
+# and a repeat whose fingerprint differs is refused (422, as the IETF Idempotency-Key
+# draft specifies). Proven against Temporal's time-skipping server; a sibling test
+# covers the reuse arriving while the first booking is still running.
+impl: "tests/tiers/t2_workflow/test_booking_start.py::test_a_key_reused_for_a_different_request_is_refused"
