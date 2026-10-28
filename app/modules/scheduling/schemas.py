@@ -7,7 +7,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.modules.scheduling.models import AppointmentStatus
+from app.modules.scheduling.models import AppointmentStatus, VisitStatus
+from app.modules.scheduling.state import VisitAction
 
 
 class BookingCreate(BaseModel):
@@ -37,6 +38,24 @@ class AppointmentRead(BaseModel):
     reason: str | None = None
     confirmed_at: datetime | None = None
     created_at: datetime | None = None
+
+
+class VisitAccepted(BaseModel):
+    """202: the action was validated and signalled to the visit workflow, which performs
+    the write. Poll GET /appointments/{appointment_id}/visit."""
+
+    appointment_id: uuid.UUID
+    action: VisitAction
+
+
+class VisitRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    appointment_id: uuid.UUID
+    status: VisitStatus
+    checked_in_at: datetime
+    seen_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class SlotRead(BaseModel):

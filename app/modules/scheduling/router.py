@@ -36,12 +36,18 @@ from app.modules.scheduling.schemas import (
     BookingAccepted,
     BookingCreate,
     SlotRead,
+    VisitAccepted,
+    VisitRead,
 )
+from app.modules.scheduling.state import VisitAction
+from app.modules.scheduling.visits import signal_visit
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 slots_router = APIRouter(prefix="/slots", tags=["slots"])
 
 BOOKERS = (UserRole.PATIENT, UserRole.FRONT_DESK, UserRole.ADMIN)
+CHECKERS_IN = (UserRole.FRONT_DESK, UserRole.ADMIN)
+CLINICIANS = (UserRole.PROVIDER, UserRole.ADMIN)
 READERS = (UserRole.PATIENT, UserRole.PROVIDER, UserRole.FRONT_DESK, UserRole.ADMIN)
 
 
@@ -107,6 +113,87 @@ async def get_appointment(
         if await _own_patient_id(session, claims) != appointment.patient_id:
             raise NotFound(f"appointment {appointment_id} does not exist")
     return AppointmentRead.model_validate(appointment)
+
+
+async def _visit_action(
+    action: VisitAction, appointment_id: uuid.UUID, request: Request,
+    session: AsyncSession, temporal: Client, claims: TokenClaims,
+) -> VisitAccepted:
+    """Validate against the database (a synchronous 404/409), then signal the workflow,
+    which performs the write. The activity re-checks under a lock, so a race between this
+    precheck and the signal is harmless."""
+    await service.require_visit_action(session, appointment_id=appointment_id, action=action)
+    await signal_visit(
+        temporal, appointment_id=appointment_id, action=action,
+        actor_user_id=claims.subject,
+        task_queue=request.app.state.settings.task_queue(TASK_QUEUE),
+    )
+    return VisitAccepted(appointment_id=appointment_id, action=action)
+
+
+# 202, not 200: the write happens in the workflow, after this response.
+@router.post(
+    "/{appointment_id}/check-in", response_model=VisitAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def check_in(
+    appointment_id: uuid.UUID, request: Request,
+    session: AsyncSession = Depends(get_session),
+    temporal: Client = Depends(get_temporal),
+    claims: TokenClaims = Depends(require_role(*CHECKERS_IN)),
+) -> VisitAccepted:
+    return await _visit_action(
+        VisitAction.CHECK_IN, appointment_id, request, session, temporal, claims
+    )
+
+
+@router.post(
+    "/{appointment_id}/seen", response_model=VisitAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def mark_seen(
+    appointment_id: uuid.UUID, request: Request,
+    session: AsyncSession = Depends(get_session),
+    temporal: Client = Depends(get_temporal),
+    claims: TokenClaims = Depends(require_role(*CLINICIANS)),
+) -> VisitAccepted:
+    return await _visit_action(
+        VisitAction.SEEN, appointment_id, request, session, temporal, claims
+    )
+
+
+@router.post(
+    "/{appointment_id}/complete", response_model=VisitAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def complete_visit(
+    appointment_id: uuid.UUID, request: Request,
+    session: AsyncSession = Depends(get_session),
+    temporal: Client = Depends(get_temporal),
+    claims: TokenClaims = Depends(require_role(*CLINICIANS)),
+) -> VisitAccepted:
+    return await _visit_action(
+        VisitAction.COMPLETE, appointment_id, request, session, temporal, claims
+    )
+
+
+@router.get("/{appointment_id}/visit", response_model=VisitRead)
+async def get_visit(
+    appointment_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+    claims: TokenClaims = Depends(require_role(*READERS)),
+) -> VisitRead:
+    appointment = await service.get_appointment(session, appointment_id)
+    if appointment is None:
+        raise NotFound(f"appointment {appointment_id} does not exist")
+    # Same rule as GET appointment: 404 for someone else's, so ids cannot be probed.
+    if claims.role is UserRole.PATIENT:
+        if await _own_patient_id(session, claims) != appointment.patient_id:
+            raise NotFound(f"appointment {appointment_id} does not exist")
+    visit = await service.get_visit(session, appointment_id)
+    if visit is None:
+        raise NotFound(f"appointment {appointment_id} has no visit yet")
+    return VisitRead.model_validate(visit)
 
 
 @slots_router.get("", response_model=Page[SlotRead])
