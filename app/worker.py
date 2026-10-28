@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import signal
 import sys
 from collections.abc import Sequence
 from datetime import timedelta
@@ -60,9 +61,28 @@ async def _run(settings: Settings) -> None:
             "activities": ACTIVITIES.names(),
         },
     )
-    await build_worker(
+    worker = build_worker(
         client, queue, workflows=list(WORKFLOWS), activities=list(ACTIVITIES)
-    ).run()
+    )
+    loop = asyncio.get_running_loop()
+    running = asyncio.ensure_future(worker.run())
+
+    def _stop() -> None:
+        logger.info("worker stopping", extra={"task_queue": queue})
+        # shutdown() waits for completion, so run it as a task; run() then returns.
+        loop.create_task(worker.shutdown())
+
+    # The container runs this as PID 1, which ignores SIGTERM unless a handler is
+    # installed: without one `docker stop` waits out its grace period and SIGKILLs,
+    # and in-flight activities never drain.
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, _stop)
+        except NotImplementedError:
+            # Windows event loops lack add_signal_handler. Local Windows dev stops
+            # with Ctrl+C, which surfaces as KeyboardInterrupt and is fine.
+            break
+    await running
 
 
 async def _check(settings: Settings) -> bool:
