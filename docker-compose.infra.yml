@@ -83,14 +83,17 @@ services:
         condition: service_healthy
       temporal:
         condition: service_healthy
+    # Must exceed GRACEFUL_SHUTDOWN (8 s, app/core/temporal.py) so in-flight activities
+    # drain before docker SIGKILLs the container.
+    stop_grace_period: 15s
     healthcheck:
       # Executes the canary workflow: proves a worker is polling AND executing, which
       # "the process is up" does not. Each check leaves one tiny closed workflow in
       # Temporal's history; at this interval that is negligible. `--check` bounds
-      # itself to 8 s, so this timeout sits above it.
+      # itself to 8 s, so this timeout sits above it with room for interpreter start-up.
       test: ["CMD", "python", "-m", "app.worker", "--check"]
       interval: 15s
-      timeout: 10s
+      timeout: 12s
       retries: 8
 
   postgres:

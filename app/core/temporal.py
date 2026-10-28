@@ -33,6 +33,13 @@ TASK_QUEUE = "scheduling"
 #: connect and canary together in `CHECK_TIMEOUT` to stay inside compose's timeout.
 CANARY_TIMEOUT = timedelta(seconds=5)
 
+#: How long `worker.shutdown()` lets in-flight activities finish before cancelling them.
+#: The SDK default is zero, i.e. cancel immediately, so without this nothing drains.
+#: 8 s is long enough for a typical activity to complete after SIGTERM and must stay
+#: below the `worker` service's `stop_grace_period` in docker-compose.infra.yml (15 s),
+#: or `docker stop` SIGKILLs the process mid-drain.
+GRACEFUL_SHUTDOWN = timedelta(seconds=8)
+
 WORKFLOWS: Registry[type] = Registry("workflow")
 ACTIVITIES: Registry[Callable[..., Any]] = Registry("activity")
 
@@ -56,7 +63,11 @@ def build_worker(
     worker can answer `check_worker` and a worker is never built empty."""
     all_workflows = list(dict.fromkeys([CanaryWorkflow, *workflows]))
     return Worker(
-        client, task_queue=task_queue, workflows=all_workflows, activities=list(activities)
+        client,
+        task_queue=task_queue,
+        workflows=all_workflows,
+        activities=list(activities),
+        graceful_shutdown_timeout=GRACEFUL_SHUTDOWN,
     )
 
 

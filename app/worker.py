@@ -36,7 +36,7 @@ from app.settings import Settings, get_settings
 logger = logging.getLogger(__name__)
 
 #: Overall bound on `--check`, connect included. Connecting to a blackholed host takes
-#: tens of seconds in the SDK, which would outlive compose's healthcheck timeout (10 s);
+#: tens of seconds in the SDK, which would outlive compose's healthcheck timeout (12 s);
 #: staying below it makes the probe fail by its own exit code rather than be killed.
 CHECK_TIMEOUT = timedelta(seconds=8)
 
@@ -74,6 +74,8 @@ async def _run(settings: Settings) -> None:
     def _stop() -> None:
         logger.info("worker stopping", extra={"task_queue": queue})
         # shutdown() waits for completion, so run it as a task; run() then returns.
+        # In-flight activities get GRACEFUL_SHUTDOWN (build_worker) to finish before
+        # they are cancelled; compose's stop_grace_period leaves room for that.
         task = loop.create_task(worker.shutdown())
         stopping.add(task)
         task.add_done_callback(stopping.discard)
