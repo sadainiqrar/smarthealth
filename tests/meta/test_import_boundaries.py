@@ -229,8 +229,8 @@ def test_the_check_has_something_to_check():
 #:
 #: Pairs rather than a package-level allowlist, because "patients may use identity" is a
 #: much broader permission than the one actually needed, and the broad version is how an
-#: allowlist stops meaning anything. Every entry here is auth at the HTTP edge: the one
-#: dependency nobody would extract.
+#: allowlist stops meaning anything. Every entry is either auth at the HTTP edge -- the
+#: one dependency nobody would extract -- or a module's published interface.
 CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
     {
         ("app.modules.patients.router", "app.modules.identity.deps"),
@@ -239,6 +239,9 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("app.modules.providers.router", "app.modules.identity.deps"),
         ("app.modules.providers.router", "app.modules.identity.models"),
         ("app.modules.providers.router", "app.modules.identity.security"),
+        # D-15: the booking activity checks patient eligibility through the published
+        # interface. Not from scheduling.service -- rule 4 forbids that outright.
+        ("app.modules.scheduling.activities", "app.modules.patients.public"),
     }
 )
 

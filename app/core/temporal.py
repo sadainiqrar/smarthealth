@@ -90,3 +90,27 @@ async def check_worker(
     except (WorkflowFailureError, RPCError):
         return False
     return result == CANARY_REPLY
+
+
+def bind_activities(
+    functions: Sequence[Callable[..., Any]], instances: Sequence[object]
+) -> list[Callable[..., Any]]:
+    """Turn registered activity functions into what a Worker runs.
+
+    The registry holds plain functions -- discoverable, and comparable with the source
+    tree by the registry meta-test. Activities that need a database are methods of a
+    class constructed with its resources at worker start-up, so each method is bound to
+    the instance of its owning class here. A method with no instance is a wiring bug and
+    raises, rather than registering an activity that fails on its first call.
+    """
+    by_class = {type(instance).__qualname__: instance for instance in instances}
+    bound: list[Callable[..., Any]] = []
+    for function in functions:
+        owner, _, name = function.__qualname__.rpartition(".")
+        if not owner:
+            bound.append(function)
+            continue
+        if owner not in by_class:
+            raise LookupError(f"no instance of {owner} to bind activity {name} to")
+        bound.append(getattr(by_class[owner], name))
+    return bound

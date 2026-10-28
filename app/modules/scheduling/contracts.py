@@ -1,0 +1,19 @@
+"""Values passed between the booking workflow and its activities.
+
+Plain dataclasses of strings: Temporal serialises them as JSON, and a type the default
+converter cannot encode (uuid.UUID) would fail at runtime, not import time. Pure, so the
+workflow sandbox imports it directly.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BookingRequest:
+    appointment_id: str
+    patient_id: str
+    slot_id: str
+    actor_user_id: str | None
+    reason: str | None = None
