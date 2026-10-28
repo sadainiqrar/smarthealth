@@ -38,7 +38,7 @@ flowchart TB
     mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
     redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
 
-    temporal["<b>Temporal</b><br/><i>Week 2</i><br/>booking &amp; visit workflows"]
+    temporal["<b>Temporal</b><br/><i>Week 2 — worker running; workflows landing</i><br/>booking &amp; visit workflows"]
     kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
     celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
     otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]
@@ -258,8 +258,15 @@ slot reservation, the billing pre-check and notification scheduling have all suc
 so hand-writing one would fabricate state no workflow ever ran — and Week 2 would then
 be tested against fiction. See [`app/seed.py`](app/seed.py).
 
-The `app` service sits behind a compose profile so the test stack, which uses the same
-file, does not start it — the tests drive the application in-process.
+`--profile app` starts two services from the same image: `app` (the API) and `worker`
+(the Temporal worker, `python -m app.worker`). They sit behind a compose profile so the
+test stack, which uses the same file, does not start them — the tests drive the
+application in-process. The worker starts only once `app` is healthy, because the `app`
+container applies the migrations. Its healthcheck, `python -m app.worker --check`,
+executes a canary workflow, so `--wait` returns only when a worker is actually polling
+and executing — not merely when the process is up. No business workflow runs on it yet;
+the scheduling workflows are designed in
+[`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 To create a user in a **test** stack instead (`-p smarthealth-test`, which publishes
 Postgres on the offset port 15432), point the CLI at it from the host:

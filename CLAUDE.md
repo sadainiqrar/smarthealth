@@ -9,7 +9,13 @@ with Alembic migrations, the ten-table domain schema, Mongo and Redis clients,
 liveness/readiness) the business surface now exists: `POST /auth/login`; patient and
 provider management with role-gated writes, paginated and filtered reads, and every
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
-Dockerfile plus an `app` service behind a compose profile. Week 2 adds scheduling.
+Dockerfile plus an `app` service behind a compose profile.
+
+**Week 2 in progress.** Its first slice has landed: a Temporal worker process
+(`app/worker.py`, the `worker` compose service) with workflow/activity registries, a canary
+workflow as its readiness probe, and Temporal in `/ready`. **No business workflow exists
+yet** — booking, cancellation and the visit lifecycle are designed in
+`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
 the list of what was deliberately deferred are in
@@ -38,6 +44,7 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
+| `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 
 **Anything reaching Postgres from the host needs connection settings.** The *test* stack
@@ -168,7 +175,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 307 fast tests in ~8s |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 484 fast tests in ~17s |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -190,9 +197,19 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-Of these, only **6** and **7** are satisfied today (`app/core/clock.py`, `app/api/health.py`).
-**3** has its mechanism but no registrants (`app/core/registry.py`). The rest await the code
-they constrain.
+Of these, **1**, **3**, **6** and **7** are satisfied today; the rest await the code they
+constrain.
+
+- **1** — for Temporal only: the worker takes its queue from `Settings.task_queue()`
+  (`app/worker.py`, `app/core/temporal.py:TASK_QUEUE`). `topic()` and `queue()` have no
+  callers, because no Kafka or RabbitMQ code exists yet.
+- **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
+  solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
+  `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. The only
+  registrant is the canary. Kafka consumers and Celery tasks have no registries yet.
+- **6** — `app/core/clock.py`.
+- **7** — `app/api/health.py` for the API; the worker has no HTTP endpoint, and its
+  readiness probe is `python -m app.worker --check`, the `worker` service's healthcheck.
 
 ## Domain model
 

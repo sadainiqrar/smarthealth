@@ -14,9 +14,10 @@ how the asynchronous half of Part A is designed to work before any of it is writ
 
 ## Status and scope
 
-**Week 1 of 5 is complete.** Everything in §1 and §2 describes code that exists and is
-exercised by tests. **Everything in §3 is design, not code** — it is labelled as such at
-the top of the section and at every subsection.
+**Week 1 of 5 is complete; Week 2 is in progress**, and its first slice — the Temporal
+worker — has landed. Everything in §1 and §2 describes code that exists and is exercised by
+tests. **§3 is design, not code**, apart from the Temporal plumbing its opening banner names
+— it is labelled as such at the top of the section and at every subsection.
 
 What is *not* built, stated plainly so a reviewer does not have to discover it:
 
@@ -25,15 +26,17 @@ What is *not* built, stated plainly so a reviewer does not have to discover it:
 | PostgreSQL | yes | yes (`sqlalchemy`, `asyncpg`) | **yes** |
 | MongoDB | yes | yes (`pymongo`) | **yes** — audit trail only |
 | Redis | yes | yes (`redis`) | client constructed and health-checked, **used by no feature** (PRD R-7) |
-| Temporal | yes (`temporal`) | **no** | **no** |
+| Temporal | yes (`temporal`), plus a `worker` service under `--profile app` | yes (`temporalio`) | **plumbing only** — client, worker process, registries, a canary workflow; no business workflow or activity |
 | Kafka + Schema Registry | yes (`kafka`, `schema-registry`) | **no** | **no** |
 | Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
 | Prometheus / Grafana / Jaeger / OpenTelemetry | **no container at all** | **no** | **no** |
 
-Verified by `grep -rn "^from fastapi\|kafka\|celery\|temporal\|opentelemetry" app/` — the
-only occurrences are in prose comments describing Week 2 and Week 3 obligations, plus
-`Settings.topic()` / `queue()` / `task_queue()` (`app/settings.py:84-94`), which are the
-naming helpers those systems will use when they arrive.
+Verified by `grep -rni --include="*.py" "kafka\|celery\|opentelemetry" app/` — the only occurrences are in
+prose comments and docstrings, plus `Settings.topic()` / `queue()` (`app/settings.py:93-99`),
+the naming helpers Kafka and RabbitMQ will use when they arrive. Temporal code lives in
+`app/core/temporal.py`, `app/core/temporal_canary.py`, `app/components.py` and
+`app/worker.py`; `Settings.task_queue()` (`app/settings.py:101`) is called from
+`app/worker.py`.
 
 The three scheduling tables (`appointments`, `visits`, `waitlist_entries`) and the
 `provider_slots` table exist with their constraints and migrations, and nothing reads or
@@ -71,9 +74,10 @@ code that must respect them is not written yet.
 
 ## 1. Service / module breakdown
 
-SmartHealth is one deployable today: the FastAPI application (`app/main.py:45`), plus an
-operational CLI (`app/cli.py`) that is deliberately not part of the request path. Week 2
-and Week 3 add two more processes — a Temporal worker and a Celery worker — which is the
+SmartHealth is one codebase and one image, run as two processes today: the FastAPI
+application (`app/main.py:50`) and the Temporal worker (`app/worker.py`, the `worker`
+compose service), plus an operational CLI (`app/cli.py`) that is deliberately not part of
+the request path. Week 3 adds a Celery worker. Several processes sharing one codebase is the
 reason the internal layering is stricter than a single-process application would need.
 
 Inside the deployable, modules are grouped **by domain, not by technical layer**
@@ -84,19 +88,22 @@ service and models change together and live together
 ### 1.1 Dependency direction
 
 Dependencies point inward. Nothing in `app/core` imports anything else in `app`, except
-`app/core/audit.py` importing `app/core/clock.py`.
+`app/core/audit.py` importing `app/core/clock.py`, and `app/core/temporal.py` importing
+`app/core/registry.py`, `app/core/temporal_canary.py` and `app/settings.py`.
 
 ```mermaid
 flowchart TD
     main["app/main.py — app factory and lifespan"]
     cli["app/cli.py — operational entry point"]
+    worker["app/worker.py — Temporal worker process"]
+    components["app/components.py — the one Temporal registration site"]
     api["app/api — HTTP wiring: router assembly, deps, error handlers, health"]
     routers["app/modules/*/router.py — HTTP shape and authz"]
     schemas["app/modules/*/schemas.py — request and response bodies"]
     services["app/modules/*/service.py — business rules, framework-free"]
     models["app/modules/*/models.py — SQLAlchemy tables and constraints"]
     db["app/db — engine, session, base, constraints, mongo, redis"]
-    core["app/core — errors, audit, clock, pagination, registry, logging"]
+    core["app/core — errors, audit, clock, pagination, registry, logging, temporal"]
     settings["app/settings.py — every DSN and resource name"]
 
     main --> api
@@ -104,6 +111,9 @@ flowchart TD
     main --> core
     cli --> db
     cli --> models
+    worker --> components
+    worker --> core
+    components --> core
     api --> core
     api --> db
     routers --> schemas
@@ -115,6 +125,7 @@ flowchart TD
     services --> db
     models --> db
     db --> settings
+    core --> settings
 ```
 
 Read the arrows as "may import". The rule that matters is the absence of the reverse
@@ -234,11 +245,14 @@ pagination, registries, logging — with no dependency on how the process was st
 | `audit.py:70-124` | `AuditEvent`, `AuditLog.record()` | Takes a `_Collection` **protocol** (`audit.py:82`), not a pymongo type, so it does not even import `app.db.mongo`. `_normalise` (`audit.py:31`) converts exactly the types BSON cannot encode and passes everything else through, so an unsupported type fails loudly rather than being silently stringified. |
 | `clock.py:13-35` | `Clock`, `FixedClock`, `get_clock` | Harness requirement 6: no `datetime.utcnow()` inline anywhere. |
 | `pagination.py:23-38` | `PageParams`, `Page[T]`, `MAX_LIMIT=200`, `DEFAULT_LIMIT=50` | The maximum exists so one request cannot ask for every row. |
-| `registry.py:17-54` | `Registry[T]` | Harness requirement 3. Duplicate names raise, because two handlers silently claiming one name is exactly how an event gets processed twice (`registry.py:20-22`). **Currently has no registrants** — Kafka consumers, Temporal workflows and Celery tasks register here in Weeks 2–3. |
+| `registry.py:17-54` | `Registry[T]` | Harness requirement 3. Duplicate names raise, because two handlers silently claiming one name is exactly how an event gets processed twice (`registry.py:20-22`). Two instances exist — `WORKFLOWS` and `ACTIVITIES` in `temporal.py` — and the only registrant is the canary workflow. Kafka consumers and Celery tasks get registries when they land in Week 3. |
+| `temporal.py` | `WORKFLOWS`, `ACTIVITIES`, `TASK_QUEUE`, `connect_client`, `build_worker`, `check_worker` | The client is lazy by default so the API boots with Temporal down. `build_worker` always includes the canary. `check_worker` is true only if a worker on the queue executed the canary within `CANARY_TIMEOUT` (5 s). `tests/meta/test_temporal_registry.py` discovers every `@workflow.defn` / `@activity.defn` in `app/` by `ast` and fails if one is unregistered or a registered workflow fails sandbox validation. |
+| `temporal_canary.py` | `CanaryWorkflow` (type name `Canary`) | A workflow with no activities, used only as the worker's readiness probe. Free of import-time side effects because Temporal re-imports it inside the sandbox. |
 | `logging.py:19-55` | `JsonFormatter`, `configure_logging` | JSON lines. `configure_logging` removes only handlers it previously installed, never pytest's `caplog` handler (`logging.py:41-45`). OpenTelemetry trace/span ids join the record in Week 3. |
 
 Must not import: `fastapi`, `starlette`, `app.api`, `app.modules`, `app.db`.
-**Status: implemented** (`registry.py` implemented but unused).
+**Status: implemented.** The Temporal registries hold only the canary until Week 2's
+business workflows land.
 
 #### `app/db` — persistence plumbing
 
@@ -334,8 +348,10 @@ to promote when a slot frees up (`WaitlistEntry`).
 
 | File | Responsibility | Status |
 | --- | --- | --- |
-| `app/settings.py:39-130` | Every DSN and every externally-visible resource name. `topic()`, `queue()`, `task_queue()` (`:84-94`) namespace Kafka/RabbitMQ/Temporal names through one prefix — harness requirement 1, so a test run can isolate itself on a shared stack. No call site may hardcode a name. | implemented; the three naming helpers have **no callers yet** |
-| `app/main.py:26-52` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. | implemented |
+| `app/settings.py:39-144` | Every DSN and every externally-visible resource name. `topic()`, `queue()`, `task_queue()` (`:93-103`) namespace Kafka/RabbitMQ/Temporal names through one prefix — harness requirement 1, so a test run can isolate itself on a shared stack. No call site may hardcode a name. | implemented; `task_queue()` is called by `app/worker.py`, `topic()` and `queue()` have **no callers yet** |
+| `app/main.py:27-57` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. | implemented |
+| `app/worker.py` | The Temporal worker process. `python -m app.worker` registers every component and polls `Settings.task_queue("scheduling")`; SIGTERM and SIGINT drain it through `worker.shutdown()`, so `docker stop` does not wait out its grace period. `python -m app.worker --check` executes the canary and exits 0/1 — it is the `worker` service's compose healthcheck, bounded to 8 s overall (`CHECK_TIMEOUT`) so it fails by exit code inside compose's 10 s timeout. | implemented |
+| `app/components.py` | `register_all()`, the one place Temporal workflows and activities are registered — not in the workflow modules, because the sandbox re-imports those. Idempotent. | implemented |
 | `app/cli.py:43-123` | `create-user`, the only way to put a login into the system outside a test fixture. Must never import `app.main` or a router (`cli.py:5-6`). | implemented |
 | `migrations/versions/` | `0001_baseline` (ten tables, `btree_gist`, the GiST exclusion constraint, `ux_appointments_live_slot`, the `updated_at` trigger on nine tables), `0002_coherence_constraints` (composite FKs and `confirmed_requires_slot`), `0003_updated_at_clock_timestamp` | implemented |
 
@@ -600,6 +616,7 @@ sequenceDiagram
     participant P as PostgreSQL
     participant M as MongoDB
     participant X as Redis
+    participant T as Temporal
 
     C->>R: GET /ready
     par concurrent, each wrapped in wait_for(2.0s)
@@ -608,6 +625,8 @@ sequenceDiagram
         R->>M: admin.command("ping")
     and
         R->>X: PING
+    and
+        R->>T: check_health()
     end
     Note over R: any exception or timeout becomes ok=false plus a one-line detail
     alt every dependency ok
@@ -617,10 +636,14 @@ sequenceDiagram
     end
 ```
 
-The three checks run concurrently under `asyncio.gather` (`app/api/health.py:90-94`), each
+The four checks run concurrently under `asyncio.gather` (`app/api/health.py:100-107`), each
 individually bounded by `asyncio.wait_for(..., CHECK_TIMEOUT_SECONDS)` where the timeout is
-2.0 s (`health.py:23,84`). Total latency is therefore the slowest dependency, not their sum,
+2.0 s (`health.py:23,94`). Total latency is therefore the slowest dependency, not their sum,
 and a hung dependency cannot hang the probe.
+
+The Temporal check (`health.py:79-86`) asks whether the *server* is reachable, because the
+API needs it to start workflows. Whether a worker is executing them is a different question,
+answered by the `worker` service's own healthcheck (`python -m app.worker --check`).
 
 Each dependency is reported **separately** (`health.py:26-34`), because "something is down"
 is far less actionable than "Mongo is down" — which matters given §2.3's decision to make
@@ -667,11 +690,13 @@ Part B's streaming responses will have to handle themselves (`error_handlers.py:
 
 ## 3. Event flows — DESIGN, NOT BUILT
 
-> **Nothing in this section exists in code.** There is no Kafka producer or consumer, no
-> Celery task, no Temporal workflow or activity, and no client library for any of the three
-> in `pyproject.toml`. `app/core/registry.py` — the registry those components will register
-> into — has zero registrants. `Settings.topic()`, `Settings.queue()` and
-> `Settings.task_queue()` have zero callers.
+> **Only the Temporal plumbing in this section exists in code.** The Temporal client, the
+> worker process, the `WORKFLOWS` / `ACTIVITIES` registries and a canary workflow used as the
+> worker's readiness probe are built (`app/core/temporal.py`, `app/core/temporal_canary.py`,
+> `app/components.py`, `app/worker.py`). **No business workflow or activity exists** — none
+> of the flows in §3.2–§3.5 runs. There is no Kafka producer or consumer, no Celery task, and
+> no Kafka or Celery client library in `pyproject.toml`. `Settings.task_queue()` is called by
+> the worker; `Settings.topic()` and `Settings.queue()` have zero callers.
 >
 > What follows is the design, its rationale, and the constraints already in the database
 > that will police it. It is written now because the Week 1 schema was shaped by it: the

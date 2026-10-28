@@ -166,7 +166,7 @@ Full rationale in `docs/superpowers/specs/2026-09-02-week1-foundation-design.md`
 | Week | Focus | Deliverables | Status |
 | --- | --- | --- | --- |
 | **1** | Foundation & core services | Working patient/provider APIs, auth, ten-table schema with migrations, Docker setup, clean module structure | **Complete** |
-| **2** | Scheduling & workflows | Temporal booking workflow, slot reservation, visit lifecycle, duplicate prevention, appointment state machine | Next |
+| **2** | Scheduling & workflows | Temporal booking workflow, slot reservation, visit lifecycle, duplicate prevention, appointment state machine | In progress |
 | **3** | Events & observability | Kafka integration, Celery workers, notification flows, analytics metrics, tracing and dashboards | Planned |
 | **4** | Ingestion & retrieval | PDF parsing, chunking, embeddings, vector DB, semantic retrieval | Planned |
 | **5** | AI layer | Patient assistant, booking guidance, communication generation, streaming, AI metrics | Planned |
