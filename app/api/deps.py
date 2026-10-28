@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from temporalio.client import Client
 
 from app.core.audit import AuditLog
 from app.core.clock import Clock, get_clock
@@ -71,3 +72,9 @@ async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+def get_temporal(request: Request) -> Client:
+    """FastAPI dependency: the app's lazy Temporal client. Overridden in contract tests,
+    which must never reach a real server."""
+    return request.app.state.temporal

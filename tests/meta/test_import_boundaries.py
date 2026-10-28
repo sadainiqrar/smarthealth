@@ -70,6 +70,7 @@ FRAMEWORK_BOUND: frozenset[str] = frozenset(
         "app.modules.identity.router",
         "app.modules.patients.router",
         "app.modules.providers.router",
+        "app.modules.scheduling.router",
     }
 )
 
@@ -242,6 +243,10 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # D-15: the booking activity checks patient eligibility through the published
         # interface. Not from scheduling.service -- rule 4 forbids that outright.
         ("app.modules.scheduling.activities", "app.modules.patients.public"),
+        ("app.modules.scheduling.router", "app.modules.identity.deps"),
+        ("app.modules.scheduling.router", "app.modules.identity.models"),
+        ("app.modules.scheduling.router", "app.modules.identity.security"),
+        ("app.modules.scheduling.router", "app.modules.patients.public"),
     }
 )
 
