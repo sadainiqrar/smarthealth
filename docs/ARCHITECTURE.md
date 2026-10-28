@@ -236,13 +236,15 @@ would grant precisely the coupling the boundary exists to prevent. Both lists ar
 for staleness, so an exemption cannot outlive its reason.
 
 **What the rule deliberately does not touch: the database.** `appointments` carries foreign
-keys into five other modules' tables (`patients`, `providers`, `clinics`, `departments`,
-`provider_slots`) and `app/modules/scheduling/models.py` imports none of them — they are
+keys into two other modules' tables — `patients`, and `providers`/`clinics`/`departments`
+(all owned by `providers`) — plus scheduling's own `provider_slots` (moved into scheduling
+by D-9), and `app/modules/scheduling/models.py` imports none of the foreign ones — they are
 declared as table-name strings (`ForeignKey("patients.id")`). Scheduling is therefore fully
 coupled in the database and not coupled at all in Python. That is not a loophole; a shared
 schema is what a modular monolith *is*. The modularity lives in the import graph, which is
-why extracting scheduling later would mean moving three tables and rewriting five foreign
-keys as API calls or event payloads — bounded, well-understood work — whereas if
+why extracting scheduling later would mean moving its four tables (`appointments`, `visits`,
+`waitlist_entries`, `provider_slots`) and turning the foreign keys onto
+`patients`/`providers`/`clinics`/`departments` into API calls or event payloads — bounded, well-understood work — whereas if
 `scheduling/service.py` imported `patients/service.py` there would be no list of call sites
 to work from.
 
@@ -265,7 +267,7 @@ false in a worker process.
 
 | File | Public surface | Notes |
 | --- | --- | --- |
-| `router.py:12-16` | `api_router` | The only place a module's router is mounted. |
+| `router.py:13-18` | `api_router` | The only place a module's router is mounted. |
 | `deps.py:31,46,54,77` | `get_audit_log`, `page_params`, `get_session`, `get_temporal` | The framework / framework-free seam (§1.2). `get_audit_log` declares `clock` as a `Depends` rather than calling `get_clock()` inline, because only a declared dependency can be replaced through `app.dependency_overrides` (`app/api/deps.py:32-40`). `get_temporal` hands routers the app's lazy Temporal client, and is what contract tests override so they never reach a real server. |
 | `error_handlers.py:33` | `register_error_handlers` | One handler on `DomainError` covers every subclass via Starlette's MRO walk; a second on `Exception` keeps `{"error", "detail"}` as the shape of *every* failure, including unanticipated ones. |
 | `health.py:37,89` | `GET /health`, `GET /ready` | See §2.6. |
@@ -300,7 +302,7 @@ domain.
 
 | File | Public surface | Notes |
 | --- | --- | --- |
-| `base.py:25-59` | `Base`, `UUIDPrimaryKeyMixin`, `TimestampMixin`, `NAMING_CONVENTION` | The naming convention is load-bearing: without it Postgres generates constraint names and Alembic diffs become unstable. `__mapper_args__ = {"eager_defaults": True}` (`base.py:39`) is the fix for the `MissingGreenlet` PATCH failure — see §2.5. |
+| `base.py:25-59` | `Base`, `UUIDPrimaryKeyMixin`, `TimestampMixin`, `NAMING_CONVENTION` | The naming convention is load-bearing: without it Postgres generates constraint names and Alembic diffs become unstable. `__mapper_args__ = {"eager_defaults": True}` (`base.py:41`) is the fix for the `MissingGreenlet` PATCH failure — see §2.5. |
 | `engine.py:15` | `create_engine(settings)` | Lazy: builds a pool without connecting, which is what lets the contract-test lane run the real lifespan with no database present. |
 | `session.py:20` | `create_session_factory` | `expire_on_commit=False`. Framework-free: the request-scoped `get_session` lives in `app/api/deps.py`, so the CLI and the worker can build sessions without importing FastAPI. |
 | `constraints.py:17` | `violated_constraint(IntegrityError) -> str \| None` | Reads the constraint name off a failed write. Non-obvious and empirically verified: the asyncpg error carrying `constraint_name` hangs off `exc.orig.__cause__`, not `exc.orig` — matching on `exc.orig` alone turned a duplicate MRN into a 500. |
@@ -321,9 +323,9 @@ Must not import: `app.modules` (except `all_models.py`, whose whole job is to im
 | --- | --- | --- |
 | `models.py:18-45` | `UserRole` (`patient`/`provider`/`front_desk`/`admin`), `User`, `role_column` | implemented |
 | `security.py:34-102` | `hash_password`, `verify_password`, `create_access_token`, `decode_access_token`, `TokenClaims`, `InvalidToken` | implemented — pure functions over explicit inputs, no global settings and no implicit clock |
-| `service.py:28` | `authenticate(session, *, email, password, settings, now)` | implemented — see §2.2 |
+| `service.py:29` | `authenticate(session, *, email, password, settings, now)` | implemented — see §2.2 |
 | `router.py:16` | `POST /auth/login` | implemented |
-| `deps.py:30` | `require_role(*allowed)` | implemented — a dependency factory, so enforcement happens before the handler body runs |
+| `deps.py:36` | `require_role(*allowed)` | implemented — a dependency factory, so enforcement happens before the handler body runs |
 
 `require_role` is the one place that deliberately raises `HTTPException` rather than a
 domain error: it is HTTP-layer machinery and 401 has no domain meaning
@@ -403,7 +405,7 @@ schema only — the visit workflow, cancel/reschedule and the waitlist are slice
 | `app/main.py:27-57` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. | implemented |
 | `app/worker.py` | The Temporal worker process. `python -m app.worker` registers every component, builds the booking activities' resources (a Postgres session factory, the Mongo audit log, a `Clock`), imports `app/db/all_models.py` so every foreign key resolves in a process that never loads the routers, and polls `Settings.task_queue("scheduling")`; SIGTERM and SIGINT call `worker.shutdown()`, which gives in-flight activities `GRACEFUL_SHUTDOWN` (8 s, `app/core/temporal.py`) to finish before cancelling them, so `docker stop` neither waits out its grace period nor cuts activities off; the compose `stop_grace_period` (15 s) sits above it. `python -m app.worker --check` executes the canary and exits 0/1 — it is the `worker` service's compose healthcheck, connect and canary bounded to 8 s overall (`CHECK_TIMEOUT`) so it fails by exit code inside compose's 12 s timeout. | implemented |
 | `app/components.py` | `register_all()`, the one place Temporal workflows and activities are registered — not in the workflow modules, because the sandbox re-imports those. Idempotent. Registers the canary, `BookAppointmentWorkflow` and the seven `booking.*` activities, each under its Temporal name; `build_activities()` binds them to a `SchedulingActivities` instance at worker start. | implemented |
-| `app/cli.py:43-123` | `create-user`, the only way to put a login into the system outside a test fixture. Must never import `app.main` or a router (`cli.py:5-6`). | implemented |
+| `app/cli.py:46-128` | `create-user` (the way to put a chosen login into the system outside a test fixture) and `seed` (which also creates one login per role). Must never import `app.main` or a router (`cli.py:5-6`). | implemented |
 | `migrations/versions/` | `0001_baseline` (ten tables, `btree_gist`, the GiST exclusion constraint, `ux_appointments_live_slot`, the `updated_at` trigger on nine tables), `0002_coherence_constraints` (composite FKs and `confirmed_requires_slot`), `0003_updated_at_clock_timestamp` | implemented |
 
 ---
@@ -634,7 +636,7 @@ sequenceDiagram
 SQLAlchemy cannot know the resulting value and expires the attribute. Reading it afterwards
 — which serialising the PATCH response does — emits a lazy SELECT outside a greenlet
 context and raises `MissingGreenlet`. **Every PATCH endpoint returned 500.** The fix is
-`__mapper_args__ = {"eager_defaults": True}` on `Base` (`app/db/base.py:39`), which makes
+`__mapper_args__ = {"eager_defaults": True}` on `Base` (`app/db/base.py:41`), which makes
 SQLAlchemy append `RETURNING updated_at` to the UPDATE it already issues: no second round
 trip, and no per-service `session.refresh()` for every future model to remember. It is set
 on `Base` rather than on `TimestampMixin` so it also covers a future model with a server
@@ -646,11 +648,12 @@ raw `text("UPDATE ...")`. Week 2's slot writes are Core `update(ProviderSlot)` s
 and those *do* apply `onupdate` -- compiled, the claim reads `SET status=..., updated_at=now()`
 (checked 2026-10-28) -- but `now()` is the transaction's start time, not the moment the row
 changed. So `migrations/versions/0001_baseline.py:207-227` installs a `BEFORE UPDATE` trigger
-on all nine timestamped tables that overwrites it with `clock_timestamp()`. A trigger also
-covers raw statements, hand-written SQL and data migrations, which a coding convention cannot.
+on all nine timestamped tables that overwrites `updated_at` itself; as first written its body
+was `now()`. A trigger also covers raw statements, hand-written SQL and data migrations,
+which a coding convention cannot.
 
 `migrations/versions/0003_updated_at_clock_timestamp.py:32-41` then changes the trigger body
-from `now()` to `clock_timestamp()`. `now()` is `transaction_timestamp()` — frozen for the
+from `now()` to `clock_timestamp()`, which is what the paragraph above needs. `now()` is `transaction_timestamp()` — frozen for the
 whole transaction — so an update inside a long transaction was backdated to when that
 transaction *began*. `updated_at` exists to record when a row actually changed, so it needs
 the wall-clock instant. `created_at` deliberately keeps `now()`: creation belongs to the
@@ -1217,17 +1220,19 @@ operation, not an edge case.
 
 Only the third is merely embarrassing.
 
-**How it is enforced, not merely intended.** Registration in `app/core/registry.py` is what
-makes the property testable in bulk: every Kafka consumer, Temporal workflow and Celery task
-registers, and the meta-tests enumerate the registry rather than a hand-maintained list that
-drifts (`2026-09-01-testing-harness-design.md` §8):
+**How it will be enforced, not merely intended.** Registration in `app/core/registry.py` is
+what will make the property testable in bulk: every Kafka consumer, Temporal workflow and
+Celery task will register, and the meta-tests will enumerate the registry rather than a
+hand-maintained list that drifts (`2026-09-01-testing-harness-design.md` §8). Neither
+meta-test below exists yet; there are no consumers or tasks to enumerate:
 
-| Meta-test | Enumerates | Asserts |
+| Meta-test (planned, Week 3) | Enumerates | Asserts |
 | --- | --- | --- |
 | `test_consumers_idempotent.py` | every registered Kafka consumer | delivering its event **twice** yields exactly one side effect |
 | `test_tasks_idempotent.py` | every Celery task | re-execution with the same key is a no-op |
 
-A new consumer added without idempotency fails the suite the day it lands. The registry
+Once they exist, a new consumer added without idempotency will fail the suite the day it
+lands. The registry
 raising on duplicate names (`app/core/registry.py:28-32`) closes the other half of the same
 hole: two handlers silently claiming one name is itself a way to process an event twice.
 

@@ -232,7 +232,7 @@ Four decisions the requirements left open, each easy to get wrong:
    who have no credentials.
 2. **Slots are pre-generated rows.** Booking is
    `UPDATE provider_slots SET status='held', version=version+1 WHERE id=:id AND
-   status='free'` — zero rows affected *is* the conflict.
+   status='free' AND starts_at > :now` — zero rows affected *is* the conflict.
 3. **A visit is separate from an appointment.** Appointment = the booking; visit = what
    happened. Average Wait Time is `seen_at - checked_in_at`; a no-show is an appointment
    with no visit.

@@ -81,8 +81,8 @@ cross-module edges in the codebase are declared as explicit pairs in
 `tests/meta/test_import_boundaries.py` — nine router-layer auth edges onto `identity`, and
 two from scheduling (its router and its activities) onto `patients/public.py`, the one file
 `patients` publishes for other modules. Scheduling shows
-why the rule is about code and not data: `appointments` carries foreign keys into five
-other modules' tables, declared as table-name strings, so it is fully coupled in the
+why the rule is about code and not data: `appointments` carries foreign keys into two
+other modules' tables (`patients`; `providers`, `clinics`, `departments`), declared as table-name strings, so it is fully coupled in the
 database and not coupled at all in Python. Shared schema is what a modular monolith *is*;
 the modularity lives in the import graph, and that is what keeps each module extractable
 as bounded work rather than archaeology.
@@ -249,7 +249,7 @@ booking (Week 2).
 
 ```bash
 # the whole system in containers
-docker compose --profile app -f docker-compose.infra.yml up -d --wait
+docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
 curl http://localhost:8000/health
 
 # an account to log in with, created inside the container against the stack's own database
@@ -259,6 +259,11 @@ docker compose --profile app -f docker-compose.infra.yml exec app \
 curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
   -d '{"email": "you@example.com", "password": "..."}'
 ```
+
+`--build` matters: without it compose reuses an existing image and runs old code.
+
+To stop the stack, keeping its data: `docker compose --profile app -f docker-compose.infra.yml down`.
+Adding `-v` also deletes the dev stack's volumes, and with them all dev data.
 
 **Seed a demonstrable clinic network** — two clinics in different timezones,
 departments, five providers with specialties, one login per role, 50 patients (most of
@@ -270,7 +275,11 @@ docker compose --profile app -f docker-compose.infra.yml exec app \
 ```
 
 Idempotent — rerunning changes nothing, because every row is matched on its natural
-key. `--clear` removes exactly what it created and nothing else.
+key, including passwords: seeded logins keep the password from the first run.
+`--clear` removes exactly what it created and nothing else — but once any appointment
+references a seeded slot (a failed booking included), `--clear` refuses with a
+foreign-key error, by design (PRD R-10). To start over, remove the dev stack's volumes with
+`docker compose --profile app -f docker-compose.infra.yml down -v`; `-v` deletes all dev data.
 
 It deliberately seeds **no appointments, visits or waitlist entries**. Those are
 workflow outputs that Week 2 produces: an appointment reaches `confirmed` only after
@@ -290,7 +299,7 @@ remaining scheduling workflows are designed in
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
 the password you gave `seed`. No endpoint lists free slots yet, so pick a slot and a
-patient straight from Postgres:
+patient straight from Postgres (bash / Git Bash):
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
@@ -312,6 +321,10 @@ APPOINTMENT=$(book | python -c 'import json,sys; print(json.load(sys.stdin)["app
 curl -s http://localhost:8000/appointments/$APPOINTMENT -H "Authorization: Bearer $TOKEN"
 # repeat until "status" is "confirmed" (or "failed")
 ```
+
+Poll on `status`, not `in_progress`: `in_progress: true` appears only on the answer for a
+booking whose row does not exist yet. A pending appointment that has a row reads
+`in_progress: false`.
 
 The second `book` is itself the idempotency demonstration: the same `Idempotency-Key` and
 body return the same `appointment_id` and book nothing new. (To book again, change the
@@ -337,5 +350,5 @@ without it `up --wait` stops with `Bind for 0.0.0.0:7233 failed: port is already
 allocated`:
 
 ```bash
-TEMPORAL_PORT=7234 docker compose --profile app -f docker-compose.infra.yml up -d --wait
+TEMPORAL_PORT=7234 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
 ```

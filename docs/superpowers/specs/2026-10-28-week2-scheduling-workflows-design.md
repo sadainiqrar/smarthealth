@@ -1,7 +1,7 @@
 # Week 2 — Scheduling and Service Workflows — Design
 
 **Date:** 2026-10-28
-**Status:** Approved (design); implementation plan pending
+**Status:** Approved (design). Slices 1 and 2 built; slices 3–5 pending.
 **Depends on:** `2026-09-02-week1-foundation-design.md` (schema, constraints),
 `2026-09-03-week1-management-apis-design.md` (request path, auth, audit),
 `docs/ARCHITECTURE.md` §3 (the booking and cancellation flows designed in Week 1)
@@ -53,7 +53,7 @@ Each is numbered so the PRD can adopt it (§8 continues from D-8).
 | **D-12** | The visit lifecycle is one long-running `VisitWorkflow` per confirmed appointment, driven by signals, with a durable no-show timer | Transactional endpoints with a state machine, no-show by periodic job | No-show detection needs no scheduler — Temporal is one. Every visit's history is inspectable, which is the "real-time status visibility" and "recovery from failures" `PART-A-FR-3` asks for |
 | **D-13** | Waitlist promotion is an activity of the cancel/reschedule workflows in Week 2 | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the activity is replaced by publishing `appointments.cancelled` and the promotion moves to a consumer |
 | **D-14** | Reschedule books the new slot **before** releasing the old one | Cancel then book | A failed reschedule must leave the patient with their original appointment, not with nothing |
-| **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py`; scheduling may import that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. One declared edge onto one file is visible in a diff and in the meta-test |
+| **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py`; scheduling may import that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. Two declared edges (from `scheduling.activities` and `scheduling.router`) onto one file are visible in a diff and in the meta-test |
 
 **R-2 restated.** The Week 1 wording — "cancel, reschedule, no-show and completion must free
 the slot" — is wrong for two of the four: a completed or no-show appointment's slot is in the
@@ -140,13 +140,13 @@ request", per the IETF Idempotency-Key draft — answering 202 would tell the cl
 was made that never was. A **failed** booking stays failed under its key: REJECT_DUPLICATE
 means the same key replays the failure, so retrying needs a new key.
 
-`BookAppointmentWorkflow(appointment_id, patient_id, slot_id, reason, rescheduled_from_id?, waitlist_entry_id?)`:
+`BookAppointmentWorkflow(appointment_id, patient_id, slot_id, reason, rescheduled_from_id?, waitlist_entry_id?)` (as built in slice 2: `BookingRequest(appointment_id, patient_id, slot_id, actor_user_id, reason)`; slice 4 adds `rescheduled_from_id`, `waitlist_entry_id`):
 
 | Step | Activity | Failure |
 | --- | --- | --- |
 | 1 | `create_pending` — `INSERT … ON CONFLICT (id) DO NOTHING`; provider, clinic, department copied from the slot | slot not found → permanent |
 | 2 | `validate_booking` — patient bookable (`patients.public`); slot `starts_at > now()` (**R-3**) | permanent |
-| 3 | `claim_slot` — `UPDATE provider_slots SET status='held', version=version+1 WHERE id=:id AND status='free'` (**R-4**), and attach `slot_id` to the appointment, one transaction | 0 rows → `Conflict`, permanent, **not retried** |
+| 3 | `claim_slot` — `UPDATE provider_slots SET status='held', version=version+1 WHERE id=:id AND status='free' AND starts_at > :now` (**R-4**), and attach `slot_id` to the appointment, one transaction | 0 rows → `Conflict`, permanent, **not retried** |
 | 4 | `billing_precheck` (stand-in) | permanent if declined |
 | 5 | `schedule_reminders` (stand-in) | retryable |
 | 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retried **without limit** (idempotent): it may have committed before a transient failure, and giving up would end the workflow failed while the row says confirmed. A non-retryable `Conflict` still ends it |
@@ -263,7 +263,7 @@ An appointment may move to `completed` only from `confirmed` with a visit in `in
 | Situation | Handling |
 | --- | --- |
 | Database/connection error in an activity | Propagates; Temporal retries with backoff (max 5 attempts, configurable) |
-| `Conflict`, `NotFound`, `ValidationError` in an activity | Converted to `ApplicationError(non_retryable=True)`; the workflow compensates at once |
+| Any `DomainError` (`Conflict`, `NotFound`, `Unprocessable`, …) in an activity | Converted to `ApplicationError(non_retryable=True)`; the workflow compensates at once |
 | Worker crash mid-workflow | Temporal replays the workflow on another worker; activities are idempotent so a re-run of a completed step changes nothing |
 | Worker crash mid-compensation | Same — compensation is idempotent |
 | Temporal unreachable at the API | 503 in the standard error envelope — including `GET` for an id with no row, which returns 503, not 404 |
@@ -286,7 +286,7 @@ The cheapest tier that proves each property:
 | T2 workflow (time-skipping, mocked activities) | Confirm only after all steps; each failing step → `failed` and compensation called; conflict not retried; reschedule failure leaves original confirmed; visit signal order; no-show timer fires; `cancel` signal ends the visit workflow |
 | T3 integration (compose Postgres) | Two concurrent `claim_slot` → exactly one wins and `version` incremented once; every R-2 row leaves slot and appointment agreeing; `create_pending` idempotent; past slot rejected; `promote_waitlist` under concurrency takes one entry |
 | T4 journey (compose Temporal + worker) | Book → confirmed → check-in → seen → complete; book → cancel → waitlisted patient confirmed |
-| Meta | Workflow determinism (sandbox-validate every registered workflow); single slot-status write path; the one declared edge onto `patients.public` |
+| Meta | Workflow determinism (sandbox-validate every registered workflow); single slot-status write path; the two declared edges (from `scheduling.activities` and `scheduling.router`) onto `patients.public` |
 
 Each flow gets case YAML under `tests/cases/`, authored with the `smarthealth-testcase`
 skill.

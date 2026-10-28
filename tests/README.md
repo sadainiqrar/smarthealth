@@ -9,9 +9,9 @@ Windows in Git Bash, `source .venv/bin/activate` on POSIX). Without it the ambie
 interpreter may lack pytest and PyYAML.
 
 ```bash
-python -m pytest -m "not docker"          # fast lane: T0, T1, meta — no containers
+python -m pytest -m "not docker"          # fast lane: T0, T1, T2 (time-skipping, no containers), meta
 python -m pytest -m docker                # T3/T4 — needs the compose test stack
-python -m pytest -m workflow              # one tier (exits 5 until Week 2 adds any)
+python -m pytest -m workflow              # one tier (T2: Temporal time-skipping, no containers)
 python -m pytest tests/tiers/test_catalog.py -k <case-id>   # one case
 python -m tests.runner.route_check        # validate and route the catalog (no infra)
 python -m tests.runner.route_check --write-catalog --write-traceability
@@ -151,6 +151,6 @@ is why the `updated_at` trigger uses `clock_timestamp()`.
 |---|---|
 | P0 skeleton, P1 catalog spine + agent layer | done |
 | P2 registry-driven meta-tests | with Week 1 |
-| P3 workflow tier | Week 2 |
+| P3 workflow tier | built in Week 2 |
 | P4 integration, chaos, observability | Week 3 |
 | P5 AI lane, judge | Weeks 4–5 |
