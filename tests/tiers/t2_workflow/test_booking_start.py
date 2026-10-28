@@ -3,9 +3,9 @@ first is still running or has already finished."""
 
 from __future__ import annotations
 
-import uuid
-
+import asyncio
 import dataclasses
+import uuid
 
 import pytest
 from temporalio import activity
@@ -85,19 +85,35 @@ async def test_a_key_reused_for_a_different_request_is_refused(temporal_env):
 
 async def test_a_key_reused_while_the_first_still_runs_is_refused(temporal_env):
     """Under USE_EXISTING a repeat against a *running* workflow returns normally rather
-    than raising, so the fingerprint must be checked after every start. No worker
-    polls this queue, so the first booking stays running."""
-    queue = f"t2-idle-{uuid.uuid4().hex[:8]}"
+    than raising, so the fingerprint must be checked after every start. The first
+    booking is held running by a create_pending that waits to be released -- not by
+    leaving its queue unpolled, which leaves state behind that stalls the time-skipping
+    server for later tests."""
+    queue = f"t2-start-{uuid.uuid4().hex[:8]}"
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    @activity.defn(name="create_pending")
+    async def held_create(request: BookingRequest) -> None:
+        entered.set()
+        await release.wait()
+
+    others = _counting_fakes({})[1:]  # NAMES[0] is create_pending, replaced above
     request = BookingRequest(
         appointment_id=str(uuid.uuid4()), patient_id=str(uuid.uuid4()),
         slot_id=str(uuid.uuid4()), actor_user_id=None,
     )
-    first = await start_booking(temporal_env.client, request, task_queue=queue)
-    try:
-        with pytest.raises(Unprocessable):
-            await start_booking(
-                temporal_env.client, dataclasses.replace(request, reason="different"),
-                task_queue=queue,
-            )
-    finally:
-        await temporal_env.client.get_workflow_handle(first).terminate("test cleanup")
+    async with build_worker(
+        temporal_env.client, queue, workflows=[BookAppointmentWorkflow],
+        activities=[held_create, *others],
+    ):
+        first = await start_booking(temporal_env.client, request, task_queue=queue)
+        await entered.wait()
+        try:
+            with pytest.raises(Unprocessable):
+                await start_booking(
+                    temporal_env.client, dataclasses.replace(request, reason="different"),
+                    task_queue=queue,
+                )
+        finally:
+            release.set()
+        assert await temporal_env.client.get_workflow_handle(first).result() == "confirmed"
