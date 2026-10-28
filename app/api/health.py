@@ -76,6 +76,16 @@ async def _check_redis(request: Request) -> DependencyStatus:
     return DependencyStatus(name="redis", ok=True)
 
 
+async def _check_temporal(request: Request) -> DependencyStatus:
+    """The server, not the worker: the API needs Temporal to *start* workflows.
+    Whether a worker is executing them is the worker's own healthcheck."""
+    try:
+        await request.app.state.temporal.service_client.check_health()
+    except Exception as exc:
+        return DependencyStatus(name="temporal", ok=False, detail=_summarise(exc))
+    return DependencyStatus(name="temporal", ok=True)
+
+
 @router.get("/ready", response_model=ReadinessResponse)
 async def ready(request: Request, response: Response) -> ReadinessResponse:
     async def guarded(check) -> DependencyStatus:
@@ -89,7 +99,10 @@ async def ready(request: Request, response: Response) -> ReadinessResponse:
 
     dependencies = list(
         await asyncio.gather(
-            guarded(_check_postgres), guarded(_check_mongo), guarded(_check_redis)
+            guarded(_check_postgres),
+            guarded(_check_mongo),
+            guarded(_check_redis),
+            guarded(_check_temporal),
         )
     )
     all_ok = all(entry.ok for entry in dependencies)

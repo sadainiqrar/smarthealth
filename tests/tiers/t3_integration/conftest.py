@@ -44,6 +44,8 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
         redis_port=16379,
         redis_db=isolation.redis_db,
         redis_prefix=isolation.redis_prefix,
+        temporal_host="localhost",
+        temporal_port=int(os.environ.get("SMARTHEALTH_TEST_TEMPORAL_PORT", "17233")),
         resource_prefix=isolation.resource_prefix,
     )
 

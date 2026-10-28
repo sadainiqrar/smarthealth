@@ -22,6 +22,8 @@ def live_infrastructure(monkeypatch, db_settings: Settings):
     monkeypatch.setenv("SMARTHEALTH_REDIS_HOST", db_settings.redis_host)
     monkeypatch.setenv("SMARTHEALTH_REDIS_PORT", str(db_settings.redis_port))
     monkeypatch.setenv("SMARTHEALTH_REDIS_DB", str(db_settings.redis_db))
+    monkeypatch.setenv("SMARTHEALTH_TEMPORAL_HOST", db_settings.temporal_host)
+    monkeypatch.setenv("SMARTHEALTH_TEMPORAL_PORT", str(db_settings.temporal_port))
 
 
 async def test_ready_reports_all_dependencies_healthy(live_infrastructure):
@@ -37,5 +39,5 @@ async def test_ready_reports_all_dependencies_healthy(live_infrastructure):
     body = response.json()
     assert body["ready"] is True
     reported = {entry["name"]: entry["ok"] for entry in body["dependencies"]}
-    assert reported == {"postgres": True, "mongo": True, "redis": True}
+    assert reported == {"postgres": True, "mongo": True, "redis": True, "temporal": True}
     assert all(entry["detail"] is None for entry in body["dependencies"])

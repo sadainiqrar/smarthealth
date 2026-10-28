@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from app.api.error_handlers import register_error_handlers
 from app.api.router import api_router
 from app.core.logging import configure_logging
+from app.core.temporal import connect_client
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client
 from app.db.redis import create_redis_client
@@ -33,6 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.mongo = create_mongo_client(settings)
     app.state.redis = create_redis_client(settings)
+    # Lazy: the API boots with Temporal down, like every client above. Nothing to
+    # close on shutdown -- the SDK client holds no resources until first use.
+    app.state.temporal = await connect_client(settings)
     try:
         yield
     finally:

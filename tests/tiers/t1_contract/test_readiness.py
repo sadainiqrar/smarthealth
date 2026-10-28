@@ -10,7 +10,7 @@ pytestmark = pytest.mark.contract
 @pytest.fixture
 def unreachable_infrastructure(monkeypatch):
     """Point every dependency at a closed port so readiness must report failure."""
-    for variable in ("POSTGRES", "MONGO", "REDIS"):
+    for variable in ("POSTGRES", "MONGO", "REDIS", "TEMPORAL"):
         monkeypatch.setenv(f"SMARTHEALTH_{variable}_HOST", "127.0.0.1")
         monkeypatch.setenv(f"SMARTHEALTH_{variable}_PORT", "1")
 
@@ -28,7 +28,7 @@ async def test_ready_reports_503_when_dependencies_are_down(unreachable_infrastr
     body = response.json()
     assert body["ready"] is False
     reported = {entry["name"]: entry["ok"] for entry in body["dependencies"]}
-    assert reported == {"postgres": False, "mongo": False, "redis": False}
+    assert reported == {"postgres": False, "mongo": False, "redis": False, "temporal": False}
     assert all(entry["detail"] for entry in body["dependencies"])
 
 
@@ -54,3 +54,4 @@ async def test_lifespan_starts_with_no_infrastructure(unreachable_infrastructure
     async with LifespanManager(application):
         assert application.state.engine is not None
         assert application.state.session_factory is not None
+        assert application.state.temporal is not None
