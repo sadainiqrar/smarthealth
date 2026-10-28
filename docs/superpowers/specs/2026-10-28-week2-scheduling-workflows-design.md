@@ -97,7 +97,12 @@ PRD R-8 claims.
   allowlist already excludes them, so a FastAPI import in either fails the suite.
 - `workflows.py` imports no database, settings or clock code: everything non-deterministic
   happens in activities. Time inside a workflow is `workflow.now()`.
-- The horizontal rule gains exactly one declared edge: `scheduling.* → patients.public`.
+- The horizontal rule gains declared edges onto `patients.public` from
+  `scheduling.activities` and `scheduling.router` only. Not from `scheduling.service`:
+  rule 4 of `tests/meta/test_import_boundaries.py` (`NEVER_CROSS`) forbids `service.py`,
+  `models.py` and `schemas.py` any cross-module import, allowlist or not. The activity
+  performs the patient check and the service receives only ids. (Corrected 2026-10-28 while
+  planning slice 2.)
 - `providers` loses `ProviderSlot`/`SlotStatus`; `app/seed.py` and `app/db/all_models.py`
   import them from `scheduling`.
 
@@ -120,7 +125,7 @@ Router:
 2. `appointment_id = uuid5(NAMESPACE, f"{caller_user_id}:{key}")` if the header is present,
    else `uuid4()`. The caller is part of the hash so two users cannot collide on a key.
 3. Start `booking-<appointment_id>`. If that id is already running or completed, return the
-   same 202 — the replay is answered, not rejected.
+   same 202 — the replay is answered, not rejected. Start with id_conflict_policy=USE_EXISTING and id_reuse_policy=REJECT_DUPLICATE: Temporal's default allows a closed id to be started again, which would book a repeated request twice.
 4. Return **202** `{appointment_id, status: "pending"}`. Temporal unreachable → 503.
 
 `BookAppointmentWorkflow(appointment_id, patient_id, slot_id, reason, rescheduled_from_id?, waitlist_entry_id?)`:
