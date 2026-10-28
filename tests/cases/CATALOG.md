@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 15 |
+| Total cases | 17 |
 | contract | 4 |
-| integration | 7 |
-| unit | 4 |
-| P0 | 8 |
-| P1 | 7 |
+| integration | 8 |
+| unit | 5 |
+| P0 | 9 |
+| P1 | 8 |
 | declarative | 1 |
-| impl-backed | 14 |
+| impl-backed | 16 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -36,3 +36,5 @@
 | sys-005-the-http-layer-cannot-leak-into-the-core | unit | P0 | impl | PART-A-OBS-4 | No module outside the HTTP layer can reach FastAPI, directly or through another module |
 | sys-006-the-running-process-emits-structured-logs | contract | P1 | impl | PART-A-OBS-1 | The served application emits JSON log lines, not merely a JSON formatter |
 | sys-007-every-rejection-uses-one-error-envelope | contract | P0 | impl | PART-A-OBS-1 | An authorisation rejection answers the same {error, detail} shape as every other failure |
+| sys-008-every-workflow-is-registered-and-sandbox-safe | unit | P0 | impl | PART-A-NFR-2 | Every Temporal workflow and activity in app/ is registered, and every registered workflow passes the sandbox |
+| sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |

@@ -1,0 +1,19 @@
+id: sys-009-a-worker-executes-the-canary-on-the-real-server
+title: "A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server"
+requirement: [PART-A-OBS-1]
+tier: integration
+priority: P1
+status: ready
+# Traced to PART-A-OBS-1, liveness and readiness: the canary is the worker's readiness
+# probe. `python -m app.worker --check` is the compose healthcheck, and it runs the
+# same `check_worker` this test calls.
+#
+# The T2 tier proves workflow logic against the SDK's in-process time-skipping server,
+# which never reads our connection settings. This case proves the *configuration*
+# reaches a real server: address, namespace, and the per-run task-queue prefix from
+# `Settings.task_queue()` -- the isolation layer depends on that prefix, so the test
+# asserts it is non-empty before relying on it.
+#
+# P1 rather than P0: it guards plumbing, not a business invariant, and a failure here
+# also shows up as an unhealthy `worker` container.
+impl: "tests/tiers/t3_integration/test_worker.py::test_a_worker_on_the_prefixed_queue_answers_the_canary"
