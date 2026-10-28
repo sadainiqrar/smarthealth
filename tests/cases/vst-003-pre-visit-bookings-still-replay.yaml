@@ -1,0 +1,14 @@
+id: vst-003-pre-visit-bookings-still-replay
+title: "A booking that was in flight before the visit slice deployed still replays against the new workflow code"
+requirement: [PART-A-NFR-2]
+tier: workflow
+priority: P0
+status: ready
+# Booking now starts the visit as a child workflow. That is a new command in the history
+# of every booking, so a booking already running when it deployed would fail replay with
+# a nondeterminism error and stall -- a half-finished booking, the exact state NFR-2
+# forbids. `workflow.patched("booking-starts-visit")` keeps the old path alive; this test
+# proves it by replaying a history recorded from the slice-2 workflow
+# (tests/fixtures/histories/booking_pre_visit.json). Removing the guard fails it with
+# "Nondeterminism error: Child workflow machine does not handle this event".
+impl: "tests/tiers/t2_workflow/test_replay.py::test_a_pre_visit_booking_history_still_replays"

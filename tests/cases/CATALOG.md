@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 26 |
+| Total cases | 30 |
 | contract | 5 |
-| integration | 13 |
+| integration | 14 |
 | unit | 5 |
-| workflow | 3 |
-| P0 | 14 |
-| P1 | 12 |
+| workflow | 6 |
+| P0 | 17 |
+| P1 | 13 |
 | declarative | 1 |
-| impl-backed | 25 |
+| impl-backed | 29 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -48,3 +48,7 @@
 | sys-007-every-rejection-uses-one-error-envelope | contract | P0 | impl | PART-A-OBS-1 | An authorisation rejection answers the same {error, detail} shape as every other failure |
 | sys-008-every-workflow-is-registered-and-sandbox-safe | unit | P0 | impl | PART-A-NFR-2 | Every Temporal workflow and activity in app/ is registered, and every registered workflow passes the sandbox |
 | sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |
+| vst-001-a-visit-runs-check-in-to-complete | workflow | P0 | impl | PART-A-FR-3 | A visit is driven by staff signals through check-in, seen and complete, each written once, in order |
+| vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes |
+| vst-003-pre-visit-bookings-still-replay | workflow | P0 | impl | PART-A-NFR-2 | A booking that was in flight before the visit slice deployed still replays against the new workflow code |
+| vst-004-visit-end-to-end | integration | P1 | impl | PART-A-FR-3 | A visit runs from booking to completion over HTTP: 202s, state machine 409s, appointment completed, audit trail written |

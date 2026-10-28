@@ -1,0 +1,11 @@
+id: vst-001-a-visit-runs-check-in-to-complete
+title: "A visit is driven by staff signals through check-in, seen and complete, each written once, in order"
+requirement: [PART-A-FR-3]
+tier: workflow
+priority: P0
+status: ready
+# The visit is a durable workflow (D-12): signals only set flags, and the run loop does
+# every write through an activity, so a re-delivered signal changes nothing. The test
+# runs the real VisitWorkflow in Temporal's time-skipping environment with recording
+# fakes and asserts the exact activity order: deadline, check_in, seen, complete.
+impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_signals_drive_the_visit_to_completion_in_order"
