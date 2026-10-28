@@ -38,3 +38,14 @@ async def test_a_malformed_provider_id_is_rejected(api_client):
         "/slots?provider_id=not-a-uuid", headers=auth(UserRole.FRONT_DESK)
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("bound", ["from", "to"])
+async def test_a_timestamp_without_an_offset_is_rejected(api_client, bound):
+    """A naive timestamp cannot be compared with the aware clock: 422, not a 500."""
+    response = await api_client.get(
+        "/slots",
+        params={"provider_id": str(uuid.uuid4()), bound: "2026-11-01T10:00:00"},
+        headers=auth(UserRole.FRONT_DESK),
+    )
+    assert response.status_code == 422

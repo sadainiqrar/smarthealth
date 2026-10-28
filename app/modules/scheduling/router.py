@@ -8,9 +8,9 @@ A patient books and reads only their own appointments; staff act for anyone.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
+from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client
 
@@ -112,8 +112,10 @@ async def get_appointment(
 @slots_router.get("", response_model=Page[SlotRead])
 async def list_slots(
     provider_id: uuid.UUID,
-    from_: datetime | None = Query(default=None, alias="from"),
-    to: datetime | None = Query(default=None),
+    # AwareDatetime: a timestamp without an offset is ambiguous, and comparing it with
+    # the aware `now` would raise -- a 500. Rejected here as a 422 instead.
+    from_: AwareDatetime | None = Query(default=None, alias="from"),
+    to: AwareDatetime | None = Query(default=None),
     page: PageParams = Depends(page_params),
     session: AsyncSession = Depends(get_session),
     clock: Clock = Depends(get_clock),
