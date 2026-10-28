@@ -35,7 +35,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.mongo = create_mongo_client(settings)
     app.state.redis = create_redis_client(settings)
     # Lazy: the API boots with Temporal down, like every client above. Nothing to
-    # close on shutdown -- the SDK client holds no resources until first use.
+    # close on shutdown -- the SDK client exposes no close(); once /ready has used it,
+    # its gRPC channel lives as long as the process.
     app.state.temporal = await connect_client(settings)
     try:
         yield
