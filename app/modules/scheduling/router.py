@@ -23,7 +23,7 @@ from app.modules.patients.public import patient_id_for_user
 from app.modules.scheduling import service
 from app.modules.scheduling.booking import (
     appointment_id_for,
-    booking_in_progress,
+    booking_state,
     start_booking,
 )
 from app.modules.scheduling.contracts import BookingRequest
@@ -77,10 +77,16 @@ async def get_appointment(
 ) -> AppointmentRead:
     appointment = await service.get_appointment(session, appointment_id)
     if appointment is None:
-        if await booking_in_progress(temporal, appointment_id):
+        # No row yet: ask Temporal. These synthetic answers carry only id, status and
+        # in_progress -- there is no row to read anything else from.
+        state = await booking_state(temporal, appointment_id)
+        if state == "running":
             return AppointmentRead(
                 id=appointment_id, status=AppointmentStatus.PENDING, in_progress=True
             )
+        if state == "closed":
+            # The workflow ended before it recorded the appointment: the booking failed.
+            return AppointmentRead(id=appointment_id, status=AppointmentStatus.FAILED)
         raise NotFound(f"appointment {appointment_id} does not exist")
     # 404 rather than 403 for someone else's appointment: a patient must not be able to
     # probe which appointment ids exist.

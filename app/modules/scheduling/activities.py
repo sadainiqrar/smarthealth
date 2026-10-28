@@ -31,6 +31,22 @@ from app.modules.scheduling.contracts import BookingRequest
 logger = logging.getLogger(__name__)
 
 
+def parse_id(value: str, field: str) -> uuid.UUID:
+    """A request id as a UUID, or a non-retryable failure.
+
+    Called before the unit of work opens. A malformed id raises `ValueError`, which is
+    not a `DomainError`, so left alone it would propagate as a retryable failure and be
+    retried on every step until the attempts run out -- and forever under compensation's
+    unlimited policy. It can never parse on a retry, so it fails once, permanently.
+    """
+    try:
+        return uuid.UUID(value)
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ApplicationError(
+            f"{field} is not a valid id: {value!r}", type="InvalidRequest", non_retryable=True
+        ) from exc
+
+
 class SchedulingActivities:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], audit: AuditLog,
@@ -57,27 +73,32 @@ class SchedulingActivities:
 
     @activity.defn
     async def create_pending(self, request: BookingRequest) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        patient_id = parse_id(request.patient_id, "patient_id")
+        slot_id = parse_id(request.slot_id, "slot_id")
         async with self._unit_of_work() as session:
             await service.create_pending(
-                session, self._audit, appointment_id=uuid.UUID(request.appointment_id),
-                patient_id=uuid.UUID(request.patient_id), slot_id=uuid.UUID(request.slot_id),
+                session, self._audit, appointment_id=appointment_id,
+                patient_id=patient_id, slot_id=slot_id,
                 reason=request.reason, actor_user_id=request.actor_user_id,
             )
 
     @activity.defn
     async def validate_booking(self, request: BookingRequest) -> None:
+        patient_id = parse_id(request.patient_id, "patient_id")
+        slot_id = parse_id(request.slot_id, "slot_id")
         async with self._unit_of_work() as session:
-            await ensure_bookable_patient(session, uuid.UUID(request.patient_id))
-            await service.ensure_slot_bookable(
-                session, slot_id=uuid.UUID(request.slot_id), now=self._clock.now()
-            )
+            await ensure_bookable_patient(session, patient_id)
+            await service.ensure_slot_bookable(session, slot_id=slot_id, now=self._clock.now())
 
     @activity.defn
     async def claim_slot(self, request: BookingRequest) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        slot_id = parse_id(request.slot_id, "slot_id")
         async with self._unit_of_work() as session:
             await service.claim_slot(
-                session, self._audit, appointment_id=uuid.UUID(request.appointment_id),
-                slot_id=uuid.UUID(request.slot_id), now=self._clock.now(),
+                session, self._audit, appointment_id=appointment_id,
+                slot_id=slot_id, now=self._clock.now(),
                 actor_user_id=request.actor_user_id,
             )
 
@@ -100,16 +121,18 @@ class SchedulingActivities:
 
     @activity.defn
     async def confirm(self, request: BookingRequest) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
             await service.confirm_booking(
-                session, self._audit, appointment_id=uuid.UUID(request.appointment_id),
+                session, self._audit, appointment_id=appointment_id,
                 now=self._clock.now(), actor_user_id=request.actor_user_id,
             )
 
     @activity.defn
     async def fail_booking(self, request: BookingRequest) -> None:
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
             await service.fail_booking(
-                session, self._audit, appointment_id=uuid.UUID(request.appointment_id),
+                session, self._audit, appointment_id=appointment_id,
                 actor_user_id=request.actor_user_id,
             )

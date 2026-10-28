@@ -23,16 +23,19 @@ STEPS = [
 ]
 
 
-def _fakes(calls: list[str], *, fail: str | None = None, transient: int = 0):
+def _fakes(
+    calls: list[str], *, fail: str | None = None, transient: int = 0,
+    transient_step: str = "claim_slot",
+):
     """Activity fakes. `fail` raises a permanent error at that step; `transient` makes
-    claim_slot raise a retryable error that many times first."""
+    `transient_step` raise a retryable error that many times first."""
     remaining = {"transient": transient}
 
     def make(name: str):
         @activity.defn(name=name)
         async def fake(request: BookingRequest) -> None:
             calls.append(name)
-            if name == "claim_slot" and remaining["transient"]:
+            if name == transient_step and remaining["transient"]:
                 remaining["transient"] -= 1
                 raise RuntimeError("connection reset")
             if name == fail:
@@ -78,15 +81,28 @@ async def test_any_failing_step_compensates_and_never_confirms(temporal_env, fai
         assert "confirm" not in calls
 
 
-async def test_a_failed_create_has_nothing_to_compensate(temporal_env):
+async def test_a_failed_create_is_compensated_too(temporal_env):
+    """create_pending may have committed before it failed (a lost reply), so its failure
+    compensates like any other; fail_booking no-ops when there is no row."""
     calls: list[str] = []
     with pytest.raises(WorkflowFailureError):
         await _run(temporal_env, _fakes(calls, fail="create_pending"))
-    assert calls == ["create_pending"]
+    assert calls == ["create_pending", "fail_booking"]
 
 
 async def test_a_transient_error_is_retried_not_compensated(temporal_env):
     calls: list[str] = []
     assert await _run(temporal_env, _fakes(calls, transient=2)) == "confirmed"
     assert calls.count("claim_slot") == 3
+    assert "fail_booking" not in calls
+
+
+async def test_confirm_outlasts_the_step_retry_budget(temporal_env):
+    """Ordinary steps give up after 5 attempts; confirm must not. A transient failure
+    there could follow a committed confirm, and ending the workflow failed would leave
+    Temporal saying failed while the database says confirmed."""
+    calls: list[str] = []
+    activities = _fakes(calls, transient=7, transient_step="confirm")
+    assert await _run(temporal_env, activities) == "confirmed"
+    assert calls.count("confirm") == 8
     assert "fail_booking" not in calls

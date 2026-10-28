@@ -7,8 +7,9 @@ time-skipping server.
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
-from temporalio.client import Client
+from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
@@ -58,15 +59,29 @@ async def start_booking(client: Client, request: BookingRequest, *, task_queue: 
     return workflow_id
 
 
-async def booking_in_progress(client: Client, appointment_id: uuid.UUID) -> bool:
-    """True if Temporal knows a booking workflow for this appointment. Answers the
-    milliseconds between the 202 and the workflow's first activity inserting the row."""
+BookingState = Literal["running", "closed", "unknown"]
+
+
+async def booking_state(client: Client, appointment_id: uuid.UUID) -> BookingState:
+    """What Temporal knows of this appointment's booking workflow.
+
+    Asked only when no appointment row exists. "running" is the milliseconds between
+    the 202 and the first activity inserting the row. "closed" means the workflow ended
+    without ever writing a row -- it failed before `create_pending` committed -- and
+    must not be reported as pending, or a poller would wait forever. "unknown" means no
+    such booking was ever started. Temporal unreachable is a 503, never an "unknown":
+    a 404 would tell the client its booking does not exist when we simply cannot tell.
+    """
     try:
-        await client.get_workflow_handle(booking_workflow_id(appointment_id)).describe()
+        description = await client.get_workflow_handle(
+            booking_workflow_id(appointment_id)
+        ).describe()
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
-            return False
+            return "unknown"
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
     except RuntimeError as exc:
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
-    return True
+    if description.status == WorkflowExecutionStatus.RUNNING:
+        return "running"
+    return "closed"
