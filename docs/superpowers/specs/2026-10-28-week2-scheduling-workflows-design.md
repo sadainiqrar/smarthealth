@@ -55,6 +55,7 @@ Each is numbered so the PRD can adopt it (§8 continues from D-8).
 | **D-13** | Waitlist promotion is an activity of the cancel/reschedule workflows in Week 2 | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the activity is replaced by publishing `appointments.cancelled` and the promotion moves to a consumer |
 | **D-14** | Reschedule books the new slot **before** releasing the old one | Cancel then book | A failed reschedule must leave the patient with their original appointment, not with nothing |
 | **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py`; scheduling may import that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. Two declared edges (from `scheduling.activities` and `scheduling.router`) onto one file are visible in a diff and in the meta-test |
+| **D-16** | **Cancel is a synchronous paired write answering 200**; its follow-ups (visit timer, refund, waitlist promotion) run in `CancelFollowUpWorkflow`, started best-effort after commit. Reschedule stays a workflow (202) because it must book first | The original §4.3: a `CancelAppointmentWorkflow` doing the transition itself after a 202 | Amended D-12's reasoning: a 202 followed by an asynchronous write races with the visit timer and a concurrent booking, and a Temporal outage would then fail a cancel the patient was promised. The cost is that a failed follow-up start loses the follow-ups -- a known gap closed by Week 3's transactional outbox |
 
 **R-2 restated.** The Week 1 wording — "cancel, reschedule, no-show and completion must free
 the slot" — is wrong for two of the four: a completed or no-show appointment's slot is in the
@@ -240,47 +241,70 @@ backfill that starts timers for them is deferred. `VisitWorkflow` itself needed 
 
 ### 4.3 Cancel
 
-`POST /appointments/{id}/cancel` — `{reason}`. Roles: owning patient, `front_desk`, `admin`.
-Legal only from `pending` or `confirmed`, checked synchronously → 409 otherwise. Starts
-`cancel-<appointment_id>` (a second cancel is answered with the same 202) and returns 202.
+*Amended 2026-10-29 (D-16).* `POST /appointments/{id}/cancel` -- `{reason}`. Roles: owning
+patient, `front_desk`, `admin`. Legal only from `pending` or `confirmed`, and only while no
+visit exists (a checked-in patient is not cancelled) -- otherwise 409.
 
-`CancelAppointmentWorkflow`:
+Cancel is a **synchronous paired write** answering **200**, in the request's transaction and
+under the appointment row lock: `appointments.status = cancelled` (with `cancelled_at` and
+`cancellation_reason`) and `provider_slots.status = free` commit together (R-2). The reasoning
+is amended D-12's: the caller needs a definitive answer, and a 202 followed by an
+asynchronous write races with the visit timer and with a concurrent booking exactly as
+visit check-ins did. Cancelling an already-cancelled appointment is a 409 (strict, like the
+visit actions: only the endpoint calls it and nothing retries it).
 
-1. `transition_appointment(→ cancelled)` — appointment `cancelled`, `cancelled_at`,
-   `cancellation_reason`; slot `free`; one transaction.
-2. Signal `cancel` to `visit-<id>`; "workflow not found" is success.
-3. `refund` (stand-in).
-4. `promote_waitlist(slot_id)` — §4.5.
+After the commit the endpoint starts `CancelFollowUpWorkflow` (`cancel-<appointment_id>`),
+best-effort, for the follow-ups that must happen eventually:
 
-A cancel racing an in-flight booking (appointment still `pending`): the cancel workflow's
-transition only applies from `pending`/`confirmed` and takes a row lock, so whichever commits
-first wins; the booking's subsequent `confirm` finds the appointment no longer `pending`,
-fails permanently, and its compensation is a no-op because the slot is already `free`.
+1. Signal `cancel` to `visit-<id>`; "workflow not found" is success.
+2. `refund` (stand-in).
+3. `promote_waitlist(slot_id)` -- section 4.5, only if the cancel released a slot.
+
+**Known gap.** If starting the follow-up fails, the cancel stands and the follow-ups are lost
+(no refund, no promotion; the visit timer still ends by itself, at its deadline, as
+`closed`). The start failure is logged, not surfaced. Week 3's transactional outbox closes
+it: the follow-up becomes an event written in the cancel's own transaction.
+
+A cancel racing an in-flight booking (appointment still `pending`): the cancel takes the row
+lock, so whichever commits first wins; the booking's next step finds the appointment no
+longer `pending`, fails permanently, and its compensation is a no-op (`fail_booking` acts
+only on a `pending` appointment). The slot the booking had claimed, if any, was already
+released by the cancel.
 
 ### 4.4 Reschedule
 
-`POST /appointments/{id}/reschedule` — `{new_slot_id}`. Same roles and legality as cancel.
-Starts `reschedule-<id>`, returns 202 with the new appointment id.
+`POST /appointments/{id}/reschedule` -- `{new_slot_id, reason?}`. Same roles and legality as
+cancel, checked synchronously. Reschedule is inherently a workflow -- it must book before it
+releases -- so it answers **202** with the new appointment id.
 
-`RescheduleAppointmentWorkflow`:
+`RescheduleWorkflow` (`reschedule-<new_appointment_id>`):
 
 1. Run `BookAppointmentWorkflow` as a **child** for a new appointment with
    `rescheduled_from_id = id`.
-2. Child failed → stop. The new appointment is `failed`, the original is untouched (D-14).
-3. Child confirmed → `transition_appointment(old → rescheduled)` (slot `free`); signal
-   `cancel` to the old `visit-<id>`; `promote_waitlist(old_slot_id)`.
+2. Child failed -> stop. The new appointment is `failed`, the original is untouched (D-14).
+3. Child confirmed -> `complete_reschedule`: under the old appointment's lock, if it is still
+   `confirmed` with no visit, it moves to `rescheduled` and its slot to `free`, together.
+   If it was cancelled or checked in meanwhile, nothing is released and the reschedule ends
+   `superseded`: the new booking stands, and the patient holds two confirmed appointments
+   until staff cancel one. Otherwise: signal `cancel` to the old `visit-<id>`, then
+   `promote_waitlist(old_slot_id)`.
 
 ### 4.5 Waitlist
 
-`POST /waitlist` — `{patient_id, provider_id?, department_id?, window_start, window_end}`;
+`POST /waitlist` -- `{patient_id, provider_id?, department_id?, window_start, window_end}`;
 same patient-ownership rule as booking. `GET /waitlist?patient_id=` for staff.
 
-`promote_waitlist(slot_id)`: select the oldest `active` entry whose window contains the
-slot's `starts_at` and whose provider/department, when set, match the slot — `FOR UPDATE
-SKIP LOCKED`, so two concurrent promotions never take one entry. Start
-`booking-wl-<entry_id>` for that patient on that slot. When that booking confirms, its final
-activity marks the entry `fulfilled`; when it fails, the entry stays `active`. The workflow
-id makes a retried promotion start nothing new.
+`promote_waitlist(slot_id)` is shared workflow code, run by the cancel follow-up and by
+reschedule. An activity returns the candidates in order -- `active` entries whose window
+contains the slot's `starts_at` and whose provider/department, when set, match the slot,
+oldest first, a small bounded number. Each is tried in turn as a **child** booking with id
+`booking-wl-<entry_id>` and `ALLOW_DUPLICATE_FAILED_ONLY`: a failed attempt may be retried by
+a later release, while a confirmed (or still running) one can never start twice -- Temporal
+refuses, and the loop moves on. The first child that confirms is followed by an activity
+marking its entry `fulfilled`, and the loop stops.
+
+This replaces the `FOR UPDATE SKIP LOCKED` design: a row lock cannot be held across a child
+workflow, and the deterministic child id gives the same "never twice" guarantee without one.
 
 ### 4.6 Patient self-service (R-5)
 
