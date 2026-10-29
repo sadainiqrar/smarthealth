@@ -29,7 +29,8 @@ class Bookable:
 
 
 async def seed_bookable(
-    session: AsyncSession, *, starts_in: timedelta = timedelta(days=1)
+    session: AsyncSession, *, starts_in: timedelta = timedelta(days=1),
+    duration: timedelta = timedelta(minutes=30),
 ) -> Bookable:
     """Pair with `purge`; the `factory` fixture in test_booking_service does."""
     clinic = Clinic(name=f"Riverside {uuid.uuid4().hex[:8]}", timezone="UTC")
@@ -43,7 +44,7 @@ async def seed_bookable(
     start = datetime.now(UTC).replace(microsecond=0) + starts_in
     slot = ProviderSlot(
         provider_id=provider.id, clinic_id=clinic.id,
-        starts_at=start, ends_at=start + timedelta(minutes=30),
+        starts_at=start, ends_at=start + duration,
     )
     session.add(slot)
     await session.commit()

@@ -16,6 +16,7 @@ from datetime import timedelta
 
 import pytest
 from temporalio.client import WorkflowExecutionStatus
+from temporalio.service import RPCError
 
 from app.components import build_activities, register_all
 from app.core.audit import AuditLog
@@ -85,6 +86,16 @@ async def _until(read, done, *, timeout: float = 30.0):
     return value
 
 
+def _describe_status(handle):
+    async def read():
+        try:
+            return (await handle.describe()).status
+        except RPCError:
+            return None  # not started yet
+
+    return read
+
+
 async def _book(api, b, headers, started) -> str:
     accepted = await api.post(
         "/appointments", json={"patient_id": str(b.patient_id), "slot_id": str(b.slot_id)},
@@ -114,7 +125,14 @@ async def test_a_visit_runs_from_booking_to_completion(
     provider = token_for(UserRole.PROVIDER, provider_id)
     appointment_id = await _book(api, b, desk, started)
     # Booked, not yet checked in: there is no visit to read.
-    assert (await api.get(f"/appointments/{appointment_id}/visit", headers=desk)).status_code == 404
+    no_visit = await api.get(f"/appointments/{appointment_id}/visit", headers=desk)
+    assert no_visit.status_code == 404
+    # `confirmed` is written by the booking's last activity; the visit timer starts just
+    # after it. Wait for the timer, so the signal path is what this test observes. (A
+    # check-in landing in that gap is recorded all the same; its signal finds no
+    # workflow, and the timer ends "visit_exists" at the deadline -- the database wins.)
+    handle = client.get_workflow_handle(visit_workflow_id(appointment_id))
+    await _until(_describe_status(handle), lambda s: s == WorkflowExecutionStatus.RUNNING)
 
     # 200 with the visit: it is recorded before the response leaves.
     check_in = await api.post(f"/appointments/{appointment_id}/check-in", headers=desk)
@@ -122,7 +140,6 @@ async def test_a_visit_runs_from_booking_to_completion(
     assert check_in.json()["status"] == "checked_in"
     assert check_in.json()["appointment_id"] == appointment_id
     # The post-commit signal reached the timer the booking started, which ends early.
-    handle = client.get_workflow_handle(visit_workflow_id(appointment_id))
     assert await asyncio.wait_for(handle.result(), 20) == "checked_in"
 
     # Strict: a repeat is refused, and the order is enforced.
@@ -148,7 +165,8 @@ async def test_a_visit_runs_from_booking_to_completion(
     after = await api.post(f"/appointments/{appointment_id}/complete", headers=provider)
     assert after.status_code == 409
 
-    cursor = audit_documents.find({"entity_type": "visit"}).sort("at", 1)
+    # `_id` breaks ties: Mongo keeps `at` to the millisecond, and two requests can share one.
+    cursor = audit_documents.find({"entity_type": "visit"}).sort([("at", 1), ("_id", 1)])
     trail = [(d["action"], d["actor_user_id"]) async for d in cursor]
     assert trail == [
         ("checked_in", desk_id), ("seen", provider_id), ("completed", provider_id)
@@ -174,6 +192,47 @@ async def test_a_booking_confirmed_before_the_visit_workflow_existed_can_still_c
             AppointmentStatus.CONFIRMED
         )
         assert await get_visit(session, appointment_id) is not None
+
+
+@pytest.fixture
+async def no_show_stack(db_settings):
+    """No grace: the deadline is the slot's end, so a seconds-long slot times out fast."""
+    async with _visit_stack(db_settings, timedelta(0)) as stack:
+        yield stack
+
+
+async def test_nobody_checking_in_becomes_a_no_show_on_the_real_timer(
+    api, token_for, no_show_stack
+):
+    """The whole no-show path on real infrastructure: a booking confirms and starts its
+    visit, a real Temporal timer fires at the slot's end, the real `no_show` activity
+    marks the appointment under its lock, and the workflow returns the database's
+    answer. The slot stays `booked` (R-2), and a check-in arriving afterwards is refused
+    (409) -- staff are told, rather than accepted and silently overruled as before.
+
+    The slot starts a few seconds out so the booking can claim it before it starts
+    (R-3), and lasts one second."""
+    factory, client, started = no_show_stack
+    async with factory() as session:
+        b = await seed_bookable(
+            session, starts_in=timedelta(seconds=3), duration=timedelta(seconds=1)
+        )
+    desk = token_for(UserRole.FRONT_DESK)
+    appointment_id = await _book(api, b, desk, started)
+
+    async def status():
+        return (await api.get(f"/appointments/{appointment_id}", headers=desk)).json()[
+            "status"
+        ]
+
+    await _until(status, lambda s: s == "no_show", timeout=30)
+    handle = client.get_workflow_handle(visit_workflow_id(appointment_id))
+    assert await asyncio.wait_for(handle.result(), 10) == "no_show"
+    async with factory() as session:
+        assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.BOOKED
+        assert await get_visit(session, uuid.UUID(appointment_id)) is None
+    late = await api.post(f"/appointments/{appointment_id}/check-in", headers=desk)
+    assert late.status_code == 409
 
 
 async def test_an_unknown_appointment_is_a_404(api, token_for, visit_stack):

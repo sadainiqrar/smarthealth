@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 33 |
+| Total cases | 34 |
 | contract | 5 |
-| integration | 16 |
+| integration | 17 |
 | unit | 5 |
 | workflow | 7 |
 | P0 | 19 |
-| P1 | 14 |
+| P1 | 15 |
 | declarative | 1 |
-| impl-backed | 32 |
+| impl-backed | 33 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -55,3 +55,4 @@
 | vst-005-a-check-in-racing-the-timer-is-not-a-no-show | integration | P0 | impl | PART-A-FR-3, PART-A-NFR-1 | A check-in still committing when the no-show timer fires is never recorded as a no-show |
 | vst-006-a-check-in-before-a-past-deadline-is-kept | workflow | P0 | impl | PART-A-FR-3 | A visit whose deadline has already passed, with a check-in already signalled, ends checked_in and never runs the no-show step |
 | vst-007-the-visit-timer-outlasts-a-database-outage | workflow | P1 | impl | PART-A-FR-3, PART-A-NFR-2 | A transient database outage longer than the booking step budget does not permanently fail a visit timer |
+| vst-008-a-real-timer-marks-a-no-show | integration | P1 | impl | PART-A-FR-3 | On real Temporal and Postgres, an appointment nobody checks in for becomes no_show at the slot's end, its slot stays booked, and a late check-in is refused |
