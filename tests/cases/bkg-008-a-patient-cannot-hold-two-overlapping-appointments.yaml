@@ -1,0 +1,17 @@
+id: bkg-008-a-patient-cannot-hold-two-overlapping-appointments
+title: "Two concurrent claims for one patient at overlapping slots of different providers admit exactly one"
+requirement: [PART-A-FR-2, PART-A-NFR-1]
+tier: integration
+priority: P0
+status: ready
+# PRD R-23. Every slot-level gate (the conditional UPDATE, ux_appointments_live_slot,
+# the GiST exclusion) reasons about one provider's time, so a patient booked with two
+# providers at 10:00 passed all of them. `claim_slot` now takes a transaction-scoped
+# advisory lock keyed on the patient and refuses a slot overlapping another live
+# appointment of theirs. Deterministic, like bkg-003: the first claim holds its
+# transaction (and the patient lock) open, the second is shown to be parked, the first
+# commits, and the second must fail with "overlaps" leaving its slot free at version 0.
+# The sequential cases (adjacent slots allowed, a reschedule may overlap its own
+# predecessor, a cancelled appointment frees its time) are in the same file, and the
+# HTTP round trip is in test_booking_round_trip.py.
+impl: "tests/tiers/t3_integration/test_patient_overlap.py::test_two_concurrent_overlapping_claims_for_one_patient_admit_one"

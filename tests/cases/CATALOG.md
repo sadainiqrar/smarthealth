@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 42 |
+| Total cases | 43 |
 | contract | 5 |
-| integration | 23 |
+| integration | 24 |
 | unit | 5 |
 | workflow | 9 |
-| P0 | 24 |
+| P0 | 25 |
 | P1 | 18 |
 | declarative | 1 |
-| impl-backed | 41 |
+| impl-backed | 42 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -31,6 +31,7 @@
 | bkg-005-booking-end-to-end | integration | P1 | impl | PART-A-FR-2 | POST /appointments is confirmed end to end: 202, worker, slot booked, audit trail written |
 | bkg-006-a-reused-key-with-a-different-request-is-refused | workflow | P0 | impl | PART-A-FR-2 | An Idempotency-Key reused for a different booking request is refused, not silently merged |
 | bkg-007-a-booking-that-failed-before-its-row-reads-as-failed | contract | P1 | impl | PART-A-FR-2 | GET of a booking whose workflow closed before writing its row reads failed, not pending forever |
+| bkg-008-a-patient-cannot-hold-two-overlapping-appointments | integration | P0 | impl | PART-A-FR-2, PART-A-NFR-1 | Two concurrent claims for one patient at overlapping slots of different providers admit exactly one |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |

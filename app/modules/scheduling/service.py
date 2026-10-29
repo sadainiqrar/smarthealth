@@ -25,10 +25,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound, Unprocessable
@@ -293,6 +294,80 @@ async def ensure_slot_bookable(
         raise Unprocessable(f"slot {slot_id} started at {slot.starts_at.isoformat()}")
 
 
+#: Namespaces the patient advisory lock (`pg_advisory_xact_lock(int, int)`), so a later
+#: advisory lock keyed on some other id cannot collide with it. Arbitrary; never reuse.
+PATIENT_LOCK_CLASS = 0x5A7E
+
+
+def _patient_lock_key(patient_id: uuid.UUID) -> int:
+    """The patient id folded into Postgres's 32-bit signed `objid`. Two patients that
+    collide only serialise each other's claims -- slower, never wrong."""
+    return int.from_bytes(patient_id.bytes[:4], "big", signed=True)
+
+
+async def _ensure_patient_is_free(
+    session: AsyncSession, appointment: Appointment, slot_id: uuid.UUID
+) -> None:
+    """Conflict if the patient already holds a live appointment whose slot overlaps
+    `slot_id`'s `[starts_at, ends_at)` (PRD R-23, PART-A-FR-2).
+
+    *Live* is `pending` holding a slot or `confirmed` -- what `ux_appointments_live_slot`
+    calls live; a `pending` row with no slot owns no time yet. The appointment's own
+    predecessor (`rescheduled_from_id`) is excluded: a reschedule books the new slot
+    before it releases the old one (D-14), so moving an appointment by fifteen minutes
+    overlaps it for the length of the workflow, and that is the move, not a clash.
+
+    The check alone is racy: two claims for one patient at different providers' slots
+    lock different slot rows, and each reads the other as uncommitted. A
+    transaction-scoped advisory lock keyed on the patient serialises them, and is
+    released by the caller's commit or rollback. An advisory lock, not `SELECT ... FOR
+    UPDATE` on the patient row: `patients` belongs to another module (D-15), and this
+    needs a mutex, not that row. It is taken before the slot UPDATE, so every claim
+    acquires its locks in one order (appointment row, patient lock, slot row).
+
+    Before the UPDATE rather than after: in one transaction the order cannot leave a
+    slot `held` -- the activity's unit of work rolls back on the Conflict, then the
+    workflow's `fail_booking` marks the booking failed with nothing to release -- but
+    checking first skips a write that would only be rolled back, and keeps the lock
+    order above. A missing slot is left to the UPDATE, which already says NotFound.
+    """
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:cls, :key)"),
+        {"cls": PATIENT_LOCK_CLASS, "key": _patient_lock_key(appointment.patient_id)},
+    )
+    target = await session.execute(
+        select(ProviderSlot.starts_at, ProviderSlot.ends_at).where(ProviderSlot.id == slot_id)
+    )
+    window = target.one_or_none()
+    if window is None:
+        return
+    starts_at, ends_at = window
+    held = aliased(ProviderSlot)
+    conditions = [
+        Appointment.patient_id == appointment.patient_id,
+        Appointment.id != appointment.id,
+        # The same slot is the slot gates' business (the conditional UPDATE, then the
+        # live-slot index), and they already refuse it with their own answer.
+        Appointment.slot_id != slot_id,
+        Appointment.status.in_((AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED)),
+        held.starts_at < ends_at,
+        held.ends_at > starts_at,
+    ]
+    if appointment.rescheduled_from_id is not None:
+        conditions.append(Appointment.id != appointment.rescheduled_from_id)
+    clash = await session.scalar(
+        select(Appointment.id)
+        .join(held, held.id == Appointment.slot_id)
+        .where(*conditions)
+        .limit(1)
+    )
+    if clash is not None:
+        raise Conflict(
+            f"slot {slot_id} overlaps appointment {clash} of patient "
+            f"{appointment.patient_id}"
+        )
+
+
 async def claim_slot(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     slot_id: uuid.UUID, now: datetime, actor_user_id: str | None,
@@ -307,6 +382,10 @@ async def claim_slot(
 
     The partial unique index `ux_appointments_live_slot` is the second gate: if the
     UPDATE were ever wrong, attaching `slot_id` to a second live appointment still fails.
+
+    Before the UPDATE, `_ensure_patient_is_free` refuses a slot that overlaps another
+    live appointment of the same patient (PRD R-23) -- every gate above is about one
+    provider's time, and none sees a patient booked with two providers at once.
     """
     appointment = await _require(session, appointment_id)
     if appointment.status is not AppointmentStatus.PENDING:
@@ -316,6 +395,7 @@ async def claim_slot(
     if appointment.slot_id is not None:
         raise Conflict(f"appointment {appointment_id} already holds slot {appointment.slot_id}")
     before = _snapshot(appointment)
+    await _ensure_patient_is_free(session, appointment, slot_id)
 
     claimed = await session.scalar(
         update(ProviderSlot)

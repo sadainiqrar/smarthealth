@@ -149,6 +149,43 @@ async def test_two_bookings_for_one_slot_confirm_exactly_one(api, token_for, boo
         assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.BOOKED
 
 
+async def test_an_overlapping_booking_for_the_same_patient_fails_and_frees_its_slot(
+    api, token_for, booking_stack
+):
+    """PRD R-23 end to end: `booking.claim_slot` refuses the overlap with a non-retryable
+    Conflict, the workflow compensates, and the second provider's slot is still free."""
+    factory, client = booking_stack
+    async with factory() as session:
+        first = await seed_bookable(session)
+        start = (await session.get(ProviderSlot, first.slot_id)).starts_at
+        second = await seed_bookable(
+            session, starts_at=start + timedelta(minutes=15), patient_id=first.patient_id
+        )
+    headers = token_for(UserRole.FRONT_DESK)
+
+    booked = await api.post(
+        "/appointments",
+        json={"patient_id": str(first.patient_id), "slot_id": str(first.slot_id)},
+        headers=headers,
+    )
+    assert await _finish(client, booked.json()["appointment_id"]) == "confirmed"
+    clash = await api.post(
+        "/appointments",
+        json={"patient_id": str(first.patient_id), "slot_id": str(second.slot_id)},
+        headers=headers,
+    )
+    clash_id = clash.json()["appointment_id"]
+    with pytest.raises(WorkflowFailureError):
+        await _finish(client, clash_id)
+
+    assert (await api.get(f"/appointments/{clash_id}", headers=headers)).json()["status"] == (
+        "failed"
+    )
+    async with factory() as session:
+        slot = await session.get(ProviderSlot, second.slot_id)
+    assert slot.status is SlotStatus.FREE
+
+
 # --- Patient-role authorisation -------------------------------------------------------
 # These need real rows: the ownership check resolves the caller's user id to a patient
 # through patients.public, which T1 cannot fake without faking the very check under test.

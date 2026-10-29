@@ -30,25 +30,34 @@ class Bookable:
 
 async def seed_bookable(
     session: AsyncSession, *, starts_in: timedelta = timedelta(days=1),
-    duration: timedelta = timedelta(minutes=30),
+    duration: timedelta = timedelta(minutes=30), starts_at: datetime | None = None,
+    patient_id: uuid.UUID | None = None,
 ) -> Bookable:
-    """Pair with `purge`; the `factory` fixture in test_booking_service does."""
+    """Pair with `purge`; the `factory` fixture in test_booking_service does.
+
+    `starts_at` pins the slot to an exact instant (two seeds that must overlap cannot
+    rely on `now` agreeing between them); `patient_id` reuses an existing patient
+    instead of making one, for a second provider's slot booked by the same patient."""
     clinic = Clinic(name=f"Riverside {uuid.uuid4().hex[:8]}", timezone="UTC")
     provider = Provider(
         first_name="Ada", last_name="Lovelace", specialty="cardiology",
         license_number=f"LIC-{uuid.uuid4().hex[:10]}",
     )
-    patient = Patient(mrn=f"MRN-{uuid.uuid4().hex[:8]}", first_name="Sam", last_name="Doe")
-    session.add_all([clinic, provider, patient])
+    session.add_all([clinic, provider])
+    if patient_id is None:
+        patient = Patient(mrn=f"MRN-{uuid.uuid4().hex[:8]}", first_name="Sam", last_name="Doe")
+        session.add(patient)
+        await session.flush()
+        patient_id = patient.id
     await session.flush()
-    start = datetime.now(UTC).replace(microsecond=0) + starts_in
+    start = starts_at or datetime.now(UTC).replace(microsecond=0) + starts_in
     slot = ProviderSlot(
         provider_id=provider.id, clinic_id=clinic.id,
         starts_at=start, ends_at=start + duration,
     )
     session.add(slot)
     await session.commit()
-    made = Bookable(patient.id, slot.id, provider.id, clinic.id)
+    made = Bookable(patient_id, slot.id, provider.id, clinic.id)
     CREATED.append(made)
     return made
 
