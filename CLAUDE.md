@@ -11,16 +11,22 @@ provider management with role-gated writes, paginated and filtered reads, and ev
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
 Dockerfile plus an `app` service behind a compose profile.
 
-**Week 2 in progress — slices 1 and 2 of 5 have landed.** Slice 1: a Temporal worker
+**Week 2 in progress — slices 1, 2 and 3 of 5 have landed.** Slice 1: a Temporal worker
 process (`app/worker.py`, the `worker` compose service) with workflow/activity registries,
 a canary workflow as its readiness probe, and Temporal in `/ready`. Slice 2, the booking
 workflow: `POST /appointments` (202) starts `BookAppointmentWorkflow`, which creates the
 `pending` row, validates, claims the slot, runs the billing pre-check and reminder
 scheduling (both **stand-ins** until Week 3) and confirms last, compensating on any failure;
-`GET /appointments/{id}` reads the result. Code in `app/modules/scheduling/`. **Not built
-yet:** slice 3, the visit workflow (check-in → seen → complete, no-show timer); slice 4,
-cancel/reschedule and the waitlist; slice 5, patient self-service (PRD R-5). All five are
-designed in `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
+`GET /appointments/{id}` reads the result. Slice 3, the visit lifecycle:
+`POST /appointments/{id}/check-in`, `/seen` and `/complete` write the visit
+**synchronously**, in the request's transaction under the appointment row lock, and answer
+200 (409 on an illegal step); `GET /appointments/{id}/visit` reads it. A `VisitWorkflow`,
+started when a booking confirms, is only the durable no-show timer — the database records
+human actions, the workflow owns time (PRD D-12; an earlier signal-driven design was
+replaced after review because it lost check-ins). Billing and follow-up on completion are
+Week 3. Code in `app/modules/scheduling/`. **Not built yet:** slice 4, cancel/reschedule
+and the waitlist; slice 5, patient self-service (PRD R-5). All five are designed in
+`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
 the list of what was deliberately deferred are in
@@ -30,8 +36,8 @@ Two documents carry the things code cannot state, and are the first stop for "wh
 
 | Document | Use it for |
 | --- | --- |
-| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-11 and D-15), and the known gaps with dispositions (§9, R-1 … R-13) |
-| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2), and the **designed** event flows — the Temporal/Kafka/Celery split, cancellation as a paired write, the event catalogue |
+| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-12 and D-15), and the known gaps with dispositions (§9, R-1 … R-16) |
+| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2) and visit lifecycle (§2.9, §3.2a), and the **designed** event flows — the Temporal/Kafka/Celery split, cancellation as a paired write, the event catalogue |
 
 **Treat every document here as a source, not as proof.** Docs drift from code, and a stale
 claim is worse than a missing one because it gets trusted. Two real examples found on
@@ -189,7 +195,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 644 fast tests (plus 1 skip) in ~20s, measured 2026-10-28; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 791 fast tests (plus 1 skip) in ~25s (25.15s and 28.22s on two runs), measured 2026-10-29; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -221,7 +227,7 @@ constrain.
 - **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:
-  the canary, `BookAppointmentWorkflow`, and the seven `booking.*` activities. Kafka consumers
+  the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, and the nine scheduling activities (seven `booking.*`, two `visit.*`). Kafka consumers
   and Celery tasks have no registries yet.
 - **6** — `app/core/clock.py`.
 - **7** — `app/api/health.py` for the API; the worker has no HTTP endpoint, and its
@@ -269,8 +275,9 @@ Proven by integration tests, not by convention:
   restated in Week 2). Leaving `pending`/`confirmed` frees the partial index but not
   `provider_slots.status`. Confirmed → `booked`; failed, cancelled, rescheduled → `free`;
   completed and no-show stay `booked` (their slot is in the past). Booking and compensation
-  do this today (`confirm_booking`, `fail_booking`); cancel, reschedule and the visit paths
-  must too. Slot status is written **only** in `app/modules/scheduling/service.py` —
+  do this today (`confirm_booking`, `fail_booking`); the visit paths (complete, no-show)
+  write no slot at all, by design, and cancel and reschedule must flip both in one
+  transaction (slice 4). Slot status is written **only** in `app/modules/scheduling/service.py` —
   `tests/meta/test_slot_writes.py` fails if anything else in `app/` writes it, so new
   release paths go there.
 - **A past slot is still bookable** at the database level — `CHECK (starts_at > now())` is

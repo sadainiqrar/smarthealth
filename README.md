@@ -14,10 +14,11 @@ The project is delivered in two parts:
 
 **Week 1 complete; Week 2 in progress.** Auth, patient and provider management, an
 audited mutation path, a CLI to create the first user, and the application containerised
-behind a compose profile. Week 2 has landed a Temporal worker and the **booking workflow**:
-an appointment is confirmed only after every step succeeds, and compensated to `failed`
-otherwise. The visit workflow, cancel/reschedule with the waitlist, and patient
-self-service are next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
+behind a compose profile. Week 2 has landed a Temporal worker, the **booking workflow**
+(an appointment is confirmed only after every step succeeds, and compensated to `failed`
+otherwise) and the **visit lifecycle**: check-in, seen and complete are synchronous writes,
+and a durable workflow marks an appointment `no_show` if nobody checks in by the slot's end
+plus a grace period. Cancel/reschedule with the waitlist, and patient self-service are next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
 
 ## Architecture
 
@@ -40,7 +41,7 @@ flowchart TB
     mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
     redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
 
-    temporal["<b>Temporal</b> + worker<br/>booking workflow<br/><i>visit · cancel/reschedule: Week 2, next</i>"]
+    temporal["<b>Temporal</b> + worker<br/>booking · visit no-show timer<br/><i>cancel/reschedule: Week 2, next</i>"]
     kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
     celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
     otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]
@@ -164,8 +165,8 @@ hold a slot (a CHECK) — the assignment's headline invariant, made structural.
 | [`docs/superpowers/specs/2026-09-01-testing-harness-design.md`](docs/superpowers/specs/2026-09-01-testing-harness-design.md) | Testing harness design |
 | [`docs/superpowers/specs/2026-09-02-week1-foundation-design.md`](docs/superpowers/specs/2026-09-02-week1-foundation-design.md) | Domain model and schema decisions |
 | [`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`](docs/superpowers/specs/2026-09-03-week1-management-apis-design.md) | Management API design, and what Week 1 deliberately deferred |
-| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking (built), visit, cancel/reschedule, waitlist, self-service (designed) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking workflow, and the designed event flows |
+| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking and visit (built), cancel/reschedule, waitlist, self-service (designed) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking and visit workflows, and the designed event flows |
 | [`tests/README.md`](tests/README.md) | How to run and author tests |
 
 The original `.docx` files are kept in `docs/requirements/` and are authoritative.
@@ -212,6 +213,9 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | GET | `/slots` | any authenticated — a provider's free, future slots; `provider_id` is required, and `from`/`to` must carry a timezone or the answer is a 422 |
 | POST | `/appointments` | `patient` (for themselves only), `front_desk`, `admin` — answers **202**; optional `Idempotency-Key` header |
 | GET | `/appointments/{id}` | the owning `patient`, `provider`, `front_desk`, `admin` |
+| POST | `/appointments/{id}/check-in` | `front_desk`, `admin` — answers **200** `VisitRead`; 409 on an illegal step |
+| POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider`, `admin` — answer **200** `VisitRead`; 409 on an illegal step |
+| GET | `/appointments/{id}/visit` | the owning `patient`, `provider`, `front_desk`, `admin` — 404 until a check-in exists |
 
 `GET /health` and `GET /ready` are public.
 
@@ -222,6 +226,14 @@ with the same `Idempotency-Key` returns the same booking; the same key with a di
 body is a 422. A patient booking for someone else is 403; a patient reading someone
 else's appointment is 404. Temporal unreachable is a 503. Details:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2.8 and §3.2.
+
+**Visit actions are synchronous.** Check-in, seen and complete are written in the request
+itself and answer `200` with the visit; an action that is not legal now — a second
+check-in, `seen` before check-in, `complete` before `seen`, anything on a cancelled or
+no-show appointment — is a `409`, and an unknown appointment a `404`. The only thing that
+runs in the background is the no-show timer: a workflow started when a booking confirms
+marks the appointment `no_show` once the slot's end plus a grace period passes with no
+check-in. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2.9 and §3.2a.
 
 **Try it in a browser.** With the stack running, FastAPI serves interactive API
 documentation generated from the route definitions and response models:
@@ -242,6 +254,10 @@ transaction boundary; services flush.
 
 **Every mutation is audited** to Mongo with actor, action and before/after, awaited so a
 Mongo outage fails the request rather than silently dropping the record.
+
+**Not built by the visit lifecycle:** billing and follow-up on completion (Week 3), and a
+provider being restricted to their own patients' visits (any provider may mark any visit seen
+or complete — PRD R-14).
 
 **Not yet implemented:** a patient listing their own appointments. A patient can read their
 own patient record (`GET /patients/me`) and an appointment they own, but there is no list
@@ -296,7 +312,7 @@ test stack, which uses the same file, does not start them — the tests drive th
 application in-process. The worker starts only once `app` is healthy, because the `app`
 container applies the migrations. Its healthcheck, `python -m app.worker --check`,
 executes a canary workflow, so `--wait` returns only when a worker is actually polling
-and executing — not merely when the process is up. It runs the booking workflow; the
+and executing — not merely when the process is up. It runs the booking and visit workflows; the
 remaining scheduling workflows are designed in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
@@ -335,6 +351,37 @@ body return the same `appointment_id` and book nothing new. (To book again, chan
 key: the same key with a different slot is a 422.) The appointment's audit trail —
 `booking_requested`, `slot_claimed`, `confirmed` — is in Mongo, and the workflow's history
 (`booking-<appointment_id>`) is in Temporal.
+
+**Run a visit.** Continue from the booking above once `$APPOINTMENT` reads `confirmed`.
+Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
+provider login `a.osei@medinova.example` (same password as the other seeded logins) can
+do both. To use a login of your own instead, create one the way the admin was created above,
+with `--role provider`.
+
+```bash
+login() { curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
+  -d "{\"email\": \"$1\", \"password\": \"...\"}" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'; }
+PROVIDER_TOKEN=$(login a.osei@medinova.example)
+
+act() { curl -s -X POST http://localhost:8000/appointments/$APPOINTMENT/$1 -H "Authorization: Bearer $2"; }
+act check-in  $TOKEN            # 200 {"status":"checked_in", "checked_in_at":"…", …}
+act check-in  $TOKEN            # 409 — a repeat is refused, not silently accepted
+act seen      $PROVIDER_TOKEN   # 200 {"status":"in_progress", "seen_at":"…", …}
+act complete  $PROVIDER_TOKEN   # 200 {"status":"completed", "completed_at":"…", …}
+
+curl -s http://localhost:8000/appointments/$APPOINTMENT/visit -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8000/appointments/$APPOINTMENT       -H "Authorization: Bearer $TOKEN"
+# the appointment is now "completed"; its slot stays "booked" (a past slot is never freed)
+```
+
+Each action is audited in Mongo with the acting user. The no-show side needs no request: a
+confirmed appointment nobody checks in for becomes `no_show` at the slot's end plus
+`SMARTHEALTH_NO_SHOW_GRACE_MINUTES` (default 15, set on the `worker` process, which reads it)
+and its workflow, `visit-<appointment_id>`, ends `no_show` in Temporal. The slot you
+booked is in the future, so you will not see that happen in a demo without waiting; the test
+`test_nobody_checking_in_becomes_a_no_show_on_the_real_timer` runs it against a real
+timer with a one-second slot.
 
 To create a user in a **test** stack instead (`-p smarthealth-test`, which publishes
 Postgres on the offset port 15432), point the CLI at it from the host:

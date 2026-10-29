@@ -1,5 +1,17 @@
 # Week 2 Slice 3 — Visit Workflow Implementation Plan
 
+> **Superseded in part (2026-10-29).** Tasks 4, 5 and 7 below were built as written
+> (`ee60bc9`, `e572237`, `b443ffa`) and then replaced after review by the synchronous
+> design in spec D-12 as amended (§2, §4.2): the database records staff actions in the
+> request's own transaction (200, not 202), and `VisitWorkflow` is only the durable
+> no-show timer. The signal-with-start helper (`signal_visit`) and the signal-driven
+> workflow described in those tasks no longer exist. The commits that implement the
+> amended design: `a31e284` (the three-way no-show outcome), `b9ed7df` (actions written
+> in the request, workflow reduced to its timer), `70cec30` (`REJECT_DUPLICATE` on the
+> child start), `75cc2b2` (the grace validated once, in `Settings`), `2746aab` (the no-show
+> proven on a real timer) and `400d093` (the spec amendment). The rest of this plan is
+> left as the historical record; read the spec and the code for what was built.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** After a booking confirms, a durable `VisitWorkflow` carries the appointment through check-in → seen → complete, driven by staff signals, and marks it `no_show` by itself if nobody checks in by the slot's end plus a grace period.

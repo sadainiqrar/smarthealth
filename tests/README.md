@@ -145,6 +145,37 @@ docker-compose.infra.yml exec -T postgres psql -U smarthealth -c "\l"`.
 depending on `now()` therefore sees a single frozen timestamp for the whole test — which
 is why the `updated_at` trigger uses `clock_timestamp()`.
 
+## Temporal time-skipping pitfalls
+
+Both lessons were learned the hard way on `temporalio` 1.34's time-skipping test server
+(`WorkflowEnvironment.start_time_skipping()`), and both fail the same way: a later test
+that awaits a long timer or a retry backoff stops skipping and waits in real time, so
+the suite hangs or crawls, and which test hangs depends on test order. Production Temporal
+is not affected by either.
+
+**1. Never leave a workflow on a task queue no worker polls.** Afterwards the test server
+stops skipping time for the whole session. Start the worker before starting workflows,
+and let every workflow finish (or signal it to finish) inside the worker context. A test
+that needs a queue nobody polls on purpose — the canary's "nothing is polling" case in
+`tests/tiers/t2_workflow/test_canary.py` — starts its own `WorkflowEnvironment` and shuts
+it down, rather than touching the shared one.
+
+**2. Once a workflow that started a child closes, time skipping stops for the rest of
+that test server** — even with the child already finished, and whether or not it was
+abandoned. A confirmed booking starts a `VisitWorkflow` child, so any test that runs a
+booking to `confirmed` takes the function-scoped `isolated_env` fixture
+(`tests/tiers/t2_workflow/conftest.py`) instead of the session-scoped `temporal_env`, which
+gets a private server per test. Tests that never start a child, such as the visit timer
+tests, share `temporal_env` and stay fast. A booking test must also end the visit child it
+started inside the worker context (`finish_visit` in
+`tests/tiers/t2_workflow/visit_fakes.py`), for the reason in lesson 1.
+
+**Fake deadlines come from the server's clock.** In a shared session environment, compute a
+fake deadline from `await env.get_current_time()`, never the wall clock. The time-skipping
+server's virtual time advances every time a test skips a timer, so after earlier tests it is
+ahead of the wall clock, and a deadline computed from `datetime.now()` is already in the
+past (the visit fakes do this: `visit_fakes.py`, `test_visit_workflow.py`).
+
 ## Phase status
 
 | Phase | Status |
