@@ -370,7 +370,12 @@ async def test_two_concurrent_reschedules_of_one_appointment_confirm_one(
         for new_id in new_ids
     ]
 
-    assert sorted(results) in (["failed", "rescheduled"], ["rescheduled", "superseded"])
+    # `failed` is the only losing outcome. `superseded` would need the loser's booking to
+    # confirm, and it cannot: `ux_appointments_live_reschedule` allows one pending or
+    # confirmed replacement per `rescheduled_from_id`, and the winner's stays `confirmed`
+    # for the rest of the test -- so the loser's insert is always the Conflict, whichever
+    # order the two run in.
+    assert sorted(results) == ["failed", "rescheduled"]
     winner = results.index("rescheduled")
     loser = 1 - winner
     statuses = [
