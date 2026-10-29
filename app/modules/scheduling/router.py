@@ -6,7 +6,8 @@ Visit actions answer 200: they are written in the request's own transaction (D-1
 so is cancel -- its follow-up (refund, waitlist) is a best-effort workflow started after the
 commit. Reschedule answers 202: it must book the new slot before releasing the old one, which
 only a workflow can do (D-14).
-A patient books and reads only their own appointments; staff act for anyone.
+A patient books and reads only their own appointments -- the list included, which is forced
+to theirs; staff act for anyone.
 """
 
 from __future__ import annotations
@@ -73,6 +74,13 @@ async def _own_patient_id(session: AsyncSession, claims: TokenClaims) -> uuid.UU
     return await patient_id_for_user(session, uuid.UUID(claims.subject))
 
 
+async def _read(session: AsyncSession, appointment) -> AppointmentRead:
+    """The appointment as the API shows it, with its slot's start time."""
+    read = AppointmentRead.model_validate(appointment)
+    read.starts_at = await service.slot_starts_at(session, appointment.slot_id)
+    return read
+
+
 @router.post("", response_model=BookingAccepted, status_code=status.HTTP_202_ACCEPTED)
 async def book_appointment(
     body: BookingCreate,
@@ -105,6 +113,41 @@ async def book_appointment(
     return BookingAccepted(appointment_id=appointment_id)
 
 
+@router.get("", response_model=Page[AppointmentRead])
+async def list_appointments(
+    # A patient may send `patient_id`, but only their own: anything else is a 403, never
+    # a silent substitution -- see the check below.
+    patient_id: uuid.UUID | None = None,
+    provider_id: uuid.UUID | None = None,
+    status_: AppointmentStatus | None = Query(default=None, alias="status"),
+    # AwareDatetime, as in GET /slots: a naive bound is ambiguous and would raise when
+    # compared with an aware slot time -- a 500, not a 422.
+    from_: AwareDatetime | None = Query(default=None, alias="from"),
+    to: AwareDatetime | None = Query(default=None),
+    page: PageParams = Depends(page_params),
+    session: AsyncSession = Depends(get_session),
+    claims: TokenClaims = Depends(require_role(*READERS)),
+) -> Page[AppointmentRead]:
+    if claims.role is UserRole.PATIENT:
+        own = await _own_patient_id(session, claims)
+        if own is None:
+            raise NotFound("no patient record is linked to this login")
+        if patient_id is not None and patient_id != own:
+            raise PermissionDenied("a patient may only list their own appointments")
+        # Forced, not merely checked: the list is always the caller's own.
+        patient_id = own
+    rows, total = await service.list_appointments(
+        session, patient_id=patient_id, provider_id=provider_id, status=status_,
+        start=from_, end=to, page=page,
+    )
+    items = []
+    for appointment, starts_at in rows:
+        read = AppointmentRead.model_validate(appointment)
+        read.starts_at = starts_at
+        items.append(read)
+    return Page[AppointmentRead](items=items, total=total, limit=page.limit, offset=page.offset)
+
+
 @router.get("/{appointment_id}", response_model=AppointmentRead)
 async def get_appointment(
     appointment_id: uuid.UUID,
@@ -130,7 +173,7 @@ async def get_appointment(
     if claims.role is UserRole.PATIENT:
         if await _own_patient_id(session, claims) != appointment.patient_id:
             raise NotFound(f"appointment {appointment_id} does not exist")
-    return AppointmentRead.model_validate(appointment)
+    return await _read(session, appointment)
 
 
 # The visit actions write synchronously and the router owns the commit (the Week 1 rule).
@@ -225,7 +268,7 @@ async def cancel_appointment(
         session, audit, appointment_id=appointment_id, reason=body.reason,
         now=clock.now(), actor_user_id=claims.subject,
     )
-    read = AppointmentRead.model_validate(appointment)
+    read = await _read(session, appointment)
     follow_up = FollowUpRequest(
         appointment_id=str(appointment_id),
         slot_id=str(appointment.slot_id) if appointment.slot_id else None,

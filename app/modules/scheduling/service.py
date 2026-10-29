@@ -107,6 +107,63 @@ async def get_appointment(
     return await session.scalar(statement)
 
 
+async def slot_starts_at(session: AsyncSession, slot_id: uuid.UUID | None) -> datetime | None:
+    """When the appointment's slot starts, or None for an appointment with no slot yet --
+    the single-appointment read's counterpart of the join `list_appointments` makes."""
+    if slot_id is None:
+        return None
+    return await session.scalar(select(ProviderSlot.starts_at).where(ProviderSlot.id == slot_id))
+
+
+async def list_appointments(
+    session: AsyncSession,
+    *,
+    patient_id: uuid.UUID | None,
+    provider_id: uuid.UUID | None,
+    status: AppointmentStatus | None,
+    start: datetime | None,
+    end: datetime | None,
+    page: PageParams,
+) -> tuple[list[tuple[Appointment, datetime | None]], int]:
+    """Appointments with their slot's start time, newest slot first, each filter optional.
+
+    `start`/`end` bound the slot's `starts_at` (`>=` and `<`), so an appointment with no
+    slot yet -- `pending` before the claim, an early `failed` -- matches neither and drops
+    out whenever either is given. Slot-less rows otherwise sort last: they have no time
+    to be newest by. `created_at, id` makes the order total, so pages never overlap.
+
+    A fresh read, like `get_appointment`: `populate_existing` defeats the identity map.
+    """
+    conditions = []
+    if patient_id is not None:
+        conditions.append(Appointment.patient_id == patient_id)
+    if provider_id is not None:
+        conditions.append(Appointment.provider_id == provider_id)
+    if status is not None:
+        conditions.append(Appointment.status == status)
+    if start is not None:
+        conditions.append(ProviderSlot.starts_at >= start)
+    if end is not None:
+        conditions.append(ProviderSlot.starts_at < end)
+    total = await session.scalar(
+        select(func.count())
+        .select_from(Appointment)
+        .outerjoin(ProviderSlot, Appointment.slot_id == ProviderSlot.id)
+        .where(*conditions)
+    )
+    rows = await session.execute(
+        select(Appointment, ProviderSlot.starts_at)
+        .outerjoin(ProviderSlot, Appointment.slot_id == ProviderSlot.id)
+        .where(*conditions)
+        .order_by(ProviderSlot.starts_at.desc().nulls_last(), Appointment.created_at.desc(),
+                  Appointment.id)
+        .limit(page.limit)
+        .offset(page.offset)
+        .execution_options(populate_existing=True)
+    )
+    return [(row[0], row[1]) for row in rows], int(total or 0)
+
+
 async def _require(session: AsyncSession, appointment_id: uuid.UUID) -> Appointment:
     appointment = await get_appointment(session, appointment_id, for_update=True)
     if appointment is None:

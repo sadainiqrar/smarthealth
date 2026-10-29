@@ -34,6 +34,9 @@ class AppointmentRead(BaseModel):
     provider_id: uuid.UUID | None = None
     clinic_id: uuid.UUID | None = None
     slot_id: uuid.UUID | None = None
+    #: When the slot starts; None until the booking has claimed one. Not an ORM column:
+    #: the router fills it from the slot (the list joins it, a single read looks it up).
+    starts_at: datetime | None = None
     reason: str | None = None
     confirmed_at: datetime | None = None
     created_at: datetime | None = None

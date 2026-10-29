@@ -171,7 +171,11 @@ def world(monkeypatch, temporal):
         state["waitlist_calls"].append(("list", kwargs))
         return [], 0
 
+    async def slot_starts_at(session, slot_id):
+        return NOW
+
     monkeypatch.setattr(service, "get_appointment", get_appointment)
+    monkeypatch.setattr(service, "slot_starts_at", slot_starts_at)
     monkeypatch.setattr(service, "get_visit", get_visit)
     monkeypatch.setattr(service, "cancel_appointment", cancel_appointment)
     monkeypatch.setattr(service, "add_waitlist_entry", add_waitlist_entry)
