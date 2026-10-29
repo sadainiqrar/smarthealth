@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from app.settings import Settings, get_settings
 
@@ -31,6 +32,12 @@ def test_settings_read_the_environment(monkeypatch):
 
 def test_no_show_grace_defaults_to_fifteen_minutes():
     assert Settings().no_show_grace_minutes == 15
+
+
+def test_no_show_grace_may_be_zero_but_not_negative():
+    assert Settings(no_show_grace_minutes=0).no_show_grace_minutes == 0
+    with pytest.raises(ValidationError):
+        Settings(no_show_grace_minutes=-1)
 
 
 def test_llm_mode_defaults_to_fixture():

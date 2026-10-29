@@ -55,8 +55,10 @@ def parse_id(value: str, field: str) -> uuid.UUID:
 class SchedulingActivities:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], audit: AuditLog,
-        clock: Clock, no_show_grace: timedelta = timedelta(minutes=15),
+        clock: Clock, no_show_grace: timedelta,
     ) -> None:
+        # `no_show_grace` has no default: the one default is `Settings`, and a second
+        # here could silently disagree with it at any construction site that forgot it.
         self._session_factory = session_factory
         self._audit = audit
         self._clock = clock

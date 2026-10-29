@@ -11,6 +11,7 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LlmMode = Literal["fixture", "record", "live"]
@@ -82,7 +83,9 @@ class Settings(BaseSettings):
     temporal_namespace: str = "default"
     #: Minutes after a slot's end before an appointment nobody checked in for becomes a
     #: no-show (spec 4.2). Read by the worker, which hands it to the visit activities.
-    no_show_grace_minutes: int = 15
+    #: Zero is allowed (no grace); a negative grace would mark patients no-show before
+    #: their slot ended, so it is refused at startup.
+    no_show_grace_minutes: int = Field(default=15, ge=0)
 
     # --- Auth ---
     # At least 32 bytes: below that PyJWT warns (InsecureKeyLengthWarning) on every
