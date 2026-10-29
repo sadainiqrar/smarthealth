@@ -7,6 +7,7 @@ from app.modules.scheduling.state import (
     APPOINTMENT_TRANSITIONS,
     VisitAction,
     can_transition,
+    require_cancellable,
     require_transition,
     require_visit_action,
 )
@@ -71,3 +72,23 @@ def test_a_refused_visit_action_names_the_action_and_both_states():
         require_visit_action(VisitAction.SEEN, S.CANCELLED, None)
     with pytest.raises(Conflict, match="complete.*confirmed.*checked_in"):
         require_visit_action(VisitAction.COMPLETE, S.CONFIRMED, V.CHECKED_IN)
+
+
+# --- cancel and reschedule ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("status", list(S))
+@pytest.mark.parametrize("has_visit", [False, True])
+def test_only_a_live_appointment_with_no_visit_is_cancellable(status, has_visit):
+    if status in (S.PENDING, S.CONFIRMED) and not has_visit:
+        require_cancellable(status, has_visit)
+    else:
+        with pytest.raises(Conflict):
+            require_cancellable(status, has_visit)
+
+
+def test_a_refused_cancel_says_why():
+    with pytest.raises(Conflict, match="completed"):
+        require_cancellable(S.COMPLETED, False)
+    with pytest.raises(Conflict, match="checked in"):
+        require_cancellable(S.CONFIRMED, True)

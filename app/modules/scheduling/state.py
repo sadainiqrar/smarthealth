@@ -37,6 +37,17 @@ def require_transition(source: S, target: S) -> None:
         )
 
 
+def require_cancellable(status: S, has_visit: bool) -> None:
+    """Raise `Conflict` unless the appointment can be cancelled or rescheduled away:
+    `pending` or `confirmed`, and no visit row. A checked-in patient is not cancelled --
+    the visit completes, or staff handle the slot some other way -- so a visit blocks
+    even though `confirmed -> cancelled` is a legal transition on its own."""
+    if status not in (S.PENDING, S.CONFIRMED):
+        raise Conflict(f"an appointment that is {status.value} cannot be cancelled")
+    if has_visit:
+        raise Conflict("a patient who has checked in cannot be cancelled")
+
+
 class NoShowOutcome(str, enum.Enum):
     """What the no-show timer found when it fired, settled under the appointment lock.
 

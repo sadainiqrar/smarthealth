@@ -21,9 +21,11 @@ The caller owns the transaction: these flush, the caller commits -- the Week 1 r
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Literal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,17 +40,21 @@ from app.modules.scheduling.models import (
     ProviderSlot,
     SlotStatus,
     Visit,
+    WaitlistEntry,
+    WaitlistStatus,
 )
 from app.modules.scheduling.state import (
     VISIT_RESULT,
     NoShowOutcome,
     VisitAction,
+    require_cancellable,
     require_transition,
 )
 from app.modules.scheduling.state import require_visit_action as check_visit_action
 
 ENTITY = "appointment"
 VISIT_ENTITY = "visit"
+WAITLIST_ENTITY = "waitlist_entry"
 
 #: The partial unique index that allows one live appointment per slot. Named here
 #: because a claim that loses to it must become a Conflict, not a 500.
@@ -61,6 +67,14 @@ PATIENT_FK = "fk_appointments_patient_id_patients"
 #: The composite FK (migration 0002) tying `slot_id` to the appointment's own provider and
 #: clinic. A claim naming another provider's or clinic's slot violates it.
 SLOT_COHERENCE_FK = "fk_appointments_slot_provider_clinic"
+
+#: The waitlist's three foreign keys; an entry naming a missing patient, provider or
+#: department is a permanent NotFound, not a 500.
+WAITLIST_FKS = {
+    "fk_waitlist_entries_patient_id_patients": "patient",
+    "fk_waitlist_entries_provider_id_providers": "provider",
+    "fk_waitlist_entries_department_id_departments": "department",
+}
 
 
 def _snapshot(appointment: Appointment) -> dict[str, object]:
@@ -110,9 +124,10 @@ async def _audit(
 async def create_pending(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     patient_id: uuid.UUID, slot_id: uuid.UUID, reason: str | None,
-    actor_user_id: str | None,
+    actor_user_id: str | None, rescheduled_from_id: uuid.UUID | None = None,
 ) -> None:
     """Insert the `pending` row, copying provider/clinic/department from the slot.
+    `rescheduled_from_id` is set only for the new appointment of a reschedule.
 
     `ON CONFLICT (id) DO NOTHING` makes a retry harmless; only the call that actually
     inserted writes the audit entry. An existing row is a retry only if it describes the
@@ -128,6 +143,7 @@ async def create_pending(
             .values(
                 id=appointment_id, patient_id=patient_id, provider_id=slot.provider_id,
                 clinic_id=slot.clinic_id, department_id=slot.department_id, reason=reason,
+                rescheduled_from_id=rescheduled_from_id,
             )
             .on_conflict_do_nothing(index_elements=[Appointment.id])
         )
@@ -452,6 +468,227 @@ async def mark_no_show(
     await session.flush()
     await _audit(audit, appointment, "no_show", actor_user_id, before)
     return NoShowOutcome.NO_SHOW
+
+
+# --- cancel and reschedule (spec 4.3, 4.4) ---------------------------------------------
+#
+# Releasing a slot is a paired write (R-2): the appointment leaves its live status and the
+# slot returns to `free` in one transaction, under the appointment's row lock. A cancelled
+# or rescheduled appointment keeps its `slot_id`, as a failed one does, so the follow-up
+# workflow can say which slot to offer the waitlist.
+
+
+@dataclass(frozen=True)
+class RescheduleResult:
+    """What `complete_reschedule` did. `released_slot_id` is the old appointment's slot
+    when it was (or already had been) released, else None -- the workflow offers exactly
+    that slot to the waitlist."""
+
+    outcome: Literal["rescheduled", "superseded"]
+    released_slot_id: uuid.UUID | None
+
+
+async def _release_slot(session: AsyncSession, slot_id: uuid.UUID) -> None:
+    await session.execute(
+        update(ProviderSlot)
+        .where(
+            ProviderSlot.id == slot_id,
+            ProviderSlot.status.in_((SlotStatus.HELD, SlotStatus.BOOKED)),
+        )
+        .values(status=SlotStatus.FREE, version=ProviderSlot.version + 1)
+    )
+
+
+async def cancel_appointment(
+    session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, reason: str,
+    now: datetime, actor_user_id: str | None,
+) -> Appointment:
+    """pending|confirmed -> cancelled, and the slot it holds -> free, together.
+
+    Strict, like the visit actions: only the endpoint calls it and nothing retries it, so
+    cancelling a second time is a Conflict, not a silent success. A visit blocks it -- a
+    checked-in patient is not cancelled.
+
+    A `pending` appointment may hold a `held` slot (released here) or none yet, when the
+    booking has not claimed one (nothing to release). Either way its booking then finds
+    the appointment no longer `pending`: the next step fails permanently and
+    `fail_booking` leaves it alone (spec 4.3).
+
+    The audit entry goes to Mongo before the caller commits (PRD R-1), as everywhere."""
+    appointment = await _require(session, appointment_id)
+    visit = await get_visit(session, appointment_id)
+    require_cancellable(appointment.status, visit is not None)
+    require_transition(appointment.status, AppointmentStatus.CANCELLED)
+    before = _snapshot(appointment)
+    if appointment.slot_id is not None:
+        await _release_slot(session, appointment.slot_id)
+    appointment.status = AppointmentStatus.CANCELLED
+    appointment.cancelled_at = now
+    appointment.cancellation_reason = reason
+    await session.flush()
+    await _audit(audit, appointment, "cancelled", actor_user_id, before)
+    return appointment
+
+
+async def complete_reschedule(
+    session: AsyncSession, audit: AuditLog, *, old_appointment_id: uuid.UUID,
+    actor_user_id: str | None,
+) -> RescheduleResult:
+    """Move the old appointment out of the way once the new one is confirmed:
+    confirmed -> rescheduled, and its slot -> free, together. Idempotent -- it is an
+    activity -- and writes (and audits) only on its first run:
+
+    - already `rescheduled`: a retried activity; answers the same, writes nothing;
+    - not `confirmed`, or a visit exists: the old appointment was cancelled or the
+      patient checked in while the new booking ran. Nothing is released and the
+      reschedule is `superseded`; the new booking stands.
+
+    A first run whose commit fails leaves an audit entry for a write that never landed,
+    and its retry records a second (PRD R-1)."""
+    appointment = await _require(session, old_appointment_id)
+    if appointment.status is AppointmentStatus.RESCHEDULED:
+        return RescheduleResult("rescheduled", appointment.slot_id)
+    if (
+        appointment.status is not AppointmentStatus.CONFIRMED
+        or await get_visit(session, old_appointment_id) is not None
+    ):
+        return RescheduleResult("superseded", None)
+    require_transition(appointment.status, AppointmentStatus.RESCHEDULED)
+    before = _snapshot(appointment)
+    if appointment.slot_id is not None:
+        await _release_slot(session, appointment.slot_id)
+    appointment.status = AppointmentStatus.RESCHEDULED
+    await session.flush()
+    await _audit(audit, appointment, "rescheduled", actor_user_id, before)
+    return RescheduleResult("rescheduled", appointment.slot_id)
+
+
+# --- waitlist (spec 4.5) ---------------------------------------------------------------
+
+
+def _waitlist_snapshot(entry: WaitlistEntry) -> dict[str, object]:
+    return {
+        "status": entry.status,
+        "patient_id": str(entry.patient_id),
+        "provider_id": str(entry.provider_id) if entry.provider_id else None,
+        "department_id": str(entry.department_id) if entry.department_id else None,
+        "window_start": entry.window_start.isoformat(),
+        "window_end": entry.window_end.isoformat(),
+    }
+
+
+async def _audit_waitlist(
+    audit: AuditLog, entry: WaitlistEntry, action: str, actor_user_id: str | None,
+    before: dict[str, object] | None,
+) -> None:
+    await audit.record(
+        AuditEvent(
+            entity_type=WAITLIST_ENTITY, entity_id=str(entry.id), action=action,
+            actor_user_id=actor_user_id, before=before, after=_waitlist_snapshot(entry),
+        )
+    )
+
+
+async def add_waitlist_entry(
+    session: AsyncSession, audit: AuditLog, *, patient_id: uuid.UUID,
+    provider_id: uuid.UUID | None, department_id: uuid.UUID | None,
+    window_start: datetime, window_end: datetime, actor_user_id: str | None,
+) -> WaitlistEntry:
+    """A new `active` entry. The window must move forward; an unknown patient, provider
+    or department is a NotFound."""
+    if window_end <= window_start:
+        raise Unprocessable("window_end must be after window_start")
+    entry = WaitlistEntry(
+        patient_id=patient_id, provider_id=provider_id, department_id=department_id,
+        window_start=window_start, window_end=window_end,
+    )
+    session.add(entry)
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        missing = WAITLIST_FKS.get(violated_constraint(exc) or "")
+        if missing is not None:
+            raise NotFound(f"{missing} does not exist") from exc
+        raise
+    await session.refresh(entry)  # status and timestamps are server defaults
+    await _audit_waitlist(audit, entry, "joined", actor_user_id, None)
+    return entry
+
+
+async def list_waitlist(
+    session: AsyncSession, *, patient_id: uuid.UUID | None, page: PageParams
+) -> tuple[list[WaitlistEntry], int]:
+    """Entries, oldest first, optionally one patient's."""
+    conditions = [WaitlistEntry.patient_id == patient_id] if patient_id is not None else []
+    total = await session.scalar(
+        select(func.count()).select_from(WaitlistEntry).where(*conditions)
+    )
+    rows = await session.scalars(
+        select(WaitlistEntry)
+        .where(*conditions)
+        .order_by(WaitlistEntry.created_at, WaitlistEntry.id)
+        .limit(page.limit)
+        .offset(page.offset)
+    )
+    return list(rows), int(total or 0)
+
+
+async def waitlist_candidates(
+    session: AsyncSession, *, slot_id: uuid.UUID, limit: int = 3
+) -> list[tuple[uuid.UUID, uuid.UUID]]:
+    """`(entry_id, patient_id)` of up to `limit` entries to offer a released slot, oldest
+    first: `active`, window containing the slot's start (`window_start <= starts_at <
+    window_end`), and provider/department matching the slot's wherever the entry names
+    one. The patient who just released the slot is not excluded -- their window decides.
+
+    Read-only and not locked: two promotions may name the same entry. The workflow's
+    child-booking id, not a row lock, is what keeps one entry from being booked twice."""
+    slot = await session.get(ProviderSlot, slot_id)
+    if slot is None:
+        return []
+    rows = await session.execute(
+        select(WaitlistEntry.id, WaitlistEntry.patient_id)
+        .where(
+            WaitlistEntry.status == WaitlistStatus.ACTIVE,
+            WaitlistEntry.window_start <= slot.starts_at,
+            WaitlistEntry.window_end > slot.starts_at,
+            or_(
+                WaitlistEntry.provider_id.is_(None),
+                WaitlistEntry.provider_id == slot.provider_id,
+            ),
+            or_(
+                WaitlistEntry.department_id.is_(None),
+                WaitlistEntry.department_id == slot.department_id,
+            ),
+        )
+        .order_by(WaitlistEntry.created_at, WaitlistEntry.id)
+        .limit(limit)
+    )
+    return [(row.id, row.patient_id) for row in rows]
+
+
+async def fulfil_waitlist_entry(
+    session: AsyncSession, audit: AuditLog, *, entry_id: uuid.UUID,
+    actor_user_id: str | None,
+) -> None:
+    """active -> fulfilled. Idempotent: an already-fulfilled entry is a retried activity
+    and writes nothing. A cancelled or expired one is a Conflict."""
+    entry = await session.scalar(
+        select(WaitlistEntry)
+        .where(WaitlistEntry.id == entry_id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    if entry is None:
+        raise NotFound(f"waitlist entry {entry_id} does not exist")
+    if entry.status is WaitlistStatus.FULFILLED:
+        return
+    if entry.status is not WaitlistStatus.ACTIVE:
+        raise Conflict(f"waitlist entry {entry_id} is {entry.status.value}")
+    before = _waitlist_snapshot(entry)
+    entry.status = WaitlistStatus.FULFILLED
+    await session.flush()
+    await _audit_waitlist(audit, entry, "fulfilled", actor_user_id, before)
 
 
 async def list_free_slots(
