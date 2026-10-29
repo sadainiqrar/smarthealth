@@ -40,6 +40,10 @@ def build_app() -> FastAPI:
     async def out_of_budget() -> None:
         raise _OutOfBudget("insurance budget exhausted")
 
+    @app.get("/needs-int")
+    async def needs_int(n: int) -> dict[str, int]:
+        return {"n": n}
+
     @app.get("/boom")
     async def boom() -> None:
         raise RuntimeError("mongodb://user:hunter2@mongo:27017 is unreachable")
@@ -129,3 +133,18 @@ async def test_a_starlette_http_exception_is_not_swallowed_by_the_catch_all():
     response = await call("/no-such-route")
     assert response.status_code == 404
     assert response.json() == {"detail": "Not Found"}
+
+
+async def test_a_request_validation_failure_carries_the_error_key():
+    """sys-007: a 422 from request validation answers the same envelope.
+
+    FastAPI's default is `{"detail": [...]}` with no `error` key. `detail` stays the
+    pydantic error list, because clients already handle a non-string detail.
+    """
+    response = await call("/needs-int?n=abc")
+    assert response.status_code == 422
+    body = response.json()
+    assert set(body) == {"error", "detail"}
+    assert body["error"] == "ValidationError"
+    assert isinstance(body["detail"], list)
+    assert body["detail"][0]["loc"] == ["query", "n"]

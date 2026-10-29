@@ -9,6 +9,10 @@ status: ready
 # the only failures in the system answering `{"detail": ...}` with no `error` key,
 # and they are the two a client meets most often.
 #
+# Extended: request-validation 422s (`RequestValidationError`) also answer the
+# envelope, asserted in test_error_handlers.py::
+# test_a_request_validation_failure_carries_the_error_key.
+#
 # P0 because it is a security boundary's response contract: a client that cannot
 # parse a rejection uniformly is a client that mishandles rejections.
 #

@@ -18,6 +18,8 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.errors import DomainError
@@ -45,6 +47,19 @@ def register_error_handlers(app: FastAPI) -> None:
             headers=exc.headers,
         )
 
+    @app.exception_handler(RequestValidationError)
+    async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Request-validation failures keep `{"error", "detail"}` too.
+
+        FastAPI's default answers `{"detail": [...]}` with no `error` key. `detail` stays
+        the pydantic error list (clients already handle a non-string detail); the
+        encoder makes it JSON-safe, since `ctx` can carry exception objects.
+        """
+        return JSONResponse(
+            status_code=422,
+            content={"error": "ValidationError", "detail": jsonable_encoder(exc.errors())},
+        )
+
     @app.exception_handler(Exception)
     async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
         """Keep `{"error", "detail"}` as the shape of *every* failure.
@@ -64,7 +79,7 @@ def register_error_handlers(app: FastAPI) -> None:
            the process logs — and `httpx.ASGITransport` still raises unless it is
            built with `raise_app_exceptions=False`.
         2. It does not catch `HTTPException`; Starlette handles that separately, so
-           FastAPI's 404s and 422s keep their own shapes.
+           FastAPI's own 404s keep their shape (request-validation 422s are handled above).
 
         The exception text never reaches the client (see `INTERNAL_ERROR_BODY`); it
         goes to the log with a traceback instead, where it stays diagnosable.
