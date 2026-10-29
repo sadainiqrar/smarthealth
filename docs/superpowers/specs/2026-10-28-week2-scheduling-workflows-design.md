@@ -364,8 +364,19 @@ Accepted limits, each deliberate:
 
 ### 4.6 Patient self-service (R-5)
 
-`GET /patients/me` and `GET /appointments?mine=true` for the `patient` role, resolved via
-`users.id → patients.user_id`. A patient with no linked record gets 404.
+`GET /patients/me` and `GET /appointments`, resolved for the `patient` role via
+`users.id → patients.user_id`. There is no `mine` flag: a patient's list is always their
+own, forced server-side, so a flag would only be a way to ask for something else. A
+patient naming another `patient_id` gets 403; a patient login with no linked record gets
+404 (an empty list would hide a misissued account).
+
+Staff (provider, front desk, admin) get the same endpoint with filters: `patient_id`,
+`provider_id`, `status`, and a slot window `from` (inclusive) / `to` (exclusive) on
+`provider_slots.starts_at`, timestamps with an offset (422 otherwise). The result is
+paginated, newest slot first; an appointment with no slot yet sorts last and is excluded
+whenever a window bound is given. Each item carries `starts_at`, the slot's start, so a
+client can show when without a second call. Provider per-object scoping stays the
+documented gap R-14.
 
 ## 5. State machines
 
