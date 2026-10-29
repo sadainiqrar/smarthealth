@@ -37,6 +37,20 @@ def require_transition(source: S, target: S) -> None:
         )
 
 
+class NoShowOutcome(str, enum.Enum):
+    """What the no-show timer found when it fired, settled under the appointment lock.
+
+    Three answers, not a yes/no, because the two ways of *not* being a no-show mean
+    different things: a visit row says a check-in reached the database (its signal to the
+    workflow was lost or late), while `closed` says the appointment left `confirmed`
+    entirely (cancelled, rescheduled, completed). Strings, so the visit workflow can
+    return them as its result unchanged."""
+
+    NO_SHOW = "no_show"
+    VISIT_EXISTS = "visit_exists"
+    CLOSED = "closed"
+
+
 class VisitAction(str, enum.Enum):
     CHECK_IN = "check_in"
     SEEN = "seen"

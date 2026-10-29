@@ -39,6 +39,7 @@ from app.modules.scheduling.models import (
 )
 from app.modules.scheduling.state import (
     VISIT_RESULT,
+    NoShowOutcome,
     VisitAction,
     require_transition,
 )
@@ -432,26 +433,33 @@ async def complete_visit(
 async def mark_no_show(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     actor_user_id: str | None,
-) -> bool:
-    """confirmed -> no_show if nobody checked in. True when the appointment is (now) a
-    no-show; False when it is not one -- a visit exists, or the appointment was cancelled
-    or otherwise left `confirmed` -- and nothing was written.
+) -> NoShowOutcome:
+    """confirmed -> no_show if nobody checked in. Idempotent, and writes only for
+    `NO_SHOW` on its first run:
 
-    The workflow's timer fires at a fixed time while staff act on their own; this is where
-    the race is settled, under the appointment lock `check_in` also takes. No slot write."""
+    - `NO_SHOW`: marked now, or already was (a retried activity);
+    - `VISIT_EXISTS`: a check-in reached the database first -- not a no-show, whatever
+      the workflow's flags say, because its signal may have been lost or still be in
+      flight;
+    - `CLOSED`: the appointment left `confirmed` (cancelled, rescheduled, completed).
+
+    The timer fires at a fixed time while staff act on their own; this is where the race
+    is settled. `_require` takes the appointment row lock that `check_in` also takes, so a
+    check-in still uncommitted makes this wait for it, and the visit read below then sees
+    the committed row (READ COMMITTED reads per statement). No slot write (R-2)."""
     appointment = await _require(session, appointment_id)
     if appointment.status is AppointmentStatus.NO_SHOW:
-        return True
+        return NoShowOutcome.NO_SHOW
     if appointment.status is not AppointmentStatus.CONFIRMED:
-        return False
+        return NoShowOutcome.CLOSED
     if await get_visit(session, appointment_id) is not None:
-        return False
+        return NoShowOutcome.VISIT_EXISTS
     require_transition(appointment.status, AppointmentStatus.NO_SHOW)
     before = _snapshot(appointment)
     appointment.status = AppointmentStatus.NO_SHOW
     await session.flush()
     await _audit(audit, appointment, "no_show", actor_user_id, before)
-    return True
+    return NoShowOutcome.NO_SHOW
 
 
 async def list_free_slots(

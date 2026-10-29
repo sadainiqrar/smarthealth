@@ -138,10 +138,11 @@ class VisitWorkflow:
                 lambda: "check_in" in self._signals or self._cancelled, timeout=wait
             )
         except TimeoutError:
-            if await workflow.execute_activity_method(
+            outcome = await workflow.execute_activity_method(
                 SchedulingActivities.no_show, request, **STEP
-            ):
-                return "no_show"
+            )
+            if outcome != "visit_exists":
+                return outcome  # "no_show", or "closed": nothing left to drive
             # Not a no-show: a check-in raced the timer and won in the database. Its
             # signal may not have arrived yet; the check_in activity is idempotent, so
             # act as if it had rather than wait for a signal that was already honoured.

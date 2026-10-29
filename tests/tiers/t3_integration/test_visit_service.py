@@ -6,6 +6,7 @@ Tests say which mutation of `service.py` they exist to kill.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import timedelta
 
@@ -25,7 +26,7 @@ from app.modules.scheduling.models import (
     Visit,
     VisitStatus,
 )
-from app.modules.scheduling.state import VisitAction
+from app.modules.scheduling.state import NoShowOutcome, VisitAction
 from tests.tiers.t3_integration import scheduling_helpers
 from tests.tiers.t3_integration.scheduling_helpers import RecordingAudit, confirmed_appointment
 
@@ -98,7 +99,7 @@ async def _complete(factory, audit, appointment_id) -> None:
         await session.commit()
 
 
-async def _no_show(factory, audit, appointment_id) -> bool:
+async def _no_show(factory, audit, appointment_id) -> NoShowOutcome:
     async with factory() as session:
         result = await service.mark_no_show(
             session, audit, appointment_id=appointment_id, actor_user_id=NO_SHOW_ACTOR
@@ -236,7 +237,7 @@ async def test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked(factory
     b, appointment_id = await confirmed_appointment(factory, audit)
     slot_before = await _slot(factory, b.slot_id)
 
-    assert await _no_show(factory, audit, appointment_id) is True
+    assert await _no_show(factory, audit, appointment_id) is NoShowOutcome.NO_SHOW
     assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.NO_SHOW
     slot = await _slot(factory, b.slot_id)
     assert slot.status is SlotStatus.BOOKED and slot.version == slot_before.version
@@ -244,38 +245,71 @@ async def test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked(factory
     assert audit.events[-1].actor_user_id == NO_SHOW_ACTOR
 
 
-async def test_no_show_twice_is_true_and_audits_once(factory):
+async def test_no_show_twice_is_no_show_and_audits_once(factory):
     audit = RecordingAudit()
     _, appointment_id = await confirmed_appointment(factory, audit)
-    assert await _no_show(factory, audit, appointment_id) is True
+    assert await _no_show(factory, audit, appointment_id) is NoShowOutcome.NO_SHOW
     before = len(audit.events)
-    assert await _no_show(factory, audit, appointment_id) is True
+    assert await _no_show(factory, audit, appointment_id) is NoShowOutcome.NO_SHOW
     assert len(audit.events) == before
 
 
-async def test_no_show_after_check_in_changes_nothing(factory):
-    """Someone checked in, so the timer firing late is not a no-show.
-    Kills: the 'visit exists -> False' guard removed from `mark_no_show`."""
+async def test_no_show_after_a_committed_check_in_is_visit_exists(factory):
+    """The check-in reached the database, so the timer firing is not a no-show, whatever
+    became of the check-in's signal to the workflow. Kills: the visit-exists guard removed
+    from `mark_no_show`."""
     audit = RecordingAudit()
     _, appointment_id = await confirmed_appointment(factory, audit)
     await _check_in(factory, audit, appointment_id)
     before = len(audit.events)
 
-    assert await _no_show(factory, audit, appointment_id) is False
+    assert await _no_show(factory, audit, appointment_id) is NoShowOutcome.VISIT_EXISTS
     assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
     assert len(audit.events) == before
 
 
-async def test_no_show_on_a_cancelled_appointment_is_false(factory):
+@pytest.mark.parametrize(
+    "status",
+    [AppointmentStatus.CANCELLED, AppointmentStatus.RESCHEDULED, AppointmentStatus.COMPLETED],
+)
+async def test_no_show_on_an_appointment_that_left_confirmed_is_closed(factory, status):
     """Kills: the `confirmed` requirement removed from `mark_no_show`."""
     audit = RecordingAudit()
     _, appointment_id = await confirmed_appointment(factory, audit)
-    await _set_status(factory, appointment_id, AppointmentStatus.CANCELLED)
+    await _set_status(factory, appointment_id, status)
     before = len(audit.events)
 
-    assert await _no_show(factory, audit, appointment_id) is False
-    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CANCELLED
+    assert await _no_show(factory, audit, appointment_id) is NoShowOutcome.CLOSED
+    assert (await _appointment(factory, appointment_id)).status is status
     assert len(audit.events) == before
+
+
+async def test_a_no_show_blocked_behind_an_uncommitted_check_in_finds_the_visit(factory):
+    """The review's race, made deterministic: the timer fires while a check-in is
+    mid-transaction. `mark_no_show` must wait on the appointment row lock the check-in
+    holds, then see its committed visit -- not read "no visit yet" around the lock and
+    record a patient standing at the desk as a no-show. Same technique as
+    `test_a_claim_blocked_behind_a_winner_loses_on_the_update_predicate`. Kills:
+    `mark_no_show` ignoring an existing visit, or reading without the lock."""
+    audit = RecordingAudit()
+    _, appointment_id = await confirmed_appointment(factory, audit)
+
+    desk = factory()
+    try:
+        await service.check_in(
+            desk, audit, appointment_id=appointment_id, now=Clock().now(),
+            actor_user_id="u-1",
+        )
+        timer = asyncio.create_task(_no_show(factory, audit, appointment_id))
+        await asyncio.sleep(0.3)
+        assert not timer.done(), "mark_no_show should be waiting on the appointment lock"
+        await desk.commit()
+    finally:
+        await desk.close()
+
+    assert await timer is NoShowOutcome.VISIT_EXISTS
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
+    assert len(await _visits(factory, appointment_id)) == 1
 
 
 # --- no_show_deadline and require_visit_action ---------------------------------------

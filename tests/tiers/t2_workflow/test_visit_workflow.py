@@ -25,7 +25,8 @@ STAFF = VisitSignal(actor_user_id="staff-1")
 
 
 def _fakes(
-    env, calls: list[str], *, deadline: timedelta = timedelta(hours=2), no_show: bool = True
+    env, calls: list[str], *, deadline: timedelta = timedelta(hours=2),
+    no_show: str = "no_show",
 ):
     @activity.defn(name="visit.deadline")
     async def fake_deadline(request: VisitRequest) -> str:
@@ -35,7 +36,7 @@ def _fakes(
         return ((await env.get_current_time()) + deadline).isoformat()
 
     @activity.defn(name="visit.no_show")
-    async def fake_no_show(request: VisitRequest) -> bool:
+    async def fake_no_show(request: VisitRequest) -> str:
         calls.append("no_show")
         return no_show
 
@@ -108,13 +109,22 @@ async def test_a_deadline_already_past_is_a_no_show_immediately(temporal_env):
     assert calls == ["deadline", "no_show"]
 
 
+async def test_an_appointment_that_left_confirmed_ends_the_visit_closed(temporal_env):
+    calls: list[str] = []
+    queue = _queue()
+    async with _worker(temporal_env, queue, calls, no_show="closed"):
+        handle = await _start(temporal_env, queue)
+        assert await handle.result() == "closed"
+    assert calls == ["deadline", "no_show"]
+
+
 async def test_a_check_in_that_raced_the_timer_carries_on_as_checked_in(temporal_env):
-    """The timer fired but `no_show` found a visit row (False): the check-in won in the
+    """The timer fired but `no_show` found a visit row ("visit_exists"): the check-in won in the
     database and its signal is still on the way. The workflow must not end, and must not
     hang waiting for a check-in signal that was already acted on."""
     calls: list[str] = []
     queue = _queue()
-    async with _worker(temporal_env, queue, calls, no_show=False):
+    async with _worker(temporal_env, queue, calls, no_show="visit_exists"):
         handle = await _start(temporal_env, queue)
         await handle.signal(VisitWorkflow.seen, STAFF)
         await handle.signal(VisitWorkflow.complete, STAFF)

@@ -191,12 +191,13 @@ class SchedulingActivities:
             )
 
     @activity.defn(name="visit.no_show")
-    async def no_show(self, request: VisitRequest) -> bool:
-        """True when the appointment is (now) a no-show; False when a visit exists or the
-        appointment left `confirmed`, in which case nothing was written."""
+    async def no_show(self, request: VisitRequest) -> str:
+        """A `NoShowOutcome` value: "no_show", "visit_exists" or "closed". Only the
+        first writes anything."""
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
-            return await service.mark_no_show(
+            outcome = await service.mark_no_show(
                 session, self._audit, appointment_id=appointment_id,
                 actor_user_id="system:visit-workflow",
             )
+        return outcome.value

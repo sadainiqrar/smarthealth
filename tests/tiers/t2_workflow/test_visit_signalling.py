@@ -26,9 +26,9 @@ def _fakes(env, calls: list[tuple[str, str | None]]):
         return ((await env.get_current_time()) + timedelta(hours=2)).isoformat()
 
     @activity.defn(name="visit.no_show")
-    async def no_show(request: VisitRequest) -> bool:
+    async def no_show(request: VisitRequest) -> str:
         calls.append(("no_show", None))
-        return True
+        return "no_show"
 
     def two_arg(name: str):
         @activity.defn(name=f"visit.{name}")

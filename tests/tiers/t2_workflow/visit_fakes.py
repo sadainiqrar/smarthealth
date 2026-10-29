@@ -29,8 +29,8 @@ def open_visit_fakes(env, release: asyncio.Event):
         return ((await env.get_current_time()) + timedelta(hours=2)).isoformat()
 
     @activity.defn(name="visit.no_show")
-    async def no_show(request: VisitRequest) -> bool:
-        return True
+    async def no_show(request: VisitRequest) -> str:
+        return "no_show"
 
     def two_arg(name: str):
         @activity.defn(name=f"visit.{name}")
