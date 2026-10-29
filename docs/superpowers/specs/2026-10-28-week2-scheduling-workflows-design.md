@@ -275,24 +275,47 @@ released by the cancel.
 
 `POST /appointments/{id}/reschedule` -- `{new_slot_id, reason?}`. Same roles and legality as
 cancel, checked synchronously. Reschedule is inherently a workflow -- it must book before it
-releases -- so it answers **202** with the new appointment id.
+releases -- so it answers **202** with the new appointment id. That id is derived like a
+booking's (D-11) but in its own name space (`reschedule:<caller>:<key>`), so one
+Idempotency-Key used for a booking and a reschedule names two appointments, never one.
 
 `RescheduleWorkflow` (`reschedule-<new_appointment_id>`):
 
 1. Run `BookAppointmentWorkflow` as a **child** for a new appointment with
-   `rescheduled_from_id = id`.
+   `rescheduled_from_id = id` -- id `booking-<new id>`, `REJECT_DUPLICATE`, and
+   `ParentClosePolicy.ABANDON`: terminating the reschedule must not kill the booking between
+   its claim and its compensation (the booking compensates for itself).
 2. Child failed -> stop. The new appointment is `failed`, the original is untouched (D-14).
-3. Child confirmed -> `complete_reschedule`: under the old appointment's lock, if it is still
-   `confirmed` with no visit, it moves to `rescheduled` and its slot to `free`, together.
-   If it was cancelled or checked in meanwhile, nothing is released and the reschedule ends
-   `superseded`: the new booking stands, and the patient holds two confirmed appointments
-   until staff cancel one. Otherwise: signal `cancel` to the old `visit-<id>`, then
-   `promote_waitlist(old_slot_id)`.
+3. Child confirmed -> `complete_reschedule(old, new)`. It locks both appointments, in
+   ascending id order. The **new** one is checked first: it must still be `confirmed` and
+   still name the old one as `rescheduled_from_id`. If it was cancelled in the moment
+   between confirming and this step, nothing is released and the reschedule ends
+   `superseded` -- the old appointment stands; releasing it would leave the patient with
+   nothing. Then the old one: if it is still `confirmed` with no visit, it moves to
+   `rescheduled` and its slot to `free`, together. If it was cancelled or checked in
+   meanwhile, nothing is released and the reschedule ends `superseded`: the new booking
+   stands, and the patient holds two confirmed appointments until staff cancel one.
+   Otherwise: signal `cancel` to the old `visit-<id>`, then `promote_waitlist(old_slot_id)`.
+
+**At most one live replacement (D-5).** Two reschedules of one appointment, accepted
+together, both pass the synchronous check before either workflow writes. The database
+refuses the second: the partial unique index `ux_appointments_live_reschedule` on
+`appointments (rescheduled_from_id) WHERE status IN ('pending','confirmed')` (migration
+0004) makes the second child's `create_pending` a permanent `Conflict`, so it compensates
+(a no-op -- it claimed nothing) and its reschedule ends `failed`. Partial on status, so a
+replacement that failed or was cancelled does not block another attempt.
+
+**Reading the new appointment.** For a moment after the 202 neither the row nor the child
+`booking-<id>` exists. `GET /appointments/{new id}` then describes `reschedule-<id>`:
+running reads as `pending` (`in_progress`), closed as `failed`, and only an id that names
+neither workflow is a 404.
 
 ### 4.5 Waitlist
 
 `POST /waitlist` -- `{patient_id, provider_id?, department_id?, window_start, window_end}`;
-same patient-ownership rule as booking. `GET /waitlist?patient_id=` for staff.
+same patient-ownership rule as booking. `GET /waitlist?patient_id=` for staff (`front_desk`,
+`admin`) and for a patient, who sees only their own entries whatever `patient_id` says. Not
+for providers: the list names every waiting patient, for any provider.
 
 `promote_waitlist(slot_id)` is shared workflow code, run by the cancel follow-up and by
 reschedule. An activity returns the candidates in order -- `active` entries whose window
@@ -305,6 +328,31 @@ marking its entry `fulfilled`, and the loop stops.
 
 This replaces the `FOR UPDATE SKIP LOCKED` design: a row lock cannot be held across a child
 workflow, and the deterministic child id gives the same "never twice" guarantee without one.
+Promotion children are started with `ParentClosePolicy.ABANDON`, for the reason given in
+§4.4 step 1.
+
+The candidates activity offers nothing unless the slot is still `free` and has not started
+(`starts_at > now`, the clock injected) -- the same two conditions the claim enforces. A slot
+taken again before promotion read it, or one already begun, would only make each candidate's
+booking fail in turn.
+
+Accepted limits, each deliberate:
+
+- **Head-of-line blocking.** Candidates are read once, at most three (`limit=3`), oldest
+  first. If all three fail -- say their bookings lose to a direct booking of the slot, or
+  each has a promotion already running elsewhere -- the loop ends and nobody further down
+  the waitlist is offered this release. The next release of a matching slot tries again.
+  A larger or paged read would trade a bounded workflow history for a longer tail; three
+  is enough while the waitlist is short.
+- **Promotion appointment ids are not time-ordered.** The id of a promoted appointment is
+  `workflow.uuid4()`: deterministic, so a replay derives the same id, but a random v4
+  rather than the uuid7 every other primary key uses -- a deliberate exception to
+  PART-A-NFR-5. Nothing time-based is replay-safe in a workflow except `workflow.now()`,
+  and hand-building a v7 from it is code spent on index locality for a rare write.
+- **Cancelling after the slot started is allowed.** Front desk may cancel an unattended
+  appointment before the no-show timer fires; the cancel frees the slot (R-2) as any cancel
+  does. With the `starts_at > now` check above, such a slot is not offered to the waitlist:
+  nobody can be booked into a slot that has begun (R-3).
 
 ### 4.6 Patient self-service (R-5)
 
