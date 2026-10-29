@@ -36,6 +36,8 @@ orchestration ready; reliable appointment state machine"*.
 | Real billing (`billing_records`, refunds) | Its shape follows the real integration; inventing columns now guarantees a rewrite | Week 3 or later |
 | Provider availability generator | Seeded slots suffice to exercise every flow; the cadence question (ARCHITECTURE §3.6 item 2) is unchanged | Later, explicitly deferred |
 | Per-object provider authorisation (a provider may only signal *their own* visits) | Needs a provider-identity lookup across the module boundary; role-gating is sufficient for Week 2 | Recorded as a known gap |
+| Provider deactivation handling — what happens to a deactivated provider's existing future appointments | *Added 2026-10-29; omitted from this table originally,* although the Week 1 spec promised it for Week 2. Its trigger crosses the module boundary the wrong way (`providers` may not import `scheduling`), which is what Week 3's domain events are for, and its policy (cancel and notify, reassign, or refuse) is undecided. New bookings for an inactive provider are refused (PRD R-24) | Week 3 (PRD R-25) |
+| Clinic and department endpoints (PRD `PART-A-FR-1.5`) | *Added 2026-10-29.* Seeded data covers every flow; the endpoints are additive CRUD | Deferred |
 
 Billing pre-check, refund, and reminder scheduling are **stand-in activities** in Week 2:
 the billing pre-check always approves, reminders and refunds emit a structured log line.

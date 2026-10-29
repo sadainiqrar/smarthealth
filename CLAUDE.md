@@ -48,8 +48,11 @@ client gained an Appointments page with cancel. All five slices are designed in
 **Next: Week 3** — Kafka + Schema Registry, Celery/RabbitMQ, notifications, analytics and
 observability (PRD §10). None of it exists yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
-Not built in Week 2, by decision: a provider availability generator (slots are seeded) and
-clinic/department endpoints (PRD `PART-A-FR-1.5`).
+Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
+`PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
+deactivated provider's existing appointments (PRD R-25, Week 3 — new bookings for one are
+already refused, R-24). Closed after the Week 2 audit (2026-10-29): a patient can no
+longer hold two overlapping appointments (R-23), and Swagger `/docs` has an Authorize button.
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
 the list of what was deliberately deferred are in
@@ -221,7 +224,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 918 fast tests (plus 1 skip) in ~46s (45.78s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 934 fast tests (plus 1 skip) in ~49s (49.31s on a run of `python -m pytest -m "not docker" -q`) and 203 docker-lane tests (`-m docker`, 98s), measured 2026-10-29; 45 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -314,6 +317,14 @@ Proven by integration tests, not by convention:
   `app/modules/scheduling/service.py` — `tests/meta/test_slot_writes.py` fails if anything
   else in `app/` writes it, so any new release path goes there and must flip both halves in
   one transaction. Proof per path: PRD R-2.
+- **A patient can hold two overlapping appointments** with different providers, as far as
+  the database knows — every slot constraint is about one provider's time (PRD R-23). Closed
+  in code: `claim_slot` takes a patient-keyed `pg_advisory_xact_lock` and refuses a slot
+  overlapping another live appointment of the patient (`_ensure_patient_is_free`), the
+  reschedule predecessor excepted.
+- **A deactivated provider** is refused by `validate_booking` and hidden from `GET /slots`
+  through `providers.public` (R-24); their *existing* appointments are untouched (R-25,
+  Week 3).
 - **A past slot is still bookable** at the database level — `CHECK (starts_at > now())` is
   impossible, Postgres requires check constraints to be immutable. Closed in code (R-3):
   `service.ensure_slot_bookable`, and a `starts_at > now` predicate in `claim_slot`'s UPDATE.

@@ -26,7 +26,10 @@ every rule; the UI only hides what the API would refuse.
 **Out of scope**
 
 - Visits, cancel/reschedule, waitlist screens — they arrive with slices 3–4.
-- An appointments list ("my bookings") — slice 5 (`GET /appointments?mine`).
+- An appointments list ("my bookings") — slice 5. *Built since:* the Appointments page over
+  `GET /appointments`, where a patient's list is always their own (forced server-side) and
+  staff filter by patient, provider, status and window. The `mine` flag this line once named
+  was dropped from slice 5's design.
 - Provider/patient editing in the UI; patient registration is the only write besides booking.
 - Browser end-to-end tests; generated API types; a UI component library.
 

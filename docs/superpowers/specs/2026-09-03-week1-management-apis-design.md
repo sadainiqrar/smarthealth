@@ -217,6 +217,10 @@ that must not half-apply, which is precisely the shape Temporal is in the stack 
 belongs in Week 2, as a workflow, not as an extra `UPDATE` bolted onto the provider
 service.
 
+> *Update 2026-10-29:* not built in Week 2. A deactivated provider now takes no new
+> bookings (PRD R-24); existing appointments are deferred to Week 3, triggered by a domain
+> event rather than a direct call, because `providers` may not import `scheduling` (PRD R-25).
+
 **Specialty filtering is a sequential scan.** The filter compiles to
 `func.lower(providers.specialty) = lower(:value)`, and a plain B-tree index on
 `specialty` cannot serve a call over the column — `ix_providers_specialty` is not used.
