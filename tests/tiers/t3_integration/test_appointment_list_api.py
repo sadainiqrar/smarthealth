@@ -176,3 +176,32 @@ async def test_the_single_read_carries_the_same_slot_time(api, token_for, world)
     assert datetime.fromisoformat(one.json()["starts_at"]) == world.first_start
     none = await api.get(f"/appointments/{world.slotless}", headers=headers)
     assert none.json()["starts_at"] is None
+
+
+async def test_pages_do_not_overlap_when_created_at_ties(api, token_for, factory):
+    """`Appointment.id` is the final `ORDER BY` key: slot-less rows sort together
+    (`starts_at` NULL) and rows written in one transaction share `now()`, so without a
+    unique tiebreak the page boundary is arbitrary and a row can repeat or vanish."""
+    async with factory() as session:
+        b = await seed_bookable(session)
+        first = _appointment(b, AppointmentStatus.PENDING, None)
+        second = _appointment(b, AppointmentStatus.PENDING, None)
+        session.add_all([first, second])
+        await session.commit()
+        created = (
+            await session.execute(
+                select(Appointment.created_at).where(Appointment.patient_id == b.patient_id)
+            )
+        ).scalars().all()
+    assert len(set(created)) == 1, "precondition: identical created_at"
+
+    staff = token_for(UserRole.FRONT_DESK)
+    url = f"/appointments?patient_id={b.patient_id}&limit=1"
+    page_one = await api.get(f"{url}&offset=0", headers=staff)
+    page_two = await api.get(f"{url}&offset=1", headers=staff)
+
+    assert page_one.status_code == page_two.status_code == 200
+    ids = _ids(page_one) + _ids(page_two)
+    assert len(ids) == 2 and len(set(ids)) == 2
+    assert set(ids) == {str(first.id), str(second.id)}
+    assert ids == sorted(ids), "ties fall back to ascending id"
