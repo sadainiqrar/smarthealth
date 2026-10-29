@@ -377,7 +377,10 @@ curl -s http://localhost:8000/appointments/$APPOINTMENT       -H "Authorization:
 
 Each action is audited in Mongo with the acting user. The no-show side needs no request: a
 confirmed appointment nobody checks in for becomes `no_show` at the slot's end plus
-`SMARTHEALTH_NO_SHOW_GRACE_MINUTES` (default 15, set on the `worker` process, which reads it)
+the grace setting (default 15 minutes; only the `worker` process reads it: set
+`NO_SHOW_GRACE_MINUTES` on the compose command line, e.g.
+`NO_SHOW_GRACE_MINUTES=1 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait worker`,
+or `SMARTHEALTH_NO_SHOW_GRACE_MINUTES` for a host-run worker)
 and its workflow, `visit-<appointment_id>`, ends `no_show` in Temporal. The slot you
 booked is in the future, so you will not see that happen in a demo without waiting; the test
 `test_nobody_checking_in_becomes_a_no_show_on_the_real_timer` runs it against a real

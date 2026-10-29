@@ -78,6 +78,8 @@ services:
       SMARTHEALTH_MONGO_DB: ${MONGO_DB:-smarthealth}
       SMARTHEALTH_TEMPORAL_HOST: temporal
       SMARTHEALTH_TEMPORAL_PORT: 7233
+      # The worker owns the no-show timer, so it is the process that reads the grace.
+      SMARTHEALTH_NO_SHOW_GRACE_MINUTES: ${NO_SHOW_GRACE_MINUTES:-15}
     depends_on:
       app:
         condition: service_healthy
