@@ -1,0 +1,12 @@
+id: rsc-002-a-failed-reschedule-leaves-the-original
+title: "When the new booking fails, the old appointment is untouched and nothing is promoted"
+requirement: [PART-A-NFR-2]
+tier: workflow
+priority: P0
+status: ready
+# "Partial failures must not corrupt scheduling state", for the flow where the failing
+# step sits between two live appointments. The new slot is lost, the child booking
+# compensates, and the workflow answers `failed` without ever calling
+# `reschedule_complete`: the old appointment keeps its slot, its visit timer is still
+# running, and the waitlist is not queried. Calling the release regardless fails it.
+impl: "tests/tiers/t2_workflow/test_reschedule_workflow.py::test_a_failed_new_booking_leaves_the_old_appointment_alone"

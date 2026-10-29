@@ -1,0 +1,12 @@
+id: rsc-003-two-reschedules-leave-one-replacement
+title: "Two concurrent reschedules of one appointment confirm exactly one replacement"
+requirement: [PART-A-NFR-1]
+tier: integration
+priority: P0
+status: ready
+# Real infrastructure, both requests accepted (202) together. `ux_appointments_live_reschedule`
+# (migration 0004) allows one live appointment per `rescheduled_from_id`, so the second
+# booking's insert is a Conflict and compensates: one replacement confirmed, the other
+# failed, the old appointment `rescheduled` and its slot free. Without the index both
+# confirm and the patient holds two slots.
+impl: "tests/tiers/t3_integration/test_cancel_reschedule_round_trip.py::test_two_concurrent_reschedules_of_one_appointment_confirm_one"

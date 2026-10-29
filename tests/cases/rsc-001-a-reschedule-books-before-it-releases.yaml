@@ -1,0 +1,12 @@
+id: rsc-001-a-reschedule-books-before-it-releases
+title: "A reschedule confirms the new appointment first, and only then releases the old slot"
+requirement: [PART-A-FR-2]
+tier: workflow
+priority: P0
+status: ready
+# PRD D-14: a reschedule is not the inverse of a booking. The new booking runs as a child
+# workflow and `reschedule.complete` runs only after it confirms, so a patient is never
+# left with neither slot. Asserted on the activity order (`confirm` before
+# `reschedule_complete`), on the link carried to the new booking, on the old visit timer
+# ending, and on the released slot being offered to the waitlist. Releasing first fails it.
+impl: "tests/tiers/t2_workflow/test_reschedule_workflow.py::test_it_books_first_then_releases_the_old_slot"

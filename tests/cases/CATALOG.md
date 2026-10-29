@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 34 |
+| Total cases | 39 |
 | contract | 5 |
-| integration | 17 |
+| integration | 20 |
 | unit | 5 |
-| workflow | 7 |
-| P0 | 19 |
-| P1 | 15 |
+| workflow | 9 |
+| P0 | 23 |
+| P1 | 16 |
 | declarative | 1 |
-| impl-backed | 33 |
+| impl-backed | 38 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -31,6 +31,7 @@
 | bkg-005-booking-end-to-end | integration | P1 | impl | PART-A-FR-2 | POST /appointments is confirmed end to end: 202, worker, slot booked, audit trail written |
 | bkg-006-a-reused-key-with-a-different-request-is-refused | workflow | P0 | impl | PART-A-FR-2 | An Idempotency-Key reused for a different booking request is refused, not silently merged |
 | bkg-007-a-booking-that-failed-before-its-row-reads-as-failed | contract | P1 | impl | PART-A-FR-2 | GET of a booking whose workflow closed before writing its row reads failed, not pending forever |
+| cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |
@@ -38,6 +39,9 @@
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
+| rsc-001-a-reschedule-books-before-it-releases | workflow | P0 | impl | PART-A-FR-2 | A reschedule confirms the new appointment first, and only then releases the old slot |
+| rsc-002-a-failed-reschedule-leaves-the-original | workflow | P0 | impl | PART-A-NFR-2 | When the new booking fails, the old appointment is untouched and nothing is promoted |
+| rsc-003-two-reschedules-leave-one-replacement | integration | P0 | impl | PART-A-NFR-1 | Two concurrent reschedules of one appointment confirm exactly one replacement |
 | slt-001-only-free-future-slots-are-listed | integration | P1 | impl | PART-A-FR-2 | GET /slots lists only a provider's free, future slots, earliest first |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |
@@ -56,3 +60,4 @@
 | vst-006-a-check-in-before-a-past-deadline-is-kept | workflow | P0 | impl | PART-A-FR-3 | A visit whose deadline has already passed, with a check-in already signalled, ends checked_in and never runs the no-show step |
 | vst-007-the-visit-timer-outlasts-a-database-outage | workflow | P1 | impl | PART-A-FR-3, PART-A-NFR-2 | A transient database outage longer than the booking step budget does not permanently fail a visit timer |
 | vst-008-a-real-timer-marks-a-no-show | integration | P1 | impl | PART-A-FR-3 | On real Temporal and Postgres, an appointment nobody checks in for becomes no_show at the slot's end, its slot stays booked, and a late check-in is refused |
+| wtl-001-a-cancelled-slot-is-promoted-to-the-waitlist | integration | P1 | impl | PART-A-FR-2 | Cancelling a booked slot confirms the waiting patient on it and fulfils their entry |

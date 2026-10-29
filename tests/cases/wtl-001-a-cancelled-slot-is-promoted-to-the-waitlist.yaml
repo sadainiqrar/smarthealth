@@ -1,0 +1,12 @@
+id: wtl-001-a-cancelled-slot-is-promoted-to-the-waitlist
+title: "Cancelling a booked slot confirms the waiting patient on it and fulfils their entry"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P1
+status: ready
+# Real infrastructure with an in-process worker: patient B joins a waitlist covering a
+# slot, A books and cancels it, and the cancel's follow-up workflow starts a booking
+# `booking-wl-<entry>` for B. B's appointment confirms on the freed slot and the entry
+# reads `fulfilled`. Removing the promotion step, or the booking id that stops a repeat,
+# fails it.
+impl: "tests/tiers/t3_integration/test_cancel_reschedule_round_trip.py::test_a_cancelled_slot_is_promoted_to_the_waitlist"

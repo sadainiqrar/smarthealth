@@ -1,0 +1,13 @@
+id: cnl-001-a-cancel-frees-the-slot-in-one-write
+title: "Cancelling a confirmed appointment moves the appointment and its slot together, or neither"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P0
+status: ready
+# CLAUDE.md's "Week 2 contract": releasing a slot is a paired write, because the partial
+# unique index frees on the appointment's status alone and `provider_slots.status` would
+# otherwise stay `booked` forever. The test rolls the cancel back and shows neither half
+# is visible, then commits it and shows appointment `cancelled`, slot `free`, version
+# incremented once, and one audit entry with the actor. Dropping the slot UPDATE, the
+# version increment, or running it outside the appointment's transaction fails it.
+impl: "tests/tiers/t3_integration/test_cancel_service.py::test_cancelling_a_confirmed_appointment_frees_its_slot_in_one_write"
