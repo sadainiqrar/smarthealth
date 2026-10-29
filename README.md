@@ -524,7 +524,8 @@ Screens: login; patients (front desk, admin, provider); providers (every role); 
 appointment until it reads `confirmed` or `failed`; and Appointments (every role), which
 lists appointments (a patient's own; staff get status and provider filters) and cancels a
 `pending` or `confirmed` one. The navigation shows only what the
-login's role may use; the API still enforces it.
+login's role may use; the API still enforces it. Known demo-client limitation: the staff
+Appointments table shows no patient name, because the API returns only `patient_id`.
 
 **Dev mode** — the backend on `:8000`, then:
 

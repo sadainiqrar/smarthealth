@@ -999,7 +999,10 @@ account. The 403 depends on no lookup of the named patient, so it says nothing a
 whether that patient exists. This differs from `GET /appointments/{id}`, which answers 404
 for another patient's appointment so that appointment ids cannot be probed. Staff
 (`provider`, `front_desk`, `admin`) are not scoped at all: a provider sees every
-appointment, not just their own (PRD R-14).
+appointment, not just their own (PRD R-14). This is inconsistent with `GET /waitlist`,
+which excludes providers entirely. The inconsistency is deliberate only in the sense that
+per-object provider scoping is R-14: until providers can be tied to their own patients,
+neither read can be narrowed, and the appointment list was left open rather than closed.
 
 **Ordering and the slot join.** The list is an outer join to `provider_slots`, so an
 appointment with no slot yet (`pending` before the claim, an early `failed`) still appears.
