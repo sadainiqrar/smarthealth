@@ -5,13 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository status
 
 **Week 1 complete.** On top of the foundation (settings, core utilities, async SQLAlchemy
-with Alembic migrations, the ten-table domain schema, Mongo and Redis clients,
+with Alembic migrations (four: `0001_baseline` to `0004_live_reschedule_unique`), the ten-table domain schema, Mongo and Redis clients,
 liveness/readiness) the business surface now exists: `POST /auth/login`; patient and
 provider management with role-gated writes, paginated and filtered reads, and every
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
 Dockerfile plus an `app` service behind a compose profile.
 
-**Week 2 in progress — slices 1, 2 and 3 of 5 have landed.** Slice 1: a Temporal worker
+**Week 2 in progress — slices 1 to 4 of 5 have landed.** Slice 1: a Temporal worker
 process (`app/worker.py`, the `worker` compose service) with workflow/activity registries,
 a canary workflow as its readiness probe, and Temporal in `/ready`. Slice 2, the booking
 workflow: `POST /appointments` (202) starts `BookAppointmentWorkflow`, which creates the
@@ -24,8 +24,17 @@ scheduling (both **stand-ins** until Week 3) and confirms last, compensating on 
 started when a booking confirms, is only the durable no-show timer — the database records
 human actions, the workflow owns time (PRD D-12; an earlier signal-driven design was
 replaced after review because it lost check-ins). Billing and follow-up on completion are
-Week 3. Code in `app/modules/scheduling/`. **Not built yet:** slice 4, cancel/reschedule
-and the waitlist; slice 5, patient self-service (PRD R-5). All five are designed in
+Week 3. Slice 4, cancel, reschedule and the waitlist: `POST /appointments/{id}/cancel`
+writes the appointment and its slot **together** and answers 200, then best-effort starts
+`CancelFollowUpWorkflow` (stop the visit timer, refund, offer the slot to the waitlist) — if
+that start fails the follow-up is lost (PRD R-17, closed by the Week 3 outbox);
+`POST /appointments/{id}/reschedule` answers 202 and `RescheduleWorkflow` **books the new
+slot before it releases the old one**; `POST /waitlist` and `GET /waitlist` manage entries,
+and a release promotes up to three matching entries as child bookings
+(`booking-wl-<entry>`). The refund (`cancel.refund`) is a stand-in, as are the billing
+pre-check and reminder scheduling, and no notification or domain event exists for cancel or
+reschedule yet (Week 3). Code in `app/modules/scheduling/`. **Next:** slice 5, patient
+self-service — the appointment list (PRD R-5). All five are designed in
 `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
@@ -36,8 +45,8 @@ Two documents carry the things code cannot state, and are the first stop for "wh
 
 | Document | Use it for |
 | --- | --- |
-| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-12 and D-15), and the known gaps with dispositions (§9, R-1 … R-16) |
-| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2) and visit lifecycle (§2.9, §3.2a), and the **designed** event flows — the Temporal/Kafka/Celery split, cancellation as a paired write, the event catalogue |
+| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-16), and the known gaps with dispositions (§9, R-1 … R-22) |
+| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2), visit lifecycle (§2.9, §3.2a) and cancel/reschedule/waitlist flows (§3.3, which carries their data flows), and the **designed** event flows — the Temporal/Kafka/Celery split, the event catalogue |
 
 **Treat every document here as a source, not as proof.** Docs drift from code, and a stale
 claim is worse than a missing one because it gets trusted. Two real examples found on
@@ -195,7 +204,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 791 fast tests (plus 1 skip) in ~25s (25.15s and 28.22s on two runs), measured 2026-10-29; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 897 fast tests (plus 1 skip) in ~35s (34.99s and 34.37s on two runs of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -227,7 +236,7 @@ constrain.
 - **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:
-  the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, and the nine scheduling activities (seven `booking.*`, two `visit.*`). Kafka consumers
+  the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow`, and the thirteen scheduling activities (seven `booking.*`, two `visit.*`, `cancel.refund`, `reschedule.complete`, `waitlist.candidates`, `waitlist.fulfil`). Kafka consumers
   and Celery tasks have no registries yet.
 - **6** — `app/core/clock.py`.
 - **7** — `app/api/health.py` for the API; the worker has no HTTP endpoint, and its
@@ -262,6 +271,12 @@ Proven by integration tests, not by convention:
 - A provider cannot have two overlapping slots (GiST exclusion constraint).
 - At most one *live* appointment may hold a slot (partial unique index) — partial, so
   cancelling frees it.
+- At most one *live* appointment may replace any given appointment
+  (`ux_appointments_live_reschedule`, migration `0004`, a partial unique index on
+  `rescheduled_from_id`). Two reschedules of one appointment, accepted together, otherwise
+  both confirm and leave the patient two appointments for the one they moved, with every other
+  constraint satisfied. Unlike `ux_appointments_live_slot` it is declared in the model, so
+  `alembic check` tracks it.
 - An appointment's slot must belong to the provider and clinic it names, and a
   department must belong to its clinic (composite foreign keys). Every single-column FK
   can be satisfied while the booking is still nonsense; these catch that.
@@ -273,13 +288,15 @@ Proven by integration tests, not by convention:
 
 - **Slot status must agree with appointment status, in one transaction** (PRD R-2,
   restated in Week 2). Leaving `pending`/`confirmed` frees the partial index but not
-  `provider_slots.status`. Confirmed → `booked`; failed, cancelled, rescheduled → `free`;
-  completed and no-show stay `booked` (their slot is in the past). Booking and compensation
-  do this today (`confirm_booking`, `fail_booking`); the visit paths (complete, no-show)
-  write no slot at all, by design, and cancel and reschedule must flip both in one
-  transaction (slice 4). Slot status is written **only** in `app/modules/scheduling/service.py` —
-  `tests/meta/test_slot_writes.py` fails if anything else in `app/` writes it, so new
-  release paths go there.
+  `provider_slots.status`. **Closed in code for every path:** confirm → `booked`
+  (`confirm_booking`); failed → `free` (`fail_booking`); cancelled → `free`
+  (`cancel_appointment`) and rescheduled → `free` (`complete_reschedule`), both through
+  `_release_slot`, with `version = version + 1`; completed and no-show write no slot at all,
+  by design (their slot is in the past). A cancelled or rescheduled appointment keeps its
+  `slot_id`, as a failed one does (PRD R-10). Slot status is written **only** in
+  `app/modules/scheduling/service.py` — `tests/meta/test_slot_writes.py` fails if anything
+  else in `app/` writes it, so any new release path goes there and must flip both halves in
+  one transaction. Proof per path: PRD R-2.
 - **A past slot is still bookable** at the database level — `CHECK (starts_at > now())` is
   impossible, Postgres requires check constraints to be immutable. Closed in code (R-3):
   `service.ensure_slot_bookable`, and a `starts_at > now` predicate in `claim_slot`'s UPDATE.

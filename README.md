@@ -18,7 +18,10 @@ behind a compose profile. Week 2 has landed a Temporal worker, the **booking wor
 (an appointment is confirmed only after every step succeeds, and compensated to `failed`
 otherwise) and the **visit lifecycle**: check-in, seen and complete are synchronous writes,
 and a durable workflow marks an appointment `no_show` if nobody checks in by the slot's end
-plus a grace period. Cancel/reschedule with the waitlist, and patient self-service are next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
+plus a grace period. It has also landed **cancel, reschedule and the waitlist**: a cancel frees the
+slot in the same transaction that cancels the appointment, a reschedule books the new slot
+before it releases the old one, and a freed slot is offered to waiting patients. Patient
+self-service (listing one's own appointments) is next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
 
 ## Architecture
 
@@ -41,7 +44,7 @@ flowchart TB
     mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
     redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
 
-    temporal["<b>Temporal</b> + worker<br/>booking · visit no-show timer<br/><i>cancel/reschedule: Week 2, next</i>"]
+    temporal["<b>Temporal</b> + worker<br/>booking · visit no-show timer<br/>cancel follow-up · reschedule"]
     kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
     celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
     otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]
@@ -51,7 +54,7 @@ flowchart TB
     services -->|awaited audit write| mongo
     app -.-> redis
 
-    routers -->|"starts the booking<br/>workflow · signals check-in"| temporal
+    routers -->|"starts the booking, cancel<br/>follow-up and reschedule<br/>workflows · signals check-in"| temporal
     temporal -->|"activities call the same services<br/>with no HTTP request"| services
     services -.-> kafka
     kafka -.-> celery
@@ -151,8 +154,10 @@ Four decisions shape this, each rejecting a more obvious alternative:
 **What the database guarantees**, rather than trusting application code: at most one
 *live* appointment per slot (a partial unique index, so cancelling frees it); no
 overlapping slots for one provider (a GiST exclusion constraint); a slot, provider and
-clinic that actually agree (composite foreign keys); and a confirmed appointment that must
-hold a slot (a CHECK) — the assignment's headline invariant, made structural.
+clinic that actually agree (composite foreign keys); at most one *live* appointment
+replacing any given appointment (a second partial unique index, so two reschedules of one
+appointment cannot both confirm); and a confirmed appointment that must hold a slot (a
+CHECK) — the assignment's headline invariant, made structural.
 
 ## Documentation
 
@@ -165,8 +170,8 @@ hold a slot (a CHECK) — the assignment's headline invariant, made structural.
 | [`docs/superpowers/specs/2026-09-01-testing-harness-design.md`](docs/superpowers/specs/2026-09-01-testing-harness-design.md) | Testing harness design |
 | [`docs/superpowers/specs/2026-09-02-week1-foundation-design.md`](docs/superpowers/specs/2026-09-02-week1-foundation-design.md) | Domain model and schema decisions |
 | [`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`](docs/superpowers/specs/2026-09-03-week1-management-apis-design.md) | Management API design, and what Week 1 deliberately deferred |
-| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking and visit (built), cancel/reschedule, waitlist, self-service (designed) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking and visit workflows, and the designed event flows |
+| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking, visit, cancel/reschedule and waitlist (built), self-service (designed) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking, visit, cancel and reschedule workflows, and the designed event flows |
 | [`tests/README.md`](tests/README.md) | How to run and author tests |
 
 The original `.docx` files are kept in `docs/requirements/` and are authoritative.
@@ -216,6 +221,10 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/appointments/{id}/check-in` | `front_desk`, `admin` — answers **200** `VisitRead`; 409 on an illegal step |
 | POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider`, `admin` — answer **200** `VisitRead`; 409 on an illegal step |
 | GET | `/appointments/{id}/visit` | the owning `patient`, `provider`, `front_desk`, `admin` — 404 until a check-in exists |
+| POST | `/appointments/{id}/cancel` | the owning `patient`, `front_desk`, `admin` — body `{reason}`; answers **200** with the appointment; 409 unless it is `pending` or `confirmed` with no visit |
+| POST | `/appointments/{id}/reschedule` | the owning `patient`, `front_desk`, `admin` — body `{new_slot_id, reason?}`; answers **202** with the new appointment's id; optional `Idempotency-Key` header |
+| POST | `/waitlist` | `patient` (for themselves only), `front_desk`, `admin` — answers **201** |
+| GET | `/waitlist` | `patient` (their own entries, whatever `patient_id` they send), `front_desk`, `admin` |
 
 `GET /health` and `GET /ready` are public.
 
@@ -234,6 +243,23 @@ no-show appointment — is a `409`, and an unknown appointment a `404`. The only
 runs in the background is the no-show timer: a workflow started when a booking confirms
 marks the appointment `no_show` once the slot's end plus a grace period passes with no
 check-in. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2.9 and §3.2a.
+
+**Cancel is synchronous; reschedule is not.** A cancel writes the appointment and its slot
+in one transaction and answers `200`; a repeat, a checked-in patient, or an appointment
+that is not `pending` or `confirmed` is a `409`. A workflow then stops the visit timer,
+issues the refund (a stand-in until Week 3) and offers the freed slot to the waitlist; if
+that workflow cannot be started the cancel still stands, and the refund and the promotion
+are lost until Week 3 (PRD R-17). A reschedule answers `202` with the **new** appointment's
+id: poll `GET /appointments/{id}` on it. The new slot is booked first and the old one
+released only when that confirmed, so a failed reschedule leaves the original appointment;
+the old one then reads `rescheduled`. A patient acts only on their own appointments (another's
+is a `404`). Waiting patients join with `POST /waitlist` (a time window, optionally one
+provider or department); every release is offered to up to three matching entries, oldest
+first, each as a booking that confirms or fails by itself. Details:
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3.3.
+
+**Not built by cancel and reschedule:** a notification to the patient, a billing update on
+reschedule, and the domain events (Week 3); the known limits are PRD R-17 to R-22.
 
 **Try it in a browser.** With the stack running, FastAPI serves interactive API
 documentation generated from the route definitions and response models:
@@ -312,8 +338,8 @@ test stack, which uses the same file, does not start them — the tests drive th
 application in-process. The worker starts only once `app` is healthy, because the `app`
 container applies the migrations. Its healthcheck, `python -m app.worker --check`,
 executes a canary workflow, so `--wait` returns only when a worker is actually polling
-and executing — not merely when the process is up. It runs the booking and visit workflows; the
-remaining scheduling workflows are designed in
+and executing — not merely when the process is up. It runs the booking, visit, cancel follow-up and
+reschedule workflows; patient self-service (slice 5) is designed in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
@@ -389,6 +415,66 @@ and its workflow, `visit-<appointment_id>`, ends `no_show` in Temporal. The slot
 booked is in the future, so you will not see that happen in a demo without waiting; the test
 `test_nobody_checking_in_becomes_a_no_show_on_the_real_timer` runs it against a real
 timer with a one-second slot.
+
+**Cancel, reschedule and the waitlist.** Continue in the same shell: `$TOKEN` (front desk)
+and `sql` are the ones defined in "Book an appointment". The visit demo completed its
+appointment, so this books a fresh one on a new key, reschedules it to a second slot, and
+cancels the replacement while a second patient is waiting for that slot. It needs two free
+slots and two patients; the snippet stops at the first id it cannot find (bash / Git Bash):
+
+```bash
+: "${TOKEN:?log in first, as in Book an appointment}"
+field() { python -c "import json,sys; print(json.load(sys.stdin)['$1'])"; }
+status_of() { curl -s http://localhost:8000/appointments/$1 -H "Authorization: Bearer $TOKEN" | field status; }
+until_status() { for _ in $(seq 30); do [ "$(status_of $1)" = "$2" ] && return 0; sleep 1; done
+  echo "$1 is $(status_of $1), not $2" >&2; return 1; }
+
+SLOT_A=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1")
+SLOT_B=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1 offset 1")
+PATIENT=$(sql "select id from patients order by created_at limit 1")
+WAITER=$(sql "select id from patients order by created_at limit 1 offset 1")
+: "${SLOT_A:?no free slot}" "${SLOT_B:?need a second free slot}" "${PATIENT:?no patient}" "${WAITER:?need a second patient}"
+
+KEY=demo-$(date +%s)   # once per run; the booking and the reschedule derive different ids from it
+post() { curl -s -X POST "http://localhost:8000$1" -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -H "Idempotency-Key: $KEY" -d "$2"; }
+
+OLD=$(post /appointments "{\"patient_id\": \"$PATIENT\", \"slot_id\": \"$SLOT_A\"}" | field appointment_id)
+: "${OLD:?booking failed}"
+until_status $OLD confirmed
+
+# Reschedule: 202 at once. The new appointment is pending and the old one still stands
+# until the new one confirms; then the old one reads "rescheduled" and its slot is free.
+NEW=$(post /appointments/$OLD/reschedule "{\"new_slot_id\": \"$SLOT_B\", \"reason\": \"demo\"}" | field appointment_id)
+: "${NEW:?reschedule refused}"
+until_status $NEW confirmed
+until_status $OLD rescheduled
+
+# A second patient waits for a slot starting within a minute of SLOT_B's start.
+FROM=$(sql "select to_char((starts_at - interval '1 minute') at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') from provider_slots where id = '$SLOT_B'")
+UNTIL=$(sql "select to_char((starts_at + interval '1 minute') at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') from provider_slots where id = '$SLOT_B'")
+: "${FROM:?no window}" "${UNTIL:?no window}"
+post /waitlist "{\"patient_id\": \"$WAITER\", \"window_start\": \"$FROM\", \"window_end\": \"$UNTIL\"}"   # 201, "status":"active"
+
+# Cancel the replacement: 200 with the appointment, the slot freed in the same transaction.
+curl -s -X POST http://localhost:8000/appointments/$NEW/cancel -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' -d '{"reason": "demo"}'
+
+# The follow-up workflow offers SLOT_B to the waiter: their entry becomes "fulfilled" and
+# they hold a confirmed appointment on it.
+for _ in $(seq 30); do
+  curl -s "http://localhost:8000/waitlist?patient_id=$WAITER" -H "Authorization: Bearer $TOKEN" \
+    | grep -q '"status":"fulfilled"' && break
+  sleep 1
+done
+sql "select id, status from appointments where patient_id = '$WAITER' and slot_id = '$SLOT_B'"
+```
+
+Promotion goes to the *oldest* matching entries first (at most three per release), so
+entries left by earlier runs of this demo can take the slot before the waiter does. The
+workflows are `reschedule-<new id>`, `booking-<new id>`, `cancel-<new id>` and
+`booking-wl-<entry id>` in Temporal; the audit trail in Mongo shows `rescheduled` on the old
+appointment, `cancelled` on the replacement, and `joined` and `fulfilled` on the waitlist entry.
 
 To create a user in a **test** stack instead (`-p smarthealth-test`, which publishes
 Postgres on the offset port 15432), point the CLI at it from the host:
