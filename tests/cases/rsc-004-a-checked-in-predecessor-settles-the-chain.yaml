@@ -1,0 +1,14 @@
+id: rsc-004-a-checked-in-predecessor-settles-the-chain
+title: "A replacement whose predecessor was checked in mid-reschedule can still be cancelled"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P1
+status: ready
+# The chain guard refuses to cancel or reschedule an appointment while the reschedule that
+# created it is still completing. A predecessor still `confirmed` but with a visit is not
+# completing: `complete_reschedule` can only answer `superseded` for it and never moves
+# it, so treating it as unsettled would leave staff unable to drop the replacement until
+# the old visit closed. Reschedule O -> N, check in at O, cancel N: it succeeds, and the
+# late `complete_reschedule(O, N)` answers `superseded` and releases nothing. Dropping the
+# visit read from `require_reschedule_settled` fails it.
+impl: "tests/tiers/t3_integration/test_cancel_service.py::test_a_checked_in_predecessor_settles_the_chain_so_the_replacement_can_be_cancelled"

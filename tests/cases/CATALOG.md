@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 39 |
+| Total cases | 40 |
 | contract | 5 |
-| integration | 20 |
+| integration | 21 |
 | unit | 5 |
 | workflow | 9 |
 | P0 | 23 |
-| P1 | 16 |
+| P1 | 17 |
 | declarative | 1 |
-| impl-backed | 38 |
+| impl-backed | 39 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -42,6 +42,7 @@
 | rsc-001-a-reschedule-books-before-it-releases | workflow | P0 | impl | PART-A-FR-2 | A reschedule confirms the new appointment first, and only then releases the old slot |
 | rsc-002-a-failed-reschedule-leaves-the-original | workflow | P0 | impl | PART-A-NFR-2 | When the new booking fails, the old appointment is untouched and nothing is promoted |
 | rsc-003-two-reschedules-leave-one-replacement | integration | P0 | impl | PART-A-NFR-1 | Two concurrent reschedules of one appointment confirm exactly one replacement |
+| rsc-004-a-checked-in-predecessor-settles-the-chain | integration | P1 | impl | PART-A-FR-2 | A replacement whose predecessor was checked in mid-reschedule can still be cancelled |
 | slt-001-only-free-future-slots-are-listed | integration | P1 | impl | PART-A-FR-2 | GET /slots lists only a provider's free, future slots, earliest first |
 | sys-001-health-endpoint-responds | contract | P0 | declarative | PART-A-OBS-1 | Health endpoint reports the service as ready |
 | sys-002-ready-reports-all-dependencies-healthy | integration | P0 | impl | PART-A-OBS-1 | Readiness reports every infrastructure dependency healthy |

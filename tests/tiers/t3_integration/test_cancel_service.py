@@ -478,3 +478,49 @@ async def test_an_appointment_cannot_be_rescheduled_while_its_reschedule_is_comp
     await _complete_reschedule(factory, audit, old_id, new_id)
     second = await _replacement(factory, audit, b, new_id, starts_in=timedelta(days=4))
     assert (await _appointment(factory, second)).rescheduled_from_id == new_id
+
+
+async def test_a_checked_in_predecessor_settles_the_chain_so_the_replacement_can_be_cancelled(
+    factory,
+):
+    """O -> N, and the patient checks in at O while the reschedule runs. `complete_reschedule`
+    can then only answer `superseded` -- it never moves O -- so waiting for it would block N
+    until O's visit completed, and O itself cannot be cancelled (it has a visit). The visit
+    settles the chain: N can be cancelled at once, and the late `complete_reschedule(O, N)`
+    still answers `superseded` and releases nothing. Kills: the visit read dropped from
+    `require_reschedule_settled`."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    new_id, new_slot = await confirmed_replacement(factory, audit, b, old_id)
+    await _check_in(factory, audit, old_id)
+
+    cancelled = await _cancel(factory, audit, new_id)
+
+    assert cancelled.status is AppointmentStatus.CANCELLED
+    assert (await _slot(factory, new_slot)).status is SlotStatus.FREE
+    events = len(audit.events)
+    version = (await _slot(factory, b.slot_id)).version
+
+    result = await _complete_reschedule(factory, audit, old_id, new_id)
+
+    assert result.outcome == "superseded" and result.released_slot_id is None
+    old = await _appointment(factory, old_id)
+    assert old.status is AppointmentStatus.CONFIRMED and old.slot_id == b.slot_id
+    slot = await _slot(factory, b.slot_id)
+    assert slot.status is SlotStatus.BOOKED and slot.version == version
+    assert len(audit.events) == events
+
+
+async def test_a_checked_in_predecessor_settles_the_chain_so_the_replacement_can_be_rescheduled(
+    factory,
+):
+    """The same rule on the reschedule side: N -> N2 is accepted by `create_pending` once O
+    has a visit. Kills: the visit read dropped from `require_reschedule_settled`."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    new_id, _ = await confirmed_replacement(factory, audit, b, old_id)
+    await _check_in(factory, audit, old_id)
+
+    second = await _replacement(factory, audit, b, new_id, starts_in=timedelta(days=3))
+
+    assert (await _appointment(factory, second)).rescheduled_from_id == new_id

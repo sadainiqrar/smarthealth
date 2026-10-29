@@ -142,13 +142,28 @@ async def _lock_with_predecessor(
     return locked[appointment_id], locked.get(unlocked.rescheduled_from_id)
 
 
-def require_reschedule_settled(predecessor: Appointment | None) -> None:
-    """An appointment whose predecessor is still `confirmed` is mid-reschedule:
-    `complete_reschedule` has not yet moved the old one out. Rescheduling or cancelling
-    it now could leave both confirmed (the live-replacement index only sees one link),
-    so it is refused until that step has run."""
-    if predecessor is not None and predecessor.status is AppointmentStatus.CONFIRMED:
-        raise Conflict("the reschedule that created this appointment is still completing")
+async def require_reschedule_settled(
+    session: AsyncSession, predecessor: Appointment | None
+) -> None:
+    """An appointment whose predecessor is still `confirmed`, with no visit, is
+    mid-reschedule: `complete_reschedule` has not yet moved the old one out. Rescheduling
+    or cancelling it now could leave both confirmed (the live-replacement index only sees
+    one link), so it is refused until that step has run.
+
+    A predecessor that has a visit is settled even while `confirmed`: the patient checked
+    in at the old appointment while the reschedule ran, so `complete_reschedule` can only
+    answer `superseded` and will never move it. Treating it as unsettled would block the
+    new appointment until the old visit completes, and the old one cannot be cancelled
+    (it has a visit) -- staff would have no way to drop the replacement.
+
+    Callers that act on the answer hold the predecessor's row lock
+    (`_lock_with_predecessor`), which `check_in` also takes, so the visit read here sees
+    any check-in that committed first; the router's unlocked precheck only spares a 202."""
+    if predecessor is None or predecessor.status is not AppointmentStatus.CONFIRMED:
+        return
+    if await get_visit(session, predecessor.id) is not None:
+        return
+    raise Conflict("the reschedule that created this appointment is still completing")
 
 
 async def create_pending(
@@ -175,7 +190,7 @@ async def create_pending(
         # still confirmed) is refused here, under the locks, as the router's precheck
         # cannot see a reschedule that starts in the window after it.
         _, predecessor = await _lock_with_predecessor(session, rescheduled_from_id)
-        require_reschedule_settled(predecessor)
+        await require_reschedule_settled(session, predecessor)
     try:
         result = await session.execute(
             insert(Appointment)
@@ -562,7 +577,7 @@ async def cancel_appointment(
     appointment, predecessor = await _lock_with_predecessor(session, appointment_id)
     if appointment is None:
         raise NotFound(f"appointment {appointment_id} does not exist")
-    require_reschedule_settled(predecessor)
+    await require_reschedule_settled(session, predecessor)
     visit = await get_visit(session, appointment_id)
     require_cancellable(appointment.status, visit is not None)
     require_transition(appointment.status, AppointmentStatus.CANCELLED)

@@ -278,7 +278,7 @@ async def reschedule_appointment(
             )
         if old.rescheduled_from_id is not None:
             predecessor = await service.get_appointment(session, old.rescheduled_from_id)
-            service.require_reschedule_settled(predecessor)
+            await service.require_reschedule_settled(session, predecessor)
     await start_reschedule(
         temporal,
         RescheduleRequest(
