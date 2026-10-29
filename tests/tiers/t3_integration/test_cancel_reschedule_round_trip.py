@@ -29,8 +29,8 @@ from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
 from app.modules.identity.models import UserRole
-from app.modules.scheduling.contracts import visit_workflow_id
-from app.modules.scheduling.followups import cancel_workflow_id, reschedule_workflow_id
+from app.modules.scheduling.contracts import reschedule_workflow_id, visit_workflow_id
+from app.modules.scheduling.followups import cancel_workflow_id
 from app.modules.scheduling.models import Appointment, AppointmentStatus, ProviderSlot, SlotStatus
 from app.modules.scheduling.service import get_appointment
 from tests.tiers.t3_integration import scheduling_helpers
@@ -265,6 +265,11 @@ async def test_a_reschedule_books_the_new_slot_then_frees_the_old(
     assert accepted.status_code == 202, accepted.text
     new_id = accepted.json()["appointment_id"]
     assert accepted.json()["rescheduled_from"] == old_id
+    # I-2: the id the 202 handed out is readable at once, though its child booking may
+    # not have started yet. (Which state it is in is a race; that it exists is not.)
+    early = await api.get(f"/appointments/{new_id}", headers=desk)
+    assert early.status_code == 200, early.text
+    assert early.json()["status"] in ("pending", "confirmed")
 
     workflow = client.get_workflow_handle(reschedule_workflow_id(new_id))
     assert await asyncio.wait_for(workflow.result(), 30) == "rescheduled"

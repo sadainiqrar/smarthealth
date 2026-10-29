@@ -164,6 +164,9 @@ class _NoRowSession:
         return None
 
 
+NOT_FOUND = RPCError("not found", RPCStatusCode.NOT_FOUND, b"")
+
+
 class _Description:
     def __init__(self, status: WorkflowExecutionStatus) -> None:
         self.status = status
@@ -180,15 +183,18 @@ class _Handle:
 
 
 class DescribingTemporal:
-    """Answers `get_workflow_handle(...).describe()` with a fixed outcome."""
+    """Answers `get_workflow_handle(id).describe()` with a fixed outcome per kind of
+    workflow -- "booking" or "reschedule", the id's prefix -- and NOT_FOUND for any kind
+    not given."""
 
-    def __init__(self, outcome) -> None:
-        self._outcome = outcome
+    def __init__(self, **outcomes) -> None:
+        self._outcomes = outcomes
         self.described: list[str] = []
 
     def get_workflow_handle(self, workflow_id: str) -> _Handle:
         self.described.append(workflow_id)
-        return _Handle(self._outcome)
+        kind = workflow_id.split("-", 1)[0]
+        return _Handle(self._outcomes.get(kind, NOT_FOUND))
 
 
 @pytest.fixture
@@ -201,8 +207,10 @@ def no_row():
     app.dependency_overrides.pop(get_session, None)
 
 
-async def _read_unrecorded(api_client, outcome):
-    fake = DescribingTemporal(outcome)
+async def _read_unrecorded(api_client, *, described: list[str], **outcomes):
+    """GET an appointment with no row; `described` is which workflows it must have asked
+    about, in order, as kinds ("booking", "reschedule")."""
+    fake = DescribingTemporal(**outcomes)
     app.dependency_overrides[get_temporal] = lambda: fake
     appointment_id = str(uuid.uuid4())
     try:
@@ -211,13 +219,21 @@ async def _read_unrecorded(api_client, outcome):
         )
     finally:
         app.dependency_overrides.pop(get_temporal, None)
-    assert fake.described == [f"booking-{appointment_id}"]
+    assert fake.described == [f"{kind}-{appointment_id}" for kind in described]
     return appointment_id, response
+
+
+CLOSED = [
+    WorkflowExecutionStatus.FAILED,
+    WorkflowExecutionStatus.TERMINATED,
+    WorkflowExecutionStatus.TIMED_OUT,
+    WorkflowExecutionStatus.COMPLETED,
+]
 
 
 async def test_a_running_booking_with_no_row_reads_as_pending(api_client, no_row):
     appointment_id, response = await _read_unrecorded(
-        api_client, WorkflowExecutionStatus.RUNNING
+        api_client, described=["booking"], booking=WorkflowExecutionStatus.RUNNING
     )
     assert response.status_code == 200
     body = response.json()
@@ -225,34 +241,54 @@ async def test_a_running_booking_with_no_row_reads_as_pending(api_client, no_row
     assert body["slot_id"] is None and body["patient_id"] is None
 
 
-@pytest.mark.parametrize(
-    "closed",
-    [
-        WorkflowExecutionStatus.FAILED,
-        WorkflowExecutionStatus.TERMINATED,
-        WorkflowExecutionStatus.TIMED_OUT,
-        WorkflowExecutionStatus.COMPLETED,
-    ],
-)
+@pytest.mark.parametrize("closed", CLOSED)
 async def test_a_closed_booking_with_no_row_reads_as_failed(api_client, no_row, closed):
     """It ended before it recorded the appointment. Reporting pending here would leave a
     poller waiting forever."""
-    appointment_id, response = await _read_unrecorded(api_client, closed)
+    appointment_id, response = await _read_unrecorded(
+        api_client, described=["booking"], booking=closed
+    )
     assert response.status_code == 200
     body = response.json()
     assert (body["id"], body["status"], body["in_progress"]) == (appointment_id, "failed", False)
 
 
-async def test_an_unknown_booking_is_a_404(api_client, no_row):
-    _, response = await _read_unrecorded(
-        api_client, RPCError("not found", RPCStatusCode.NOT_FOUND, b"")
+async def test_a_reschedule_not_yet_booking_reads_as_pending(api_client, no_row):
+    """I-2: right after a reschedule's 202 its child `booking-<id>` may not exist yet.
+    The new appointment id the 202 handed out must read as pending, not 404."""
+    appointment_id, response = await _read_unrecorded(
+        api_client, described=["booking", "reschedule"],
+        reschedule=WorkflowExecutionStatus.RUNNING,
     )
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["id"], body["status"], body["in_progress"]) == (appointment_id, "pending", True)
+
+
+@pytest.mark.parametrize("closed", CLOSED)
+async def test_a_reschedule_that_closed_without_a_booking_reads_as_failed(
+    api_client, no_row, closed
+):
+    """The reschedule ended and its child never wrote a row: the new appointment failed."""
+    appointment_id, response = await _read_unrecorded(
+        api_client, described=["booking", "reschedule"], reschedule=closed
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["id"], body["status"], body["in_progress"]) == (appointment_id, "failed", False)
+
+
+async def test_an_unknown_booking_or_reschedule_is_a_404(api_client, no_row):
+    _, response = await _read_unrecorded(api_client, described=["booking", "reschedule"])
     assert response.status_code == 404
 
 
-async def test_temporal_down_on_read_is_a_503_not_a_404(api_client, no_row):
-    """We cannot tell whether the booking exists; a 404 would say it does not."""
+@pytest.mark.parametrize("kinds", [["booking"], ["booking", "reschedule"]])
+async def test_temporal_down_on_read_is_a_503_not_a_404(api_client, no_row, kinds):
+    """We cannot tell whether the booking exists; a 404 would say it does not -- whether
+    Temporal fails on the booking or on the reschedule asked after it."""
+    unavailable = RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")
     _, response = await _read_unrecorded(
-        api_client, RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")
+        api_client, described=kinds, **{kinds[-1]: unavailable}
     )
     assert response.status_code == 503

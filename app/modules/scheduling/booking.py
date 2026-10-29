@@ -18,7 +18,11 @@ from temporalio.service import RPCError, RPCStatusCode
 
 from app.core.errors import ServiceUnavailable, Unprocessable
 from app.core.ids import uuid7
-from app.modules.scheduling.contracts import BookingRequest, booking_workflow_id
+from app.modules.scheduling.contracts import (
+    BookingRequest,
+    booking_workflow_id,
+    reschedule_workflow_id,
+)
 from app.modules.scheduling.workflows import BookAppointmentWorkflow
 
 #: Fixed namespace for idempotency-key ids. Never change it: every derived appointment
@@ -102,25 +106,40 @@ BookingState = Literal["running", "closed", "unknown"]
 
 
 async def booking_state(client: Client, appointment_id: uuid.UUID) -> BookingState:
-    """What Temporal knows of this appointment's booking workflow.
+    """What Temporal knows of the workflow that will write this appointment's row.
 
     Asked only when no appointment row exists. "running" is the milliseconds between
     the 202 and the first activity inserting the row. "closed" means the workflow ended
     without ever writing a row -- it failed before `create_pending` committed -- and
     must not be reported as pending, or a poller would wait forever. "unknown" means no
-    such booking was ever started. Temporal unreachable is a 503, never an "unknown":
+    such workflow was ever started. Temporal unreachable is a 503, never an "unknown":
     a 404 would tell the client its booking does not exist when we simply cannot tell.
+
+    A reschedule's new appointment is booked by a child, `booking-<id>`, which its
+    parent `reschedule-<id>` starts only once it runs -- so for a moment after the 202
+    there is no booking workflow to describe, and that must not read as a 404. With no
+    booking, the reschedule answers the same way: running is pending, closed (it ended
+    without its child ever writing a row) is failed.
     """
+    for workflow_id in (
+        booking_workflow_id(appointment_id), reschedule_workflow_id(appointment_id)
+    ):
+        status = await _workflow_status(client, workflow_id)
+        if status is None:
+            continue
+        return "running" if status == WorkflowExecutionStatus.RUNNING else "closed"
+    return "unknown"
+
+
+async def _workflow_status(client: Client, workflow_id: str) -> WorkflowExecutionStatus | None:
+    """The workflow's status, None if no such workflow exists, a 503 if Temporal cannot
+    say."""
     try:
-        description = await client.get_workflow_handle(
-            booking_workflow_id(appointment_id)
-        ).describe()
+        description = await client.get_workflow_handle(workflow_id).describe()
     except RPCError as exc:
         if exc.status == RPCStatusCode.NOT_FOUND:
-            return "unknown"
+            return None
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
     except RuntimeError as exc:
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
-    if description.status == WorkflowExecutionStatus.RUNNING:
-        return "running"
-    return "closed"
+    return description.status

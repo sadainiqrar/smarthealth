@@ -28,7 +28,11 @@ from temporalio.service import RPCError
 
 from app.core.errors import ServiceUnavailable, Unprocessable
 from app.modules.scheduling.booking import FINGERPRINT_MEMO, started_fingerprint
-from app.modules.scheduling.contracts import FollowUpRequest, RescheduleRequest
+from app.modules.scheduling.contracts import (
+    FollowUpRequest,
+    RescheduleRequest,
+    reschedule_workflow_id,
+)
 from app.modules.scheduling.visits import NOTIFY_TIMEOUT
 from app.modules.scheduling.workflows import CancelFollowUpWorkflow, RescheduleWorkflow
 
@@ -37,10 +41,6 @@ logger = logging.getLogger(__name__)
 
 def cancel_workflow_id(appointment_id: object) -> str:
     return f"cancel-{appointment_id}"
-
-
-def reschedule_workflow_id(new_appointment_id: object) -> str:
-    return f"reschedule-{new_appointment_id}"
 
 
 async def start_cancel_follow_up(

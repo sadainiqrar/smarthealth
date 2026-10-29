@@ -56,3 +56,10 @@ def booking_workflow_id(appointment_id: object) -> str:
     """Pure for the same reason: the reschedule workflow names the booking it runs as a
     child, and the sandbox cannot import `booking` (it pulls in the Temporal client)."""
     return f"booking-{appointment_id}"
+
+
+def reschedule_workflow_id(new_appointment_id: object) -> str:
+    """Named by the *new* appointment, which is what the 202 hands the client to poll.
+    Here rather than in `followups` so `booking` can describe it without importing
+    `followups`, which imports `booking`."""
+    return f"reschedule-{new_appointment_id}"
