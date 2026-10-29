@@ -19,8 +19,9 @@ orchestration ready; reliable appointment state machine"*.
 
 - Temporal plumbing: dependency, client, worker process, compose service, registries.
 - Booking: `POST /appointments` → `BookAppointmentWorkflow`; `GET /appointments/{id}`.
-- Visit lifecycle: `VisitWorkflow`, signalled by check-in / seen / complete, with a durable
-  no-show timer.
+- Visit lifecycle: check-in / seen / complete written synchronously by the endpoints, and a
+  `VisitWorkflow` per confirmed appointment that owns the durable no-show timer (D-12, as
+  amended 2026-10-29).
 - Cancel and reschedule as workflows, including the paired-write slot release.
 - Waitlist: `POST /waitlist`, and promotion of a waitlisted patient onto a freed slot.
 - Patient self-service (PRD R-5): a patient reads their own record and their own bookings.
@@ -50,7 +51,7 @@ Each is numbered so the PRD can adopt it (§8 continues from D-8).
 | **D-9** | `ProviderSlot` moves from `providers` into `scheduling` | (a) `providers` publishes claim/release functions, one allowed edge; (b) scheduling writes raw SQL on `provider_slots` | Slots are bookable inventory and scheduling is the only module that mutates them. The paired write (appointment + slot in one transaction) stays inside one module, and the horizontal import rule needs no exception for it. (a) makes the paired write straddle a boundary; (b) passes the import test while coupling to another module's table behind its back. The table, constraints and migrations are untouched — only the Python class moves |
 | **D-10** | The booking workflow creates the `pending` row; the router only starts the workflow | Router inserts the row, then starts the workflow | Two systems cannot be written atomically. Workflow-first means a failed start leaves nothing behind, and a started workflow is guaranteed by Temporal to reach `confirmed` or `failed`. Router-first leaves a permanently `pending` orphan whenever the start fails, which needs a reconciler to clean up. Workflow-first needs none — *unless someone terminates a workflow*: termination skips compensation, so the operational rule is "cancel, never terminate", and a reconciler for stale `pending` rows is deferred (§6) |
 | **D-11** | Duplicate submission is prevented by deterministic workflow ids: `Idempotency-Key` → `appointment_id` → `booking-<appointment_id>` | Dedupe table keyed on request hash | Temporal already refuses a second start under a running workflow id; a second store would be a second source of truth for the same fact |
-| **D-12** | The visit lifecycle is one long-running `VisitWorkflow` per confirmed appointment, driven by signals, with a durable no-show timer | Transactional endpoints with a state machine, no-show by periodic job | No-show detection needs no scheduler — Temporal is one. Every visit's history is inspectable, which is the "real-time status visibility" and "recovery from failures" `PART-A-FR-3` asks for |
+| **D-12** | *Amended 2026-10-29.* **The database records human actions; the workflow owns time.** Check-in, seen and complete are written synchronously by their endpoints, in the request's transaction, under the appointment row lock, and answer 200. One `VisitWorkflow` per confirmed appointment is only the durable no-show timer; at the deadline it asks the database, under the same lock, whether anyone checked in | (a) *The original D-12:* a long-running workflow driven by staff signals, writing each action through an activity after a 202 — a review proved it loses check-ins (§4.2); (b) Temporal Updates, so the endpoint waits for the workflow's write — considered and not chosen: the write still lives behind the workflow, every action then depends on Temporal being up, and the no-show race still has to be settled in the database; (c) no-show by periodic job — needs a scheduler, and Temporal is one | Each human action is recorded the moment staff are told it was, so a timer can never overrule it, and a Temporal outage cannot fail one. The timer keeps what Temporal is uniquely good at: a durable per-appointment deadline that survives restarts, with an inspectable history |
 | **D-13** | Waitlist promotion is an activity of the cancel/reschedule workflows in Week 2 | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the activity is replaced by publishing `appointments.cancelled` and the promotion moves to a consumer |
 | **D-14** | Reschedule books the new slot **before** releasing the old one | Cancel then book | A failed reschedule must leave the patient with their original appointment, not with nothing |
 | **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py`; scheduling may import that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. Two declared edges (from `scheduling.activities` and `scheduling.router`) onto one file are visible in a diff and in the meta-test |
@@ -150,7 +151,7 @@ means the same key replays the failure, so retrying needs a new key.
 | 4 | `billing_precheck` (stand-in) | permanent if declined |
 | 5 | `schedule_reminders` (stand-in) | retryable |
 | 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retried **without limit** (idempotent): it may have committed before a transient failure, and giving up would end the workflow failed while the row says confirmed. A non-retryable `Conflict` still ends it |
-| 7 | start `visit-<appointment_id>` as an independent workflow, not a child, so it outlives booking; if `waitlist_entry_id` was given, mark that entry `fulfilled` | retryable |
+| 7 | start `visit-<appointment_id>` (the no-show timer, §4.2) — as built, a child with `ParentClosePolicy.ABANDON` so it outlives booking, and `REJECT_DUPLICATE` so it never reopens a closed visit; if `waitlist_entry_id` was given, mark that entry `fulfilled` | after `confirmed`, outside compensation; "already started" is ignored |
 
 Any failure from step 1 on runs `compensate_booking` (as built, `fail_booking`; step 1 is
 inside the compensated region because it may commit and still fail, and compensation no-ops
@@ -171,27 +172,70 @@ Roles: the owning patient, `provider`, `front_desk`, `admin`.
 
 ### 4.2 Visit
 
-`VisitWorkflow(appointment_id, slot_ends_at)`, started by booking step 7.
+*Rewritten 2026-10-29 with the D-12 amendment.* The database records human actions
+synchronously; the visit workflow owns time.
 
-- Waits for `check_in`; then `seen`; then `complete`. Each signal runs one activity that
-  checks `state.py` against the database row and writes the visit: `check_in` inserts the
-  `visits` row (`checked_in_at`); `seen` sets `seen_at` and `in_progress`; `complete` sets
-  `completed_at`, the visit `completed`, and the appointment `completed` (R-2 table: slot
-  stays `booked`). Re-delivering a signal for a transition already applied is a no-op.
-- **No-show timer:** if `check_in` has not arrived by `slot_ends_at + Settings.no_show_grace`
-  (default 15 minutes), the appointment moves to `no_show` and the workflow ends.
-- **`cancel` signal:** ends the workflow without writing — the cancel/reschedule workflow
-  owns that write.
+**Staff actions are synchronous writes.** Each endpoint calls its service function in the
+request's session; the function locks the appointment row, checks `state.py`
+(`require_visit_action`) under that lock, writes, and the router commits and answers
+**200** with the visit. The locked write is the check — there is no separate precheck to go
+stale. The functions are **strict**: an illegal action, a repeat included (a second
+check-in, `seen` twice, `complete` twice), is a 409, because nothing retries them and a
+silent no-op would tell staff a duplicate "worked". Each is audited with the token's user
+as actor.
 
-Endpoints, each validating the transition against the database **before** signalling so an
-illegal one is a synchronous 409 rather than a silently ignored signal:
+- `check_in` inserts the `visits` row (`checked_in_at`, `checked_in`);
+- `seen` sets `seen_at` and `in_progress`;
+- `complete` sets `completed_at`, the visit `completed` and the appointment `completed` in
+  one transaction (R-2 table: slot stays `booked`).
 
-| Endpoint | Roles |
-| --- | --- |
-| `POST /appointments/{id}/check-in` | `front_desk`, `admin` |
-| `POST /appointments/{id}/seen` | `provider`, `admin` |
-| `POST /appointments/{id}/complete` | `provider`, `admin` |
-| `GET /appointments/{id}/visit` | owning patient, `provider`, `front_desk`, `admin` |
+After a check-in commits, the router sends a plain `checked_in` signal to `visit-<id>`,
+best-effort and bounded (5 s): `NOT_FOUND` is expected and ignored, any other Temporal
+failure is logged and ignored. The request has already succeeded, and the timer reconciles
+through the database if the signal is lost. `seen` and `complete` signal nothing.
+
+**`VisitWorkflow(appointment_id)` is the no-show timer**, started by booking step 7 with
+`REJECT_DUPLICATE` (a late start never opens a second run under a closed one):
+
+1. `deadline` activity — the slot's end plus `Settings.no_show_grace_minutes` (default 15,
+   `ge=0`).
+2. If neither `checked_in` nor `cancel` has been signalled and the deadline is still ahead,
+   wait for either, with the remaining time as the timeout. If the deadline has already
+   passed, do not wait at all — `wait_condition(timeout=0)` raises `TimeoutError` even when
+   its condition holds.
+3. `checked_in` → return `"checked_in"`; `cancel` → return `"cancelled"`.
+4. Otherwise `no_show` activity → `mark_no_show`, under the appointment lock, returns
+   `no_show` (marked, or already was), `visit_exists` (a check-in reached the database; its
+   signal was lost or late) or `closed` (cancelled, rescheduled or completed). That string
+   is the workflow's result.
+
+Both activities retry **without limit**: the timer has no compensation to fall back on, so
+giving up after a short outage would leave the appointment with no no-show at all. Domain
+errors (`NotFound`) stay non-retryable. Signals only set flags; no I/O happens in a handler.
+
+**Why this shape.** A review of the first design (signal-driven writes, 202 responses)
+found three ways it lost check-ins: (1) near the deadline the timer could fire before the
+check-in activity ran, so staff were told "accepted" and the patient was recorded
+`no_show`; (2) a check-in on an appointment past its deadline hit `wait_condition(timeout=0)`
+and became a no-show although the signal was already buffered; (3) visit activities ran
+on the booking step policy, so a database outage of a few minutes failed the visit
+workflow for good. Writing the action in the request closes (1) — the check-in and
+`mark_no_show` serialise on the appointment lock, and whichever commits first wins
+visibly; never waiting a zero timeout closes (2); unlimited retries close (3). Temporal
+Updates were considered and not chosen (D-12 (b)).
+
+**Known gap.** A booking confirmed before slice 3 deployed has no visit workflow: its
+check-in signal finds none (ignored), and it is **never automatically marked no-show**.
+Booking's `patched("booking-starts-visit")` keeps such bookings replaying; a one-off
+backfill that starts timers for them is deferred. `VisitWorkflow` itself needed no
+`patched` for this change: it was never released.
+
+| Endpoint | Roles | Answer |
+| --- | --- | --- |
+| `POST /appointments/{id}/check-in` | `front_desk`, `admin` | 200 `VisitRead`; 404; 409 |
+| `POST /appointments/{id}/seen` | `provider`, `admin` | 200 `VisitRead`; 404; 409 |
+| `POST /appointments/{id}/complete` | `provider`, `admin` | 200 `VisitRead`; 404; 409 |
+| `GET /appointments/{id}/visit` | owning patient, `provider`, `front_desk`, `admin` | 200; 404 |
 
 ### 4.3 Cancel
 
@@ -282,9 +326,9 @@ The cheapest tier that proves each property:
 | Tier | Proves |
 | --- | --- |
 | T0 unit | Every allowed and forbidden transition in `state.py`; idempotency-key derivation |
-| T1 contract | Routes, role gates, 202/403/404/409/503, fake Temporal client |
-| T2 workflow (time-skipping, mocked activities) | Confirm only after all steps; each failing step → `failed` and compensation called; conflict not retried; reschedule failure leaves original confirmed; visit signal order; no-show timer fires; `cancel` signal ends the visit workflow |
-| T3 integration (compose Postgres) | Two concurrent `claim_slot` → exactly one wins and `version` incremented once; every R-2 row leaves slot and appointment agreeing; `create_pending` idempotent; past slot rejected; `promote_waitlist` under concurrency takes one entry |
+| T1 contract | Routes, role gates, 200/202/403/404/409/503, fake Temporal client; a check-in still answers 200 when the post-commit signal fails |
+| T2 workflow (time-skipping, mocked activities) | Confirm only after all steps; each failing step → `failed` and compensation called; conflict not retried; reschedule failure leaves original confirmed; no-show timer fires and returns the database's answer; a check-in signalled before a past deadline is kept; visit activities outlast a transient outage; `checked_in` / `cancel` end the visit workflow |
+| T3 integration (compose Postgres) | Two concurrent `claim_slot` → exactly one wins and `version` incremented once; every R-2 row leaves slot and appointment agreeing; `create_pending` idempotent; past slot rejected; `promote_waitlist` under concurrency takes one entry; a check-in holding the appointment lock makes `mark_no_show` wait and answer `visit_exists`; strict visit actions; a real timer marks a no-show |
 | T4 journey (compose Temporal + worker) | Book → confirmed → check-in → seen → complete; book → cancel → waitlisted patient confirmed |
 | Meta | Workflow determinism (sandbox-validate every registered workflow); single slot-status write path; the two declared edges (from `scheduling.activities` and `scheduling.router`) onto `patients.public` |
 
