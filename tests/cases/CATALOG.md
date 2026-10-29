@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 30 |
+| Total cases | 33 |
 | contract | 5 |
-| integration | 14 |
+| integration | 16 |
 | unit | 5 |
-| workflow | 6 |
-| P0 | 17 |
-| P1 | 13 |
+| workflow | 7 |
+| P0 | 19 |
+| P1 | 14 |
 | declarative | 1 |
-| impl-backed | 29 |
+| impl-backed | 32 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -48,7 +48,10 @@
 | sys-007-every-rejection-uses-one-error-envelope | contract | P0 | impl | PART-A-OBS-1 | An authorisation rejection answers the same {error, detail} shape as every other failure |
 | sys-008-every-workflow-is-registered-and-sandbox-safe | unit | P0 | impl | PART-A-NFR-2 | Every Temporal workflow and activity in app/ is registered, and every registered workflow passes the sandbox |
 | sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |
-| vst-001-a-visit-runs-check-in-to-complete | workflow | P0 | impl | PART-A-FR-3 | A visit is driven by staff signals through check-in, seen and complete, each written once, in order |
-| vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes |
+| vst-001-a-visit-runs-check-in-to-complete | integration | P0 | impl | PART-A-FR-3 | A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted |
+| vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes, and the database's answer is the workflow's result |
 | vst-003-pre-visit-bookings-still-replay | workflow | P0 | impl | PART-A-NFR-2 | A booking that was in flight before the visit slice deployed still replays against the new workflow code |
-| vst-004-visit-end-to-end | integration | P1 | impl | PART-A-FR-3 | A visit runs from booking to completion over HTTP: 202s, state machine 409s, appointment completed, audit trail written |
+| vst-004-visit-end-to-end | integration | P1 | impl | PART-A-FR-3 | A visit runs from booking to completion over HTTP: 200s with the written visit, state machine 409s, appointment completed, audit trail with the real actors |
+| vst-005-a-check-in-racing-the-timer-is-not-a-no-show | integration | P0 | impl | PART-A-FR-3, PART-A-NFR-1 | A check-in still committing when the no-show timer fires is never recorded as a no-show |
+| vst-006-a-check-in-before-a-past-deadline-is-kept | workflow | P0 | impl | PART-A-FR-3 | A visit whose deadline has already passed, with a check-in already signalled, ends checked_in and never runs the no-show step |
+| vst-007-the-visit-timer-outlasts-a-database-outage | workflow | P1 | impl | PART-A-FR-3, PART-A-NFR-2 | A transient database outage longer than the booking step budget does not permanently fail a visit timer |

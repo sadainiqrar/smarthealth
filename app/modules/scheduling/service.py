@@ -1,11 +1,14 @@
-"""Booking operations. No FastAPI, no Temporal: activities and routers both call these.
+"""Booking and visit operations. No FastAPI, no Temporal: activities and routers both
+call these.
 
-Every function is idempotent, because a Temporal activity can run again after its
+Every function an activity calls is idempotent, because a Temporal activity can run again after its
 transaction committed but before the server heard it finished. Each detects that it has
 already done its work and returns, without a second database write -- and, when the first
 run *committed*, without a second audit entry. The entry goes to Mongo before the caller
 commits, so a first run whose commit fails leaves an entry for a write that never landed,
-and the retry that then makes the write records a second one (PRD R-1).
+and the retry that then makes the write records a second one (PRD R-1). The three staff
+visit actions are the exception, strict on purpose: only the HTTP endpoints call them,
+nothing retries them, and a repeat is a human mistake to report.
 
 Every slot write increments `version` (PRD R-4) and happens in the same transaction as
 the appointment write that justifies it (R-2). tests/meta/test_slot_writes.py keeps
@@ -35,7 +38,6 @@ from app.modules.scheduling.models import (
     ProviderSlot,
     SlotStatus,
     Visit,
-    VisitStatus,
 )
 from app.modules.scheduling.state import (
     VISIT_RESULT,
@@ -285,10 +287,14 @@ async def fail_booking(
 
 # --- visit lifecycle (spec 4.2) -------------------------------------------------------
 #
-# The same discipline as booking: every function is idempotent, the caller owns the
-# transaction, and the appointment row is locked first (`_require`) so racing signals for
-# one visit serialise. Unlike booking, none of these writes a slot: a completed or no-show
-# appointment's slot is in the past and stays `booked` (spec 2, the R-2 table).
+# The database records human actions synchronously; the visit workflow owns time (D-12).
+# `check_in`, `mark_seen` and `complete_visit` are called by the endpoints in the
+# request's transaction and are strict: an illegal action -- a repeat included -- raises
+# Conflict, because nothing retries them and a silent no-op would tell staff a second
+# check-in "worked". `mark_no_show` is the timer's activity, and idempotent like booking.
+# All of them lock the appointment row first (`_require`), so a check-in and the no-show
+# timer serialise on it. None writes a slot: a completed or no-show appointment's slot is
+# in the past and stays `booked` (spec 2, the R-2 table).
 
 
 def _visit_snapshot(visit: Visit) -> dict[str, object]:
@@ -328,22 +334,6 @@ async def get_visit(
     return await session.scalar(statement)
 
 
-async def require_visit_action(
-    session: AsyncSession, *, appointment_id: uuid.UUID, action: VisitAction
-) -> None:
-    """Raise NotFound or Conflict unless `action` is legal for the appointment now.
-
-    What the endpoints call *before* signalling the workflow, so an illegal request is a
-    synchronous 409 rather than a signal the workflow later ignores. A read only; it locks
-    nothing, so it can be stale by the time the activity runs -- which is why every write
-    below re-checks under a lock."""
-    appointment = await get_appointment(session, appointment_id)
-    if appointment is None:
-        raise NotFound(f"appointment {appointment_id} does not exist")
-    visit = await get_visit(session, appointment_id)
-    check_visit_action(action, appointment.status, visit.status if visit else None)
-
-
 async def no_show_deadline(
     session: AsyncSession, *, appointment_id: uuid.UUID, grace: timedelta
 ) -> datetime:
@@ -362,16 +352,21 @@ async def no_show_deadline(
 async def check_in(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
     actor_user_id: str | None,
-) -> None:
-    """Insert the visit row. A visit that already exists is a retried activity.
+) -> Visit:
+    """Insert the visit row (`checked_in`). Strict: a visit that already exists is a
+    Conflict, as is an appointment that is not `confirmed` -- including one the no-show
+    timer has already closed.
 
-    `ON CONFLICT (appointment_id) DO NOTHING` backs the check under the lock: only the call
-    that actually inserted writes the audit entry (and, as in booking, a first run whose
-    commit failed leaves an entry for a write that never landed -- PRD R-1)."""
+    Holds the appointment row lock until the caller commits; `mark_no_show` waits on it,
+    which is what makes a check-in near the deadline win or lose cleanly. `ON CONFLICT DO
+    NOTHING` is a second gate behind the check: if anything ever inserted without the
+    lock, the unique `appointment_id` would still allow one visit, and zero rows is a
+    Conflict too."""
     appointment = await _require(session, appointment_id)
-    if await get_visit(session, appointment_id, for_update=True) is not None:
-        return
-    check_visit_action(VisitAction.CHECK_IN, appointment.status, None)
+    existing = await get_visit(session, appointment_id, for_update=True)
+    check_visit_action(
+        VisitAction.CHECK_IN, appointment.status, existing.status if existing else None
+    )
     result = await session.execute(
         insert(Visit)
         .values(
@@ -380,44 +375,40 @@ async def check_in(
         )
         .on_conflict_do_nothing(index_elements=[Visit.appointment_id])
     )
-    if result.rowcount == 1:
-        visit = await get_visit(session, appointment_id)
-        await _audit_visit(audit, visit, "checked_in", actor_user_id, None)
+    if result.rowcount != 1:
+        raise Conflict(f"appointment {appointment_id} is already checked in")
+    visit = await get_visit(session, appointment_id)
+    await _audit_visit(audit, visit, "checked_in", actor_user_id, None)
+    return visit
 
 
 async def mark_seen(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
     actor_user_id: str | None,
-) -> None:
-    """checked_in -> in_progress. A visit already in_progress or completed is a retry."""
+) -> Visit:
+    """checked_in -> in_progress. Strict: anything else, a second `seen` included, is a
+    Conflict."""
     appointment = await _require(session, appointment_id)
     visit = await get_visit(session, appointment_id, for_update=True)
-    if visit is not None and visit.status in (VisitStatus.IN_PROGRESS, VisitStatus.COMPLETED):
-        return
     check_visit_action(VisitAction.SEEN, appointment.status, visit.status if visit else None)
     before = _visit_snapshot(visit)
     visit.seen_at = now
     visit.status = VISIT_RESULT[VisitAction.SEEN]
     await session.flush()
     await _audit_visit(audit, visit, "seen", actor_user_id, before)
+    return visit
 
 
 async def complete_visit(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID, now: datetime,
     actor_user_id: str | None,
-) -> None:
+) -> Visit:
     """in_progress -> completed, and the appointment confirmed -> completed, together.
+    Strict: completing twice is a Conflict (the appointment is no longer `confirmed`).
 
-    No slot write: the slot is in the past and stays `booked` (R-2). Already completed on
-    both sides is a retry."""
+    No slot write: the slot is in the past and stays `booked` (R-2)."""
     appointment = await _require(session, appointment_id)
     visit = await get_visit(session, appointment_id, for_update=True)
-    if (
-        visit is not None
-        and visit.status is VisitStatus.COMPLETED
-        and appointment.status is AppointmentStatus.COMPLETED
-    ):
-        return
     check_visit_action(VisitAction.COMPLETE, appointment.status, visit.status if visit else None)
     require_transition(appointment.status, AppointmentStatus.COMPLETED)
     visit_before = _visit_snapshot(visit)
@@ -428,6 +419,7 @@ async def complete_visit(
     await session.flush()
     await _audit_visit(audit, visit, "completed", actor_user_id, visit_before)
     await _audit(audit, appointment, "completed", actor_user_id, appointment_before)
+    return visit
 
 
 async def mark_no_show(

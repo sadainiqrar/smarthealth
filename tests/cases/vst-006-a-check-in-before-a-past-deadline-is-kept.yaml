@@ -1,0 +1,13 @@
+id: vst-006-a-check-in-before-a-past-deadline-is-kept
+title: "A visit whose deadline has already passed, with a check-in already signalled, ends checked_in and never runs the no-show step"
+requirement: [PART-A-FR-3]
+tier: workflow
+priority: P0
+status: ready
+# The review's second scenario: `wait_condition(timeout=0)` raises TimeoutError even when
+# its condition already holds, so a workflow that "waited zero" for a past deadline
+# overrode a buffered check-in with a no-show. The workflow now waits only while time is
+# left. The test signal-with-starts the real VisitWorkflow with `checked_in` and a deadline
+# an hour in the past; it must return "checked_in" without calling no_show. Restoring the
+# zero-timeout wait fails it.
+impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_a_check_in_signalled_before_a_past_deadline_is_still_checked_in"

@@ -1,8 +1,10 @@
-"""The visit endpoints' HTTP contract, with Temporal and the database faked.
+"""The visit endpoints' HTTP contract, with Temporal, the database and the audit log
+faked.
 
-The precheck (`service.require_visit_action`) is monkeypatched rather than run against a
-session: what is under test here is the router's role gates, its status codes and its
-error mapping, not the state table (T0) or the SQL (T3).
+The service functions are monkeypatched rather than run against a session: what is under
+test here is the router -- role gates, status codes, error mapping, that it commits what
+the service wrote, and that the post-commit check-in signal can never fail a request.
+The state table is T0's; the SQL and its locking are T3's.
 """
 
 from __future__ import annotations
@@ -12,12 +14,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
-from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 
-from app.api.deps import get_session, get_temporal
+from app.api.deps import get_audit_log, get_session, get_temporal
 from app.core.errors import Conflict, NotFound
-from app.core.temporal import TASK_QUEUE
 from app.main import app
 from app.modules.identity.models import UserRole
 from app.modules.identity.security import create_access_token
@@ -31,12 +31,22 @@ pytestmark = pytest.mark.contract
 SETTINGS = Settings()
 CALLER = "11111111-1111-1111-1111-111111111111"
 APPOINTMENT = uuid.uuid4()
+NOW = datetime.now(UTC)
 
-#: action path -> (workflow signal, the roles allowed, a role that is not)
+#: action path -> (service function, resulting visit status, allowed roles, a wrong role)
 ACTIONS = {
-    "check-in": ("check_in", (UserRole.FRONT_DESK, UserRole.ADMIN), UserRole.PROVIDER),
-    "seen": ("seen", (UserRole.PROVIDER, UserRole.ADMIN), UserRole.FRONT_DESK),
-    "complete": ("complete", (UserRole.PROVIDER, UserRole.ADMIN), UserRole.PATIENT),
+    "check-in": (
+        "check_in", VisitStatus.CHECKED_IN, (UserRole.FRONT_DESK, UserRole.ADMIN),
+        UserRole.PROVIDER,
+    ),
+    "seen": (
+        "mark_seen", VisitStatus.IN_PROGRESS, (UserRole.PROVIDER, UserRole.ADMIN),
+        UserRole.FRONT_DESK,
+    ),
+    "complete": (
+        "complete_visit", VisitStatus.COMPLETED, (UserRole.PROVIDER, UserRole.ADMIN),
+        UserRole.PATIENT,
+    ),
 }
 
 
@@ -47,51 +57,83 @@ def auth(role: UserRole, subject: str = CALLER) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+class FakeHandle:
+    def __init__(self, temporal: FakeTemporal, workflow_id: str) -> None:
+        self._temporal = temporal
+        self._id = workflow_id
+
+    async def signal(self, signal, *args) -> None:
+        if self._temporal.error:
+            raise self._temporal.error
+        name = getattr(signal, "__name__", signal)
+        self._temporal.signals.append((self._id, name))
+
+
 class FakeTemporal:
-    def __init__(self, error: Exception | None = None) -> None:
-        self.starts: list[dict] = []
-        self._error = error
+    def __init__(self) -> None:
+        self.signals: list[tuple[str, str]] = []
+        self.error: Exception | None = None
+        self.session = FakeSession()
 
-    async def start_workflow(self, *args, **kwargs):
-        if self._error:
-            raise self._error
-        self.starts.append(kwargs)
-
-
-class _Session:
-    """Nothing in these tests may reach a real query."""
+    def get_workflow_handle(self, workflow_id: str) -> FakeHandle:
+        return FakeHandle(self, workflow_id)
 
 
-def _install(temporal: FakeTemporal) -> None:
-    async def _session():
-        yield _Session()
+class FakeSession:
+    """Records commits; nothing may reach a real query."""
 
-    app.dependency_overrides[get_temporal] = lambda: temporal
-    app.dependency_overrides[get_session] = _session
+    def __init__(self) -> None:
+        self.commits = 0
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+    async def rollback(self) -> None:
+        pass
 
 
-def _uninstall() -> None:
-    app.dependency_overrides.pop(get_temporal, None)
-    app.dependency_overrides.pop(get_session, None)
+class FakeAudit:
+    async def record(self, event) -> None:  # pragma: no cover - the service is faked
+        raise AssertionError("the router must not audit; the service does")
 
 
 @pytest.fixture
 def temporal():
     fake = FakeTemporal()
-    _install(fake)
+
+    async def _session():
+        yield fake.session
+
+    app.dependency_overrides[get_temporal] = lambda: fake
+    app.dependency_overrides[get_session] = _session
+    app.dependency_overrides[get_audit_log] = FakeAudit
     yield fake
-    _uninstall()
+    for dependency in (get_temporal, get_session, get_audit_log):
+        app.dependency_overrides.pop(dependency, None)
 
 
 @pytest.fixture
-def precheck_passes(monkeypatch):
-    calls: list = []
+def writes(monkeypatch):
+    """The three service writes, faked: each records its call and returns a visit in the
+    state that action produces. `fail` makes every call raise instead."""
+    state: dict = {"calls": [], "fail": None}
 
-    async def fake(session, *, appointment_id, action):
-        calls.append((appointment_id, action))
+    def make(name: str, status: VisitStatus):
+        async def fake(session, audit, *, appointment_id, now, actor_user_id):
+            state["calls"].append((name, appointment_id, actor_user_id))
+            if state["fail"]:
+                raise state["fail"]
+            return SimpleNamespace(
+                appointment_id=appointment_id, status=status, checked_in_at=NOW,
+                seen_at=NOW if status is not VisitStatus.CHECKED_IN else None,
+                completed_at=NOW if status is VisitStatus.COMPLETED else None,
+            )
 
-    monkeypatch.setattr(service, "require_visit_action", fake)
-    return calls
+        return fake
+
+    for name, status, _, _ in ACTIONS.values():
+        monkeypatch.setattr(service, name, make(name, status))
+    return state
 
 
 @pytest.mark.parametrize("path", ACTIONS)
@@ -101,92 +143,102 @@ async def test_an_action_requires_a_token(api_client, temporal, path):
 
 
 @pytest.mark.parametrize("path", ACTIONS)
-async def test_the_wrong_role_is_refused_before_anything_is_checked(
-    api_client, temporal, precheck_passes, path
+async def test_the_wrong_role_is_refused_before_anything_is_written(
+    api_client, temporal, writes, path
 ):
-    _, _, wrong = ACTIONS[path]
+    *_, wrong = ACTIONS[path]
     response = await api_client.post(
         f"/appointments/{APPOINTMENT}/{path}", headers=auth(wrong)
     )
     assert response.status_code == 403
-    assert precheck_passes == [] and temporal.starts == []
+    assert writes["calls"] == [] and temporal.session.commits == 0
+    assert temporal.signals == []
 
 
 @pytest.mark.parametrize(
-    ("path", "role"), [(p, r) for p, (_, roles, _) in ACTIONS.items() for r in roles]
+    ("path", "role"), [(p, r) for p, (_, _, roles, _) in ACTIONS.items() for r in roles]
 )
-async def test_an_allowed_role_gets_202_and_signals_the_visit(
-    api_client, temporal, precheck_passes, path, role
+async def test_an_allowed_role_gets_200_with_the_written_visit(
+    api_client, temporal, writes, path, role
 ):
-    """202, not 200: the write happens in the workflow, after the response."""
-    signal, _, _ = ACTIONS[path]
+    """200, not 202: the write is done, in this request's transaction, by the time the
+    response leaves -- and the actor is the caller from the token."""
+    name, status, _, _ = ACTIONS[path]
     response = await api_client.post(
         f"/appointments/{APPOINTMENT}/{path}", headers=auth(role)
     )
-    assert response.status_code == 202
-    assert response.json() == {"appointment_id": str(APPOINTMENT), "action": signal}
-    (start,) = temporal.starts
-    assert start["id"] == f"visit-{APPOINTMENT}"
-    assert start["start_signal"] == signal
-    assert start["start_signal_args"][0].actor_user_id == CALLER
-    assert start["task_queue"] == SETTINGS.task_queue(TASK_QUEUE)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["appointment_id"] == str(APPOINTMENT)
+    assert body["status"] == status.value
+    assert writes["calls"] == [(name, APPOINTMENT, CALLER)]
+    assert temporal.session.commits == 1
 
 
-async def test_an_illegal_action_is_a_409_and_signals_nothing(
-    api_client, temporal, monkeypatch
+async def test_only_check_in_signals_the_visit_workflow(api_client, temporal, writes):
+    await api_client.post(
+        f"/appointments/{APPOINTMENT}/check-in", headers=auth(UserRole.FRONT_DESK)
+    )
+    assert temporal.signals == [(f"visit-{APPOINTMENT}", "checked_in")]
+    for path in ("seen", "complete"):
+        await api_client.post(
+            f"/appointments/{APPOINTMENT}/{path}", headers=auth(UserRole.PROVIDER)
+        )
+    assert len(temporal.signals) == 1
+
+
+@pytest.mark.parametrize("path", ACTIONS)
+async def test_an_illegal_action_is_a_409_and_commits_and_signals_nothing(
+    api_client, temporal, writes, path
 ):
-    async def refuse(session, *, appointment_id, action):
-        raise Conflict("cannot seen: appointment is confirmed, visit is none")
-
-    monkeypatch.setattr(service, "require_visit_action", refuse)
+    """A repeat included: the service is strict under its lock, so a second check-in is
+    refused, not silently accepted."""
+    writes["fail"] = Conflict("cannot check_in: appointment is confirmed, visit is checked_in")
+    _, _, roles, _ = ACTIONS[path]
     response = await api_client.post(
-        f"/appointments/{APPOINTMENT}/seen", headers=auth(UserRole.PROVIDER)
+        f"/appointments/{APPOINTMENT}/{path}", headers=auth(roles[0])
     )
     assert response.status_code == 409
     assert response.json()["error"] == "Conflict"
-    assert temporal.starts == []
+    assert temporal.session.commits == 0 and temporal.signals == []
 
 
-async def test_an_unknown_appointment_is_a_404(api_client, temporal, monkeypatch):
-    async def missing(session, *, appointment_id, action):
-        raise NotFound(f"appointment {appointment_id} does not exist")
-
-    monkeypatch.setattr(service, "require_visit_action", missing)
+async def test_an_unknown_appointment_is_a_404(api_client, temporal, writes):
+    writes["fail"] = NotFound(f"appointment {APPOINTMENT} does not exist")
     response = await api_client.post(
         f"/appointments/{APPOINTMENT}/check-in", headers=auth(UserRole.FRONT_DESK)
     )
     assert response.status_code == 404
-    assert temporal.starts == []
+    assert temporal.session.commits == 0 and temporal.signals == []
 
 
-async def test_a_finished_visit_is_a_409(api_client, precheck_passes):
-    """signal-with-start on a closed id: the visit finished between precheck and signal."""
-    _install(FakeTemporal(WorkflowAlreadyStartedError("visit", "Visit", run_id="r")))
-    try:
-        response = await api_client.post(
-            f"/appointments/{APPOINTMENT}/complete", headers=auth(UserRole.PROVIDER)
-        )
-    finally:
-        _uninstall()
-    assert response.status_code == 409
-
-
-async def test_temporal_down_is_a_503(api_client, precheck_passes):
-    _install(FakeTemporal(RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b"")))
-    try:
-        response = await api_client.post(
-            f"/appointments/{APPOINTMENT}/check-in", headers=auth(UserRole.ADMIN)
-        )
-    finally:
-        _uninstall()
-    assert response.status_code == 503
-    assert response.json()["error"] == "ServiceUnavailable"
+@pytest.mark.parametrize(
+    "error",
+    [
+        RPCError("unavailable", RPCStatusCode.UNAVAILABLE, b""),
+        RPCError("workflow not found", RPCStatusCode.NOT_FOUND, b""),
+        RuntimeError("Failed client connect"),
+    ],
+    ids=["unavailable", "not-found", "cannot-connect"],
+)
+async def test_temporal_failing_after_the_commit_still_answers_200(
+    api_client, temporal, writes, error
+):
+    """The check-in is committed before the signal is sent; the no-show timer reconciles
+    against the database if the signal is lost. A 503 here would tell staff a recorded
+    check-in failed -- and their retry would then be a 409."""
+    temporal.error = error
+    response = await api_client.post(
+        f"/appointments/{APPOINTMENT}/check-in", headers=auth(UserRole.ADMIN)
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "checked_in"
+    assert temporal.session.commits == 1
 
 
 # --- GET /appointments/{id}/visit -----------------------------------------------------
 
 PATIENT = uuid.uuid4()
-NOW = datetime.now(UTC)
 
 
 @pytest.fixture

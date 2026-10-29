@@ -14,12 +14,7 @@ from temporalio.exceptions import ApplicationError
 from temporalio.service import RPCError
 
 from app.core.temporal import build_worker
-from app.modules.scheduling.contracts import (
-    BookingRequest,
-    VisitRequest,
-    VisitSignal,
-    visit_workflow_id,
-)
+from app.modules.scheduling.contracts import BookingRequest, VisitRequest, visit_workflow_id
 from app.modules.scheduling.workflows import BookAppointmentWorkflow, VisitWorkflow
 from tests.tiers.t2_workflow.visit_fakes import finish_visit, open_visit_fakes
 
@@ -144,8 +139,9 @@ async def test_a_confirmed_booking_starts_the_visit(isolated_env):
 
 
 async def test_a_visit_already_started_does_not_fail_the_booking(isolated_env):
-    """A check-in can signal-with-start the visit before the booking's own child start
-    runs; that start then finds the id taken, and must not undo a confirmed booking."""
+    """If `visit-<id>` already exists when the booking's child start runs, the start
+    finds the id taken; that must not undo a confirmed booking. Nothing in the app starts
+    a visit other than booking, so this is the defensive path."""
     request = _request()
     release = asyncio.Event()
     queue = f"t2-book-{uuid.uuid4().hex[:8]}"
@@ -154,13 +150,11 @@ async def test_a_visit_already_started_does_not_fail_the_booking(isolated_env):
         isolated_env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
         activities=[*_fakes(calls), *open_visit_fakes(isolated_env, release)],
     ):
-        # Signal-with-start, as a check-in does. Checked in, the visit waits on a signal
-        # rather than a timer: awaiting the booking below would otherwise let the
-        # time-skipping server fire the no-show timer first.
+        # Parked in the held `deadline` fake, so the time-skipping server cannot fire
+        # its timer while the booking below runs.
         visit = await isolated_env.client.start_workflow(
             VisitWorkflow.run, VisitRequest(request.appointment_id),
             id=visit_workflow_id(request.appointment_id), task_queue=queue,
-            start_signal="check_in", start_signal_args=[VisitSignal(actor_user_id=None)],
         )
         result = await isolated_env.client.execute_workflow(
             BookAppointmentWorkflow.run, request,

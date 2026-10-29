@@ -2,6 +2,7 @@
 
 Booking answers 202, not 201: the appointment is `pending` until the workflow confirms
 it, and a 201 would claim a resource in a state it is not in yet (ARCHITECTURE §3.2).
+Visit actions answer 200: they are written in the request's own transaction (D-12).
 A patient books and reads only their own appointments; staff act for anyone.
 """
 
@@ -14,7 +15,8 @@ from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client
 
-from app.api.deps import get_session, get_temporal, page_params
+from app.api.deps import get_audit_log, get_session, get_temporal, page_params
+from app.core.audit import AuditLog
 from app.core.clock import Clock, get_clock
 from app.core.errors import NotFound, PermissionDenied
 from app.core.pagination import Page, PageParams
@@ -36,11 +38,9 @@ from app.modules.scheduling.schemas import (
     BookingAccepted,
     BookingCreate,
     SlotRead,
-    VisitAccepted,
     VisitRead,
 )
-from app.modules.scheduling.state import VisitAction
-from app.modules.scheduling.visits import signal_visit
+from app.modules.scheduling.visits import notify_checked_in
 
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 slots_router = APIRouter(prefix="/slots", tags=["slots"])
@@ -115,66 +115,62 @@ async def get_appointment(
     return AppointmentRead.model_validate(appointment)
 
 
-async def _visit_action(
-    action: VisitAction, appointment_id: uuid.UUID, request: Request,
-    session: AsyncSession, temporal: Client, claims: TokenClaims,
-) -> VisitAccepted:
-    """Validate against the database (a synchronous 404/409), then signal the workflow,
-    which performs the write. The activity re-checks under a lock, so a race between this
-    precheck and the signal is harmless."""
-    await service.require_visit_action(session, appointment_id=appointment_id, action=action)
-    await signal_visit(
-        temporal, appointment_id=appointment_id, action=action,
-        actor_user_id=claims.subject,
-        task_queue=request.app.state.settings.task_queue(TASK_QUEUE),
-    )
-    return VisitAccepted(appointment_id=appointment_id, action=action)
+# The visit actions write synchronously and the router owns the commit (the Week 1 rule).
+# Each service call locks the appointment row and checks the transition under that lock,
+# so the write *is* the check: an illegal action is a 409 and an unknown appointment a
+# 404, with no separate precheck to go stale.
 
 
-# 202, not 200: the write happens in the workflow, after this response.
-@router.post(
-    "/{appointment_id}/check-in", response_model=VisitAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/{appointment_id}/check-in", response_model=VisitRead)
 async def check_in(
-    appointment_id: uuid.UUID, request: Request,
+    appointment_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
+    audit: AuditLog = Depends(get_audit_log),
     temporal: Client = Depends(get_temporal),
+    clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CHECKERS_IN)),
-) -> VisitAccepted:
-    return await _visit_action(
-        VisitAction.CHECK_IN, appointment_id, request, session, temporal, claims
+) -> VisitRead:
+    visit = await service.check_in(
+        session, audit, appointment_id=appointment_id, now=clock.now(),
+        actor_user_id=claims.subject,
     )
+    await session.commit()
+    # After the commit, and never failing the request: the check-in is recorded, and the
+    # no-show timer reconciles against the database if this signal is lost.
+    await notify_checked_in(temporal, appointment_id)
+    return VisitRead.model_validate(visit)
 
 
-@router.post(
-    "/{appointment_id}/seen", response_model=VisitAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/{appointment_id}/seen", response_model=VisitRead)
 async def mark_seen(
-    appointment_id: uuid.UUID, request: Request,
+    appointment_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    temporal: Client = Depends(get_temporal),
+    audit: AuditLog = Depends(get_audit_log),
+    clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CLINICIANS)),
-) -> VisitAccepted:
-    return await _visit_action(
-        VisitAction.SEEN, appointment_id, request, session, temporal, claims
+) -> VisitRead:
+    visit = await service.mark_seen(
+        session, audit, appointment_id=appointment_id, now=clock.now(),
+        actor_user_id=claims.subject,
     )
+    await session.commit()
+    return VisitRead.model_validate(visit)
 
 
-@router.post(
-    "/{appointment_id}/complete", response_model=VisitAccepted,
-    status_code=status.HTTP_202_ACCEPTED,
-)
+@router.post("/{appointment_id}/complete", response_model=VisitRead)
 async def complete_visit(
-    appointment_id: uuid.UUID, request: Request,
+    appointment_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
-    temporal: Client = Depends(get_temporal),
+    audit: AuditLog = Depends(get_audit_log),
+    clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CLINICIANS)),
-) -> VisitAccepted:
-    return await _visit_action(
-        VisitAction.COMPLETE, appointment_id, request, session, temporal, claims
+) -> VisitRead:
+    visit = await service.complete_visit(
+        session, audit, appointment_id=appointment_id, now=clock.now(),
+        actor_user_id=claims.subject,
     )
+    await session.commit()
+    return VisitRead.model_validate(visit)
 
 
 @router.get("/{appointment_id}/visit", response_model=VisitRead)

@@ -31,7 +31,7 @@ from app.core.clock import Clock
 from app.core.errors import DomainError
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.scheduling import service
-from app.modules.scheduling.contracts import BookingRequest, VisitRequest, VisitSignal
+from app.modules.scheduling.contracts import BookingRequest, VisitRequest
 
 logger = logging.getLogger(__name__)
 
@@ -162,33 +162,6 @@ class SchedulingActivities:
                 session, appointment_id=appointment_id, grace=self._no_show_grace
             )
         return when.isoformat()
-
-    @activity.defn(name="visit.check_in")
-    async def check_in(self, request: VisitRequest, signal: VisitSignal) -> None:
-        appointment_id = parse_id(request.appointment_id, "appointment_id")
-        async with self._unit_of_work() as session:
-            await service.check_in(
-                session, self._audit, appointment_id=appointment_id,
-                now=self._clock.now(), actor_user_id=signal.actor_user_id,
-            )
-
-    @activity.defn(name="visit.seen")
-    async def seen(self, request: VisitRequest, signal: VisitSignal) -> None:
-        appointment_id = parse_id(request.appointment_id, "appointment_id")
-        async with self._unit_of_work() as session:
-            await service.mark_seen(
-                session, self._audit, appointment_id=appointment_id,
-                now=self._clock.now(), actor_user_id=signal.actor_user_id,
-            )
-
-    @activity.defn(name="visit.complete")
-    async def complete(self, request: VisitRequest, signal: VisitSignal) -> None:
-        appointment_id = parse_id(request.appointment_id, "appointment_id")
-        async with self._unit_of_work() as session:
-            await service.complete_visit(
-                session, self._audit, appointment_id=appointment_id,
-                now=self._clock.now(), actor_user_id=signal.actor_user_id,
-            )
 
     @activity.defn(name="visit.no_show")
     async def no_show(self, request: VisitRequest) -> str:

@@ -1,13 +1,14 @@
 id: vst-004-visit-end-to-end
-title: "A visit runs from booking to completion over HTTP: 202s, state machine 409s, appointment completed, audit trail written"
+title: "A visit runs from booking to completion over HTTP: 200s with the written visit, state machine 409s, appointment completed, audit trail with the real actors"
 requirement: [PART-A-FR-3]
 tier: integration
 priority: P1
 status: ready
-# Real infrastructure: a booking confirms and starts its visit workflow; front desk
-# checks in, a provider marks seen and completes, each answering 202 with the write
-# landing in the workflow. A repeated check-in, an early complete and the wrong role are
-# refused synchronously (409, 409, 403). The visit and appointment both read
-# `completed`, the slot stays `booked` (R-2), the workflow ends "completed", and Mongo
-# holds checked_in, seen, completed in order. Runs in T3 with an in-process worker.
+# Real infrastructure: a booking confirms and starts its visit timer; front desk checks
+# in (200, visit checked_in, and the post-commit signal ends the timer "checked_in"), a
+# provider marks seen and completes (200 each). A repeated check-in, an early complete
+# and the wrong role are refused synchronously (409, 409, 403). The appointment reads
+# `completed`, the slot stays `booked` (R-2), and Mongo holds checked_in, seen,
+# completed in order, each with the token's user as actor. Runs in T3 with an
+# in-process worker.
 impl: "tests/tiers/t3_integration/test_visit_round_trip.py::test_a_visit_runs_from_booking_to_completion"

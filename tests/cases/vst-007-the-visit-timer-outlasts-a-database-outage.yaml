@@ -1,0 +1,13 @@
+id: vst-007-the-visit-timer-outlasts-a-database-outage
+title: "A transient database outage longer than the booking step budget does not permanently fail a visit timer"
+requirement: [PART-A-FR-3, PART-A-NFR-2]
+tier: workflow
+priority: P1
+status: ready
+# The review's third scenario: visit activities ran on the booking STEP policy (5
+# attempts), so an outage of a few minutes ended the visit workflow failed -- no timer
+# left, and the appointment would never be marked no-show. Visit activities now retry
+# without limit (domain errors stay non-retryable). The test makes `deadline`, then
+# `no_show`, fail seven times before succeeding; the workflow still returns "no_show".
+# Putting the visit activities back on STEP fails it.
+impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_a_database_outage_outlasts_the_booking_step_budget"

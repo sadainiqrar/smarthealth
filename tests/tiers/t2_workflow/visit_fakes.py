@@ -18,7 +18,7 @@ from datetime import timedelta
 
 from temporalio import activity
 
-from app.modules.scheduling.contracts import VisitRequest, VisitSignal, visit_workflow_id
+from app.modules.scheduling.contracts import VisitRequest, visit_workflow_id
 
 
 def open_visit_fakes(env, release: asyncio.Event):
@@ -32,14 +32,7 @@ def open_visit_fakes(env, release: asyncio.Event):
     async def no_show(request: VisitRequest) -> str:
         return "no_show"
 
-    def two_arg(name: str):
-        @activity.defn(name=f"visit.{name}")
-        async def fake(request: VisitRequest, signal: VisitSignal) -> None:
-            return None
-
-        return fake
-
-    return [deadline, no_show, *(two_arg(n) for n in ("check_in", "seen", "complete"))]
+    return [deadline, no_show]
 
 
 async def finish_visit(env, appointment_id: str, release: asyncio.Event) -> str:

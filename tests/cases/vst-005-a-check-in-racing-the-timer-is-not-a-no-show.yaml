@@ -1,0 +1,14 @@
+id: vst-005-a-check-in-racing-the-timer-is-not-a-no-show
+title: "A check-in still committing when the no-show timer fires is never recorded as a no-show"
+requirement: [PART-A-FR-3, PART-A-NFR-1]
+tier: integration
+priority: P0
+status: ready
+# The review's first scenario: under the old design the endpoint answered 202 and the
+# workflow wrote the check-in later, so near the deadline the timer could win -- staff
+# told "accepted", patient recorded no_show. Now the check-in is written in the request
+# and both writers lock the appointment row. Deterministic: a check-in transaction is
+# held open on the lock, mark_no_show is started in another session and asserted
+# blocked, the check-in commits, and mark_no_show returns visit_exists with the
+# appointment still confirmed. Making mark_no_show ignore an existing visit fails it.
+impl: "tests/tiers/t3_integration/test_visit_service.py::test_a_no_show_blocked_behind_an_uncommitted_check_in_finds_the_visit"

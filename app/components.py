@@ -35,9 +35,6 @@ _SCHEDULING_ACTIVITIES = (
     SchedulingActivities.confirm,
     SchedulingActivities.fail_booking,
     SchedulingActivities.deadline,
-    SchedulingActivities.check_in,
-    SchedulingActivities.seen,
-    SchedulingActivities.complete,
     SchedulingActivities.no_show,
 )
 

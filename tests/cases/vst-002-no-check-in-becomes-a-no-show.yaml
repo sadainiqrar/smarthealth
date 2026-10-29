@@ -1,12 +1,15 @@
 id: vst-002-no-check-in-becomes-a-no-show
-title: "An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes"
+title: "An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes, and the database's answer is the workflow's result"
 requirement: [PART-A-FR-3]
 tier: workflow
 priority: P0
 status: ready
 # The no-show is not a cron job that might not run: it is a durable timer inside the
-# visit workflow, so it survives a worker restart and fires exactly once. The test runs
-# the real VisitWorkflow in the time-skipping environment with a two-hour deadline; the
-# timer elapses while the test awaits the result, the no_show activity runs, and the
-# workflow returns "no_show" having called nothing else (no check_in, seen or complete).
-impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_nobody_checking_in_makes_the_appointment_a_no_show"
+# visit workflow, so it survives a worker restart and fires exactly once. When it fires
+# the workflow does not decide -- it asks the database (`mark_no_show`, under the
+# appointment lock), which answers no_show, visit_exists (a check-in landed whose signal
+# was lost) or closed (cancelled/rescheduled/completed). The test runs the real
+# VisitWorkflow in the time-skipping environment with a two-hour deadline, once per
+# answer, and asserts the workflow returns exactly that answer having called only
+# deadline then no_show.
+impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_with_no_signal_the_timer_fires_and_the_database_decides"

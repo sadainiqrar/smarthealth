@@ -18,12 +18,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
 
-from app.modules.scheduling.contracts import (
-    BookingRequest,
-    VisitRequest,
-    VisitSignal,
-    visit_workflow_id,
-)
+from app.modules.scheduling.contracts import BookingRequest, VisitRequest, visit_workflow_id
 
 with workflow.unsafe.imports_passed_through():
     from app.modules.scheduling.activities import SchedulingActivities
@@ -95,70 +90,70 @@ class BookAppointmentWorkflow:
                     parent_close_policy=workflow.ParentClosePolicy.ABANDON,
                 )
             except WorkflowAlreadyStartedError:
-                pass  # a visit endpoint signal-with-started it first
+                # `visit-<id>` already exists. Nothing else starts one, so this is
+                # defensive: a second start must never fail a confirmed booking.
+                pass
         return "confirmed"
+
+
+#: Every visit activity. The visit workflow has no compensation to fall back on: a step
+#: that gave up would end the workflow failed and leave the appointment with no timer at
+#: all -- the review's "a five-minute database outage permanently fails the visit". Both
+#: activities are idempotent reads or guarded writes, so retrying until the database is
+#: back is safe; a domain error (NotFound) is non-retryable and still ends it.
+VISIT_STEP = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": UNLIMITED_RETRY}
 
 
 @workflow.defn(name="Visit")
 class VisitWorkflow:
-    """One per confirmed appointment (spec D-12): check-in -> seen -> complete, driven by
-    signals, or no_show by a durable timer. Signals only set flags; the run loop does
-    every write through an activity, so a re-delivered signal changes nothing."""
+    """The no-show timer for one confirmed appointment (spec D-12, §4.2).
+
+    The database records what staff do -- the endpoints write check-in, seen and complete
+    synchronously; this workflow owns only time. It waits until the slot's end plus
+    grace, then asks the database (`no_show`, under the appointment lock) whether anyone
+    checked in. Signals are hints that let it finish early, not the record: `checked_in`
+    may be lost or late (it is sent best-effort after the check-in commits), which is
+    why the no-show step settles on the database's answer, not on the flags.
+
+    Returns "checked_in", "cancelled", or the `NoShowOutcome` value from the database:
+    "no_show", "visit_exists" (a check-in landed but its signal did not), "closed"."""
 
     def __init__(self) -> None:
-        self._signals: dict[str, VisitSignal] = {}
+        self._checked_in = False
         self._cancelled = False
 
-    @workflow.signal(name="check_in")
-    def check_in(self, signal: VisitSignal) -> None:
-        self._signals.setdefault("check_in", signal)
-
-    @workflow.signal(name="seen")
-    def seen(self, signal: VisitSignal) -> None:
-        self._signals.setdefault("seen", signal)
-
-    @workflow.signal(name="complete")
-    def complete(self, signal: VisitSignal) -> None:
-        self._signals.setdefault("complete", signal)
+    @workflow.signal(name="checked_in")
+    def checked_in(self) -> None:
+        self._checked_in = True
 
     @workflow.signal(name="cancel")
     def cancel(self) -> None:
         self._cancelled = True
 
+    def _settled(self) -> bool:
+        return self._checked_in or self._cancelled
+
     @workflow.run
     async def run(self, request: VisitRequest) -> str:
         deadline = datetime.fromisoformat(
             await workflow.execute_activity_method(
-                SchedulingActivities.deadline, request, **STEP
+                SchedulingActivities.deadline, request, **VISIT_STEP
             )
         )
-        wait = max(deadline - workflow.now(), timedelta(0))
-        try:
-            await workflow.wait_condition(
-                lambda: "check_in" in self._signals or self._cancelled, timeout=wait
-            )
-        except TimeoutError:
-            outcome = await workflow.execute_activity_method(
-                SchedulingActivities.no_show, request, **STEP
-            )
-            if outcome != "visit_exists":
-                return outcome  # "no_show", or "closed": nothing left to drive
-            # Not a no-show: a check-in raced the timer and won in the database. Its
-            # signal may not have arrived yet; the check_in activity is idempotent, so
-            # act as if it had rather than wait for a signal that was already honoured.
-            self._signals.setdefault("check_in", VisitSignal(actor_user_id=None))
+        remaining = deadline - workflow.now()
+        # Only wait while there is time left. `wait_condition(timeout=0)` raises
+        # TimeoutError even when the condition already holds -- a check-in signalled
+        # before a past deadline would be overridden by a no-show. Past the deadline,
+        # the flags (checked below) or the database decide, never a zero-length timer.
+        if not self._settled() and remaining > timedelta(0):
+            try:
+                await workflow.wait_condition(self._settled, timeout=remaining)
+            except TimeoutError:
+                pass  # the deadline passed with no signal: ask the database
+        if self._checked_in:
+            return "checked_in"
         if self._cancelled:
             return "cancelled"
-        for step, activity_method in (
-            ("check_in", SchedulingActivities.check_in),
-            ("seen", SchedulingActivities.seen),
-            ("complete", SchedulingActivities.complete),
-        ):
-            # `s=step` binds now: a bare closure would see the loop's last value.
-            await workflow.wait_condition(lambda s=step: s in self._signals or self._cancelled)
-            if self._cancelled:
-                return "cancelled"
-            await workflow.execute_activity_method(
-                activity_method, args=[request, self._signals[step]], **STEP
-            )
-        return "completed"
+        return await workflow.execute_activity_method(
+            SchedulingActivities.no_show, request, **VISIT_STEP
+        )

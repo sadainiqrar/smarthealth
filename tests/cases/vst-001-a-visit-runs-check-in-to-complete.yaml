@@ -1,11 +1,14 @@
 id: vst-001-a-visit-runs-check-in-to-complete
-title: "A visit is driven by staff signals through check-in, seen and complete, each written once, in order"
+title: "A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted"
 requirement: [PART-A-FR-3]
-tier: workflow
+tier: integration
 priority: P0
 status: ready
-# The visit is a durable workflow (D-12): signals only set flags, and the run loop does
-# every write through an activity, so a re-delivered signal changes nothing. The test
-# runs the real VisitWorkflow in Temporal's time-skipping environment with recording
-# fakes and asserts the exact activity order: deadline, check_in, seen, complete.
-impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_signals_drive_the_visit_to_completion_in_order"
+# D-12 as amended: the database records human actions synchronously, the visit workflow
+# owns only time. check_in / mark_seen / complete_visit lock the appointment row and are
+# strict, because nothing retries them any more -- a second check-in is a human mistake
+# to report (409), not a retry to absorb. The test checks a patient in against real
+# Postgres, then checks them in again: Conflict, still one visit row, the original
+# checked_in_at, and no second audit entry. Restoring the old "visit exists -> return"
+# no-op fails it.
+impl: "tests/tiers/t3_integration/test_visit_service.py::test_a_second_check_in_is_a_conflict_and_writes_nothing"
