@@ -667,17 +667,26 @@ async def list_waitlist(
 
 
 async def waitlist_candidates(
-    session: AsyncSession, *, slot_id: uuid.UUID, limit: int = 3
+    session: AsyncSession, *, slot_id: uuid.UUID, now: datetime, limit: int = 3
 ) -> list[tuple[uuid.UUID, uuid.UUID]]:
     """`(entry_id, patient_id)` of up to `limit` entries to offer a released slot, oldest
     first: `active`, window containing the slot's start (`window_start <= starts_at <
     window_end`), and provider/department matching the slot's wherever the entry names
     one. The patient who just released the slot is not excluded -- their window decides.
 
+    None at all unless the slot is still `free` and has not started -- the two conditions
+    `claim_slot` enforces. A slot already taken again, or one cancelled after it began
+    (allowed: front desk may cancel an unattended appointment before the no-show timer),
+    would only make each candidate's booking fail in turn.
+
     Read-only and not locked: two promotions may name the same entry. The workflow's
     child-booking id, not a row lock, is what keeps one entry from being booked twice."""
-    slot = await session.get(ProviderSlot, slot_id)
-    if slot is None:
+    slot = await session.scalar(
+        select(ProviderSlot)
+        .where(ProviderSlot.id == slot_id)
+        .execution_options(populate_existing=True)
+    )
+    if slot is None or slot.status is not SlotStatus.FREE or slot.starts_at <= now:
         return []
     rows = await session.execute(
         select(WaitlistEntry.id, WaitlistEntry.patient_id)

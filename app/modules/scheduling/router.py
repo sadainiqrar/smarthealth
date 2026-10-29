@@ -32,6 +32,7 @@ from app.modules.scheduling import service
 from app.modules.scheduling.booking import (
     appointment_id_for,
     booking_state,
+    reschedule_appointment_id_for,
     start_booking,
 )
 from app.modules.scheduling.contracts import BookingRequest, FollowUpRequest, RescheduleRequest
@@ -63,6 +64,9 @@ CANCELLERS = BOOKERS
 CHECKERS_IN = (UserRole.FRONT_DESK, UserRole.ADMIN)
 CLINICIANS = (UserRole.PROVIDER, UserRole.ADMIN)
 READERS = (UserRole.PATIENT, UserRole.PROVIDER, UserRole.FRONT_DESK, UserRole.ADMIN)
+#: Who may list the waitlist: a patient (their own entries only) and the staff who manage
+#: it (spec 4.5). Not providers -- the list names every patient waiting, for any provider.
+WAITLIST_READERS = BOOKERS
 
 
 async def _own_patient_id(session: AsyncSession, claims: TokenClaims) -> uuid.UUID | None:
@@ -252,7 +256,7 @@ async def reschedule_appointment(
     claims: TokenClaims = Depends(require_role(*CANCELLERS)),
 ) -> RescheduleAccepted:
     old = await _owned_or_404(session, claims, appointment_id)
-    new_appointment_id = appointment_id_for(claims.subject, idempotency_key)
+    new_appointment_id = reschedule_appointment_id_for(claims.subject, idempotency_key)
     # A precheck, so the common refusals are answered now rather than as a workflow that
     # fails later. The workflow still decides under the appointment lock (`superseded`);
     # this only spares the caller a 202 for a request that cannot succeed.
@@ -356,7 +360,7 @@ async def list_waitlist(
     patient_id: uuid.UUID | None = None,
     page: PageParams = Depends(page_params),
     session: AsyncSession = Depends(get_session),
-    claims: TokenClaims = Depends(require_role(*READERS)),
+    claims: TokenClaims = Depends(require_role(*WAITLIST_READERS)),
 ) -> Page[WaitlistRead]:
     if claims.role is UserRole.PATIENT:
         # Forced, not filtered: whatever `patient_id` a patient sends, they see their own.

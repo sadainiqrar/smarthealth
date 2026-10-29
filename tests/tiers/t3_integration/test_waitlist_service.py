@@ -11,13 +11,19 @@ from datetime import timedelta
 
 import pytest
 
+from app.core.clock import Clock
 from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.pagination import PageParams
 from app.db.engine import create_engine
 from app.db.session import create_session_factory
 from app.modules.providers.models import Department, Provider
 from app.modules.scheduling import service
-from app.modules.scheduling.models import ProviderSlot, WaitlistEntry, WaitlistStatus
+from app.modules.scheduling.models import (
+    ProviderSlot,
+    SlotStatus,
+    WaitlistEntry,
+    WaitlistStatus,
+)
 from tests.tiers.t3_integration import scheduling_helpers
 from tests.tiers.t3_integration.scheduling_helpers import RecordingAudit, seed_bookable
 
@@ -54,6 +60,7 @@ async def _join(factory, audit, b, *, provider=None, department=None, start=None
 
 
 async def _candidates(factory, slot_id, **kwargs):
+    kwargs.setdefault("now", Clock().now())
     async with factory() as session:
         return await service.waitlist_candidates(session, slot_id=slot_id, **kwargs)
 
@@ -223,6 +230,34 @@ async def test_candidates_are_limited(factory):
 
 async def test_candidates_for_an_unknown_slot_are_empty(factory):
     assert await _candidates(factory, uuid.uuid4()) == []
+
+
+@pytest.mark.parametrize("status", [SlotStatus.HELD, SlotStatus.BOOKED, SlotStatus.BLOCKED])
+async def test_a_slot_that_is_not_free_has_no_candidates(factory, status):
+    """M-1: the slot was taken again before the promotion read it. Offering it would only
+    make every candidate's booking fail in turn. Kills: the `free` check dropped."""
+    audit = RecordingAudit()
+    async with factory() as session:
+        b = await seed_bookable(session)
+    await _join(factory, audit, b)
+    async with factory() as session:
+        (await session.get(ProviderSlot, b.slot_id)).status = status
+        await session.commit()
+    assert await _candidates(factory, b.slot_id) == []
+
+
+@pytest.mark.parametrize("after", [timedelta(0), timedelta(minutes=5)], ids=["at", "after"])
+async def test_a_slot_that_has_started_has_no_candidates(factory, after):
+    """M-1: a cancel after the slot began (front desk closing an unattended appointment)
+    frees a slot nobody can book (R-3). Kills: the `starts_at > now` check dropped or
+    loosened to `>=`."""
+    audit = RecordingAudit()
+    async with factory() as session:
+        b = await seed_bookable(session)
+        starts = (await session.get(ProviderSlot, b.slot_id)).starts_at
+    entry = await _join(factory, audit, b)
+    assert [e for e, _ in await _candidates(factory, b.slot_id)] == [entry]
+    assert await _candidates(factory, b.slot_id, now=starts + after) == []
 
 
 async def test_fulfilling_an_entry_is_idempotent(factory):

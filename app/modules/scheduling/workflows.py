@@ -201,7 +201,13 @@ async def _promote_waitlist(slot_id: str) -> str | None:
     ALLOW_DUPLICATE_FAILED_ONLY a failed attempt may be retried by a later release, while
     a confirmed one can never run twice and a running one cannot be started again -- so
     two releases racing for the same entry cannot double-book it. `candidates` is a plain
-    read; this id, not a lock, is the guard."""
+    read; this id, not a lock, is the guard.
+
+    The appointment id is `workflow.uuid4()`: deterministic, so a replay derives the same
+    id, but a random (v4) UUID rather than a time-ordered v7 -- a deliberate exception to
+    PART-A-NFR-5, since nothing time-based is replay-safe inside a workflow but
+    `workflow.now()`, and a hand-built v7 from it would add code to save index locality on
+    a rare write."""
     candidates = await workflow.execute_activity_method(
         SchedulingActivities.waitlist_candidates, slot_id, **FOLLOW_UP
     )
@@ -215,6 +221,10 @@ async def _promote_waitlist(slot_id: str) -> str | None:
                 ),
                 id=f"booking-wl-{entry_id}",
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+                # ABANDON: a booking compensates for itself. Terminating this parent must
+                # not kill the child between its claim and its compensation, leaving the
+                # slot held and the appointment pending (D-10's orphan).
+                parent_close_policy=workflow.ParentClosePolicy.ABANDON,
             )
         except (WorkflowAlreadyStartedError, ChildWorkflowError):
             continue  # already promoted or being promoted, or this booking failed: next
@@ -271,8 +281,20 @@ class RescheduleWorkflow:
                     rescheduled_from_id=request.old_appointment_id,
                 ),
                 id=booking_workflow_id(request.new_appointment_id),
+                # The new appointment's id is derived for this reschedule alone, so
+                # `booking-<id>` can only be this child: a duplicate is refused rather
+                # than ever answering for another booking.
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                # ABANDON, as for waitlist promotions: terminating the reschedule must not
+                # kill the booking mid-flight -- it compensates for itself, and the old
+                # appointment is untouched until `reschedule.complete`.
+                parent_close_policy=workflow.ParentClosePolicy.ABANDON,
             )
         except ChildWorkflowError:
+            return "failed"
+        except WorkflowAlreadyStartedError:
+            # Defensive: nothing else starts `booking-<new id>`. Not this reschedule's
+            # booking, so the old appointment must not be released on its account.
             return "failed"
         result = await workflow.execute_activity_method(
             SchedulingActivities.reschedule_complete, request, **FOLLOW_UP

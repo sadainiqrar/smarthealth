@@ -43,6 +43,19 @@ def appointment_id_for(caller: str, idempotency_key: str | None) -> uuid.UUID:
     return uuid.uuid5(IDEMPOTENCY_NAMESPACE, f"{caller}:{idempotency_key}")
 
 
+def reschedule_appointment_id_for(caller: str, idempotency_key: str | None) -> uuid.UUID:
+    """The new appointment of a reschedule: `appointment_id_for`, in its own namespace.
+
+    A client that reuses one Idempotency-Key for a booking and then a reschedule must not
+    have the two collide: with one namespace both would derive the same appointment id,
+    and the reschedule's child `booking-<id>` would land on the booking's workflow id.
+    No booking name `caller:key` can equal a reschedule name `reschedule:caller:key`:
+    that would need a caller that is the literal `reschedule`, and a caller is a user id."""
+    if idempotency_key is None:
+        return uuid7()
+    return uuid.uuid5(IDEMPOTENCY_NAMESPACE, f"reschedule:{caller}:{idempotency_key}")
+
+
 #: The workflow memo key holding the request fingerprint.
 FINGERPRINT_MEMO = "fingerprint"
 

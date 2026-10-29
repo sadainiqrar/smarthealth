@@ -24,6 +24,10 @@ from app.modules.identity.models import UserRole
 from app.modules.identity.security import create_access_token
 from app.modules.scheduling import router as scheduling_router
 from app.modules.scheduling import service
+from app.modules.scheduling.booking import (
+    appointment_id_for,
+    reschedule_appointment_id_for,
+)
 from app.modules.scheduling.models import AppointmentStatus, WaitlistStatus
 from app.settings import Settings
 
@@ -395,6 +399,10 @@ async def test_the_same_idempotency_key_names_the_same_new_appointment(
     )
     assert first.status_code == second.status_code == 202
     assert first.json() == second.json()
+    # In the reschedule namespace: the same key on a booking names another appointment.
+    new_id = first.json()["appointment_id"]
+    assert new_id == str(reschedule_appointment_id_for(CALLER, "abc"))
+    assert new_id != str(appointment_id_for(CALLER, "abc"))
 
 
 async def test_a_repeat_after_the_reschedule_completed_is_still_202(
@@ -525,10 +533,15 @@ async def test_listing_requires_a_token(api_client, temporal):
     assert (await api_client.get("/waitlist")).status_code == 401
 
 
-@pytest.mark.parametrize("role", [UserRole.PROVIDER, *STAFF])
-async def test_staff_and_providers_list_with_an_optional_patient_filter(
-    api_client, temporal, world, role
-):
+async def test_a_provider_may_not_list_the_waitlist(api_client, temporal, world):
+    """Spec 4.5: the list is for staff. It names every waiting patient, for any provider."""
+    response = await api_client.get("/waitlist", headers=auth(UserRole.PROVIDER))
+    assert response.status_code == 403
+    assert world["waitlist_calls"] == []
+
+
+@pytest.mark.parametrize("role", STAFF)
+async def test_staff_list_with_an_optional_patient_filter(api_client, temporal, world, role):
     other = uuid.uuid4()
     response = await api_client.get(f"/waitlist?patient_id={other}", headers=auth(role))
     assert response.status_code == 200

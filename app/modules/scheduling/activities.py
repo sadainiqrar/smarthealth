@@ -220,7 +220,9 @@ class SchedulingActivities:
         """`[[entry_id, patient_id], ...]`, oldest first, as strings."""
         parsed = parse_id(slot_id, "slot_id")
         async with self._unit_of_work() as session:
-            candidates = await service.waitlist_candidates(session, slot_id=parsed)
+            candidates = await service.waitlist_candidates(
+                session, slot_id=parsed, now=self._clock.now()
+            )
         return [[str(entry_id), str(patient_id)] for entry_id, patient_id in candidates]
 
     @activity.defn(name="waitlist.fulfil")
