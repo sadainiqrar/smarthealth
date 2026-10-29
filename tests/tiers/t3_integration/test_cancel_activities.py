@@ -27,6 +27,7 @@ from tests.tiers.t3_integration.scheduling_helpers import (
     RecordingAudit,
     add_slot,
     confirmed_appointment,
+    confirmed_replacement,
     seed_bookable,
 )
 
@@ -80,8 +81,9 @@ async def test_reschedule_complete_answers_json_and_repeats_identically(
     factory, activities, audit
 ):
     b, old_id = await confirmed_appointment(factory, audit)
-    request = RescheduleRequest(str(old_id), str(uuid.uuid4()), str(b.patient_id),
-                                str(b.slot_id), "u-1")
+    new_id, new_slot = await confirmed_replacement(factory, audit, b, old_id)
+    request = RescheduleRequest(str(old_id), str(new_id), str(b.patient_id),
+                                str(new_slot), "u-1")
 
     first = await activities.reschedule_complete(request)
     second = await activities.reschedule_complete(request)
@@ -96,6 +98,7 @@ async def test_reschedule_complete_of_a_cancelled_appointment_is_superseded(
     factory, activities, audit
 ):
     b, old_id = await confirmed_appointment(factory, audit)
+    new_id, new_slot = await confirmed_replacement(factory, audit, b, old_id)
     async with factory() as session:
         await service.cancel_appointment(
             session, audit, appointment_id=old_id, reason="x", now=Clock().now(),
@@ -103,8 +106,7 @@ async def test_reschedule_complete_of_a_cancelled_appointment_is_superseded(
         )
         await session.commit()
     result = await activities.reschedule_complete(
-        RescheduleRequest(str(old_id), str(uuid.uuid4()), str(b.patient_id),
-                          str(b.slot_id), None)
+        RescheduleRequest(str(old_id), str(new_id), str(b.patient_id), str(new_slot), None)
     )
     assert result == {"outcome": "superseded", "released_slot_id": None}
 

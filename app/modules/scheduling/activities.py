@@ -199,12 +199,14 @@ class SchedulingActivities:
     async def reschedule_complete(self, request: RescheduleRequest) -> dict[str, str | None]:
         """`{"outcome": "rescheduled" | "superseded", "released_slot_id": str | None}` --
         JSON-friendly, so the default converter round-trips it. The slot id is what the
-        workflow offers the waitlist."""
+        workflow offers the waitlist. The new appointment is passed too: the old one is
+        released only while the new one is still the confirmed replacement."""
         old_appointment_id = parse_id(request.old_appointment_id, "old_appointment_id")
+        new_appointment_id = parse_id(request.new_appointment_id, "new_appointment_id")
         async with self._unit_of_work() as session:
             result = await service.complete_reschedule(
                 session, self._audit, old_appointment_id=old_appointment_id,
-                actor_user_id=request.actor_user_id,
+                new_appointment_id=new_appointment_id, actor_user_id=request.actor_user_id,
             )
         return {
             "outcome": result.outcome,

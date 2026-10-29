@@ -29,6 +29,7 @@ from tests.tiers.t3_integration import scheduling_helpers
 from tests.tiers.t3_integration.scheduling_helpers import (
     RecordingAudit,
     confirmed_appointment,
+    confirmed_replacement,
     seed_bookable,
 )
 
@@ -68,10 +69,11 @@ async def _cancel(factory, audit, appointment_id, reason="changed my mind") -> A
         return appointment
 
 
-async def _complete_reschedule(factory, audit, appointment_id):
+async def _complete_reschedule(factory, audit, appointment_id, new_appointment_id):
     async with factory() as session:
         result = await service.complete_reschedule(
-            session, audit, old_appointment_id=appointment_id, actor_user_id="system:wf"
+            session, audit, old_appointment_id=appointment_id,
+            new_appointment_id=new_appointment_id, actor_user_id="system:wf",
         )
         await session.commit()
         return result
@@ -247,35 +249,47 @@ async def test_cancelling_an_unknown_appointment_is_not_found(factory):
 
 
 # --- complete_reschedule --------------------------------------------------------------
+#
+# Each test confirms a real replacement first (`confirmed_replacement`): with no live
+# replacement every call is `superseded`, so a test without one would pass vacuously.
 
 
 async def test_completing_a_reschedule_frees_the_old_slot_and_says_which(factory):
     audit = RecordingAudit()
     b, appointment_id = await confirmed_appointment(factory, audit)
+    new_id, new_slot = await confirmed_replacement(factory, audit, b, appointment_id)
     version = (await _slot(factory, b.slot_id)).version
 
-    result = await _complete_reschedule(factory, audit, appointment_id)
+    result = await _complete_reschedule(factory, audit, appointment_id, new_id)
 
     assert result.outcome == "rescheduled" and result.released_slot_id == b.slot_id
     assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.RESCHEDULED
     slot = await _slot(factory, b.slot_id)
     assert slot.status is SlotStatus.FREE and slot.version == version + 1
+    assert (await _slot(factory, new_slot)).status is SlotStatus.BOOKED
     assert audit.events[-1].action == "rescheduled"
     assert await _free_slots(factory, b.provider_id) == [b.slot_id]  # R-2, reader's side
 
 
 async def test_completing_a_reschedule_twice_writes_once_and_answers_the_same(factory):
     """A retried activity: the same answer (including the slot, so the workflow still
-    promotes the waitlist), no second slot write, no second audit entry."""
+    promotes the waitlist), no second slot write, no second audit entry.
+
+    "Already rescheduled" is a retry only for the replacement that did it. Before the new
+    appointment was part of the call, any later completion of the same old appointment
+    answered "rescheduled" too -- one of the two ways two reschedules both confirmed."""
     audit = RecordingAudit()
     b, appointment_id = await confirmed_appointment(factory, audit)
-    first = await _complete_reschedule(factory, audit, appointment_id)
+    new_id, _ = await confirmed_replacement(factory, audit, b, appointment_id)
+    first = await _complete_reschedule(factory, audit, appointment_id, new_id)
     events = len(audit.events)
     version = (await _slot(factory, b.slot_id)).version
 
-    second = await _complete_reschedule(factory, audit, appointment_id)
+    second = await _complete_reschedule(factory, audit, appointment_id, new_id)
+    stranger = await _complete_reschedule(factory, audit, appointment_id, uuid.uuid4())
 
     assert second == first
+    assert stranger.outcome == "superseded" and stranger.released_slot_id is None
     assert len(audit.events) == events
     assert (await _slot(factory, b.slot_id)).version == version
 
@@ -283,14 +297,16 @@ async def test_completing_a_reschedule_twice_writes_once_and_answers_the_same(fa
 async def test_a_reschedule_over_a_cancelled_appointment_is_superseded(factory):
     audit = RecordingAudit()
     b, appointment_id = await confirmed_appointment(factory, audit)
+    new_id, _ = await confirmed_replacement(factory, audit, b, appointment_id)
     await _cancel(factory, audit, appointment_id)
     events = len(audit.events)
     version = (await _slot(factory, b.slot_id)).version
 
-    result = await _complete_reschedule(factory, audit, appointment_id)
+    result = await _complete_reschedule(factory, audit, appointment_id, new_id)
 
     assert result.outcome == "superseded" and result.released_slot_id is None
     assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CANCELLED
+    assert (await _appointment(factory, new_id)).status is AppointmentStatus.CONFIRMED
     assert len(audit.events) == events
     assert (await _slot(factory, b.slot_id)).version == version
 
@@ -300,9 +316,10 @@ async def test_a_reschedule_over_a_checked_in_appointment_is_superseded(factory)
     checked in would have their slot freed from under them."""
     audit = RecordingAudit()
     b, appointment_id = await confirmed_appointment(factory, audit)
+    new_id, _ = await confirmed_replacement(factory, audit, b, appointment_id)
     await _check_in(factory, audit, appointment_id)
 
-    result = await _complete_reschedule(factory, audit, appointment_id)
+    result = await _complete_reschedule(factory, audit, appointment_id, new_id)
 
     assert result.outcome == "superseded"
     assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
@@ -311,9 +328,45 @@ async def test_a_reschedule_over_a_checked_in_appointment_is_superseded(factory)
         assert await session.scalar(select(Visit).where(Visit.appointment_id == appointment_id))
 
 
+async def test_cancelling_the_new_appointment_first_keeps_the_old_one(factory):
+    """I-1: the new appointment is cancelled between its booking confirming and
+    `reschedule.complete`. Releasing the old slot then would leave the patient with
+    nothing. Kills: the new-appointment check removed from `complete_reschedule`."""
+    audit = RecordingAudit()
+    b, appointment_id = await confirmed_appointment(factory, audit)
+    new_id, new_slot = await confirmed_replacement(factory, audit, b, appointment_id)
+    await _cancel(factory, audit, new_id)
+    events = len(audit.events)
+    version = (await _slot(factory, b.slot_id)).version
+
+    result = await _complete_reschedule(factory, audit, appointment_id, new_id)
+
+    assert result.outcome == "superseded" and result.released_slot_id is None
+    old = await _appointment(factory, appointment_id)
+    assert old.status is AppointmentStatus.CONFIRMED and old.slot_id == b.slot_id
+    slot = await _slot(factory, b.slot_id)
+    assert slot.status is SlotStatus.BOOKED and slot.version == version
+    assert (await _slot(factory, new_slot)).status is SlotStatus.FREE
+    assert len(audit.events) == events
+
+
+async def test_a_new_appointment_that_replaces_another_does_not_release_this_one(factory):
+    """The link is checked, not assumed: a confirmed appointment that is not this one's
+    replacement cannot release it."""
+    audit = RecordingAudit()
+    b, appointment_id = await confirmed_appointment(factory, audit)
+    _, other_id = await confirmed_appointment(factory, audit)
+
+    result = await _complete_reschedule(factory, audit, appointment_id, other_id)
+
+    assert result.outcome == "superseded"
+    assert (await _appointment(factory, appointment_id)).status is AppointmentStatus.CONFIRMED
+    assert (await _slot(factory, b.slot_id)).status is SlotStatus.BOOKED
+
+
 async def test_completing_a_reschedule_of_an_unknown_appointment_is_not_found(factory):
     with pytest.raises(NotFound):
-        await _complete_reschedule(factory, RecordingAudit(), uuid.uuid4())
+        await _complete_reschedule(factory, RecordingAudit(), uuid.uuid4(), uuid.uuid4())
 
 
 # --- at most one live replacement (migration 0004, D-5) ----------------------------------

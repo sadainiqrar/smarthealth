@@ -62,10 +62,15 @@ def _activities() -> SchedulingActivities:
          "rescheduled_from_id"),
         (lambda a: a.reschedule_complete(RescheduleRequest(BAD, GOOD, GOOD, GOOD, None)),
          "old_appointment_id"),
+        (lambda a: a.reschedule_complete(RescheduleRequest(GOOD, BAD, GOOD, GOOD, None)),
+         "new_appointment_id"),
         (lambda a: a.waitlist_candidates(BAD), "slot_id"),
         (lambda a: a.waitlist_fulfil(BAD), "entry_id"),
     ],
-    ids=["create_pending", "reschedule_complete", "waitlist_candidates", "waitlist_fulfil"],
+    ids=[
+        "create_pending", "reschedule_complete-old", "reschedule_complete-new",
+        "waitlist_candidates", "waitlist_fulfil",
+    ],
 )
 async def test_the_new_activities_fail_a_malformed_id_once_and_permanently(call, field):
     with pytest.raises(ApplicationError) as caught:

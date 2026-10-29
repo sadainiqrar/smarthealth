@@ -545,20 +545,40 @@ async def cancel_appointment(
 
 async def complete_reschedule(
     session: AsyncSession, audit: AuditLog, *, old_appointment_id: uuid.UUID,
-    actor_user_id: str | None,
+    new_appointment_id: uuid.UUID, actor_user_id: str | None,
 ) -> RescheduleResult:
     """Move the old appointment out of the way once the new one is confirmed:
     confirmed -> rescheduled, and its slot -> free, together. Idempotent -- it is an
-    activity -- and writes (and audits) only on its first run:
+    activity -- and writes (and audits) only on its first run.
 
-    - already `rescheduled`: a retried activity; answers the same, writes nothing;
+    Both appointments are locked, in ascending id order so two reschedules touching the
+    same pair cannot deadlock. The new one is checked first, under its lock: it must still
+    be `confirmed` and still name the old one as `rescheduled_from_id`. If it was cancelled
+    in the moment between its booking confirming and this step, releasing the old slot
+    would leave the patient with nothing -- so the answer is `superseded` and nothing is
+    written; the old appointment stands. Then the old one:
+
+    - already `rescheduled`: a retried activity (the new one is its live replacement, and
+      `ux_appointments_live_reschedule` allows only one); answers the same, writes nothing;
     - not `confirmed`, or a visit exists: the old appointment was cancelled or the
       patient checked in while the new booking ran. Nothing is released and the
       reschedule is `superseded`; the new booking stands.
 
     A first run whose commit fails leaves an audit entry for a write that never landed,
     and its retry records a second (PRD R-1)."""
-    appointment = await _require(session, old_appointment_id)
+    locked: dict[uuid.UUID, Appointment | None] = {}
+    for appointment_id in sorted({old_appointment_id, new_appointment_id}):
+        locked[appointment_id] = await get_appointment(session, appointment_id, for_update=True)
+    appointment = locked[old_appointment_id]
+    if appointment is None:
+        raise NotFound(f"appointment {old_appointment_id} does not exist")
+    replacement = locked[new_appointment_id]
+    if (
+        replacement is None
+        or replacement.status is not AppointmentStatus.CONFIRMED
+        or replacement.rescheduled_from_id != old_appointment_id
+    ):
+        return RescheduleResult("superseded", None)
     if appointment.status is AppointmentStatus.RESCHEDULED:
         return RescheduleResult("rescheduled", appointment.slot_id)
     if (

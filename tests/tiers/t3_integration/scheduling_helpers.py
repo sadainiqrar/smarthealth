@@ -92,6 +92,36 @@ async def confirmed_appointment(factory, audit=None) -> tuple[Bookable, uuid.UUI
     return b, appointment_id
 
 
+
+async def confirmed_replacement(
+    factory, audit, b: Bookable, old_id: uuid.UUID, *,
+    starts_in: timedelta = timedelta(days=2),
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """`(new_appointment_id, new_slot_id)`: what a reschedule's child booking leaves once
+    it confirms -- a new appointment for `b`'s patient on a fresh slot, linked back to
+    `old_id`, taken to `confirmed` step by step as `confirmed_appointment` does."""
+    async with factory() as session:
+        slot_id = await add_slot(session, b, starts_in=starts_in)
+    new_id = uuid.uuid4()
+    async with factory() as session:
+        await service.create_pending(
+            session, audit, appointment_id=new_id, patient_id=b.patient_id,
+            slot_id=slot_id, reason=None, actor_user_id=None, rescheduled_from_id=old_id,
+        )
+        await session.commit()
+    async with factory() as session:
+        await service.claim_slot(
+            session, audit, appointment_id=new_id, slot_id=slot_id, now=Clock().now(),
+            actor_user_id=None,
+        )
+        await session.commit()
+    async with factory() as session:
+        await service.confirm_booking(
+            session, audit, appointment_id=new_id, now=Clock().now(), actor_user_id=None,
+        )
+        await session.commit()
+    return new_id, slot_id
+
 async def add_slot(
     session: AsyncSession, b: Bookable, *, starts_in: timedelta = timedelta(days=2)
 ) -> uuid.UUID:

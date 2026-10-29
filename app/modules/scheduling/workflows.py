@@ -256,8 +256,9 @@ class RescheduleWorkflow:
     reschedule leaves the patient with the appointment they had.
 
     Returns "failed" (the new booking failed and compensated itself; the old appointment
-    is untouched), "superseded" (the old appointment was cancelled or checked in while the
-    new booking ran; nothing was released and the new booking stands) or "rescheduled"."""
+    is untouched), "superseded" (nothing was released: the old appointment was cancelled or
+    checked in while the new booking ran, and the new booking stands -- or the new one was
+    cancelled before the old one was released, and the old one stands) or "rescheduled"."""
 
     @workflow.run
     async def run(self, request: RescheduleRequest) -> str:
