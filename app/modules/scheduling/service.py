@@ -60,6 +60,11 @@ WAITLIST_ENTITY = "waitlist_entry"
 #: because a claim that loses to it must become a Conflict, not a 500.
 LIVE_SLOT_INDEX = "ux_appointments_live_slot"
 
+#: The partial unique index (migration 0004) that allows one live appointment to replace
+#: any given appointment. A second reschedule's booking that loses to it must fail
+#: permanently and compensate -- a Conflict, not a retried 500.
+LIVE_RESCHEDULE_INDEX = "ux_appointments_live_reschedule"
+
 #: The appointment's patient FK. `create_pending` for an unknown patient violates it, and
 #: that must be a permanent NotFound -- a raw IntegrityError is one Temporal retries.
 PATIENT_FK = "fk_appointments_patient_id_patients"
@@ -127,7 +132,10 @@ async def create_pending(
     actor_user_id: str | None, rescheduled_from_id: uuid.UUID | None = None,
 ) -> None:
     """Insert the `pending` row, copying provider/clinic/department from the slot.
-    `rescheduled_from_id` is set only for the new appointment of a reschedule.
+    `rescheduled_from_id` is set only for the new appointment of a reschedule; while
+    another live (pending or confirmed) appointment already replaces that one, the insert
+    is a Conflict -- `ux_appointments_live_reschedule` -- so a second, concurrent
+    reschedule of one appointment fails and compensates instead of confirming too.
 
     `ON CONFLICT (id) DO NOTHING` makes a retry harmless; only the call that actually
     inserted writes the audit entry. An existing row is a retry only if it describes the
@@ -148,8 +156,13 @@ async def create_pending(
             .on_conflict_do_nothing(index_elements=[Appointment.id])
         )
     except IntegrityError as exc:
-        if violated_constraint(exc) == PATIENT_FK:
+        constraint = violated_constraint(exc)
+        if constraint == PATIENT_FK:
             raise NotFound(f"patient {patient_id} does not exist") from exc
+        if constraint == LIVE_RESCHEDULE_INDEX:
+            raise Conflict(
+                f"appointment {rescheduled_from_id} already has a live replacement"
+            ) from exc
         raise
     if result.rowcount == 0:
         existing = await _require(session, appointment_id)

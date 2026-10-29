@@ -7,6 +7,7 @@ Tests say which mutation of `service.py` they exist to kill.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
@@ -313,3 +314,59 @@ async def test_a_reschedule_over_a_checked_in_appointment_is_superseded(factory)
 async def test_completing_a_reschedule_of_an_unknown_appointment_is_not_found(factory):
     with pytest.raises(NotFound):
         await _complete_reschedule(factory, RecordingAudit(), uuid.uuid4())
+
+
+# --- at most one live replacement (migration 0004, D-5) ----------------------------------
+
+
+async def _replacement(factory, audit, b, old_id, *, starts_in):
+    """A `pending` new appointment for `b`'s patient on a fresh slot, linked back to
+    `old_id` -- what a reschedule's child booking inserts first."""
+    async with factory() as session:
+        slot_id = await scheduling_helpers.add_slot(session, b, starts_in=starts_in)
+    new_id = uuid.uuid4()
+    async with factory() as session:
+        await service.create_pending(
+            session, audit, appointment_id=new_id, patient_id=b.patient_id,
+            slot_id=slot_id, reason=None, actor_user_id=None, rescheduled_from_id=old_id,
+        )
+        await session.commit()
+    return new_id
+
+
+async def test_a_second_live_replacement_of_one_appointment_is_a_conflict(factory):
+    """Two reschedules of one appointment, accepted together: the second booking's insert
+    must fail permanently, so it compensates instead of confirming as well. Kills: the
+    index dropped from migration 0004, and the `LIVE_RESCHEDULE_INDEX` mapping removed
+    (the raw IntegrityError would be retried, not compensated)."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    first = await _replacement(factory, audit, b, old_id, starts_in=timedelta(days=2))
+    events = len(audit.events)
+
+    with pytest.raises(Conflict, match="already has a live replacement"):
+        await _replacement(factory, audit, b, old_id, starts_in=timedelta(days=3))
+
+    assert len(audit.events) == events
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(Appointment.id).where(Appointment.rescheduled_from_id == old_id)
+            )
+        )
+    assert rows == [first]
+
+
+async def test_a_failed_replacement_does_not_block_another(factory):
+    """Partial on status, like `ux_appointments_live_slot`: a reschedule whose booking
+    failed must not stop the patient trying again."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    first = await _replacement(factory, audit, b, old_id, starts_in=timedelta(days=2))
+    async with factory() as session:
+        await service.fail_booking(session, audit, appointment_id=first, actor_user_id=None)
+        await session.commit()
+
+    second = await _replacement(factory, audit, b, old_id, starts_in=timedelta(days=3))
+
+    assert (await _appointment(factory, second)).rescheduled_from_id == old_id

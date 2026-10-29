@@ -211,6 +211,17 @@ class Appointment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "status <> 'confirmed' OR slot_id IS NOT NULL",
             name="confirmed_requires_slot",
         ),
+        # At most one *live* appointment replaces any given appointment (migration 0004).
+        # Two reschedules of one appointment, accepted together, otherwise both confirm
+        # and leave the patient with two appointments for the one they moved.
+        Index(
+            "ux_appointments_live_reschedule",
+            "rescheduled_from_id",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('pending', 'confirmed') AND rescheduled_from_id IS NOT NULL"
+            ),
+        ),
     )
 
 

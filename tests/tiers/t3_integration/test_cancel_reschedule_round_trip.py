@@ -329,3 +329,64 @@ async def test_a_reschedule_to_a_taken_slot_leaves_the_original(api, token_for, 
     # And the old visit timer was never told to stop.
     visit = client.get_workflow_handle(visit_workflow_id(old_id))
     assert (await visit.describe()).status == WorkflowExecutionStatus.RUNNING
+
+
+async def test_two_concurrent_reschedules_of_one_appointment_confirm_one(
+    api, token_for, flow_stack
+):
+    """The reviewer's probe: two reschedules of one appointment, to different slots,
+    accepted together. Both pass the router's precheck before either writes, so only the
+    database can refuse the second -- `ux_appointments_live_reschedule` (D-5). Exactly one
+    new appointment confirms; the other's booking fails at `create_pending` and leaves no
+    slot behind; the old appointment is `rescheduled` once, its slot free."""
+    factory, client = flow_stack
+    async with factory() as session:
+        b = await seed_bookable(session)
+        slot_a = await add_slot(session, b, starts_in=timedelta(days=2))
+        slot_b = await add_slot(session, b, starts_in=timedelta(days=3))
+    desk = token_for(UserRole.FRONT_DESK)
+    old_id = await _book(api, client, b.patient_id, b.slot_id, desk)
+
+    responses = await asyncio.gather(
+        *(
+            api.post(
+                f"/appointments/{old_id}/reschedule", json={"new_slot_id": str(slot)},
+                headers={**desk, "Idempotency-Key": uuid.uuid4().hex},
+            )
+            for slot in (slot_a, slot_b)
+        )
+    )
+    assert [r.status_code for r in responses] == [202, 202], [r.text for r in responses]
+    new_ids = [r.json()["appointment_id"] for r in responses]
+    results = [
+        await asyncio.wait_for(
+            client.get_workflow_handle(reschedule_workflow_id(new_id)).result(), 30
+        )
+        for new_id in new_ids
+    ]
+
+    assert sorted(results) in (["failed", "rescheduled"], ["rescheduled", "superseded"])
+    winner = results.index("rescheduled")
+    loser = 1 - winner
+    statuses = [
+        (await api.get(f"/appointments/{new_id}", headers=desk)).json()["status"]
+        for new_id in new_ids
+    ]
+    assert statuses[winner] == "confirmed"
+    assert statuses[loser] == "failed"
+    async with factory() as session:
+        old_row = await get_appointment(session, uuid.UUID(old_id))
+        live = list(
+            await session.scalars(
+                select(Appointment.id).where(
+                    Appointment.patient_id == b.patient_id,
+                    Appointment.status == AppointmentStatus.CONFIRMED,
+                )
+            )
+        )
+    assert old_row.status is AppointmentStatus.RESCHEDULED
+    assert [str(i) for i in live] == [new_ids[winner]], "one confirmed appointment, not two"
+    slots = (slot_a, slot_b)
+    assert await _slot_status(factory, b.slot_id) is SlotStatus.FREE
+    assert await _slot_status(factory, slots[winner]) is SlotStatus.BOOKED
+    assert await _slot_status(factory, slots[loser]) is SlotStatus.FREE
