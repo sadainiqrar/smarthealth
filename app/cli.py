@@ -133,14 +133,15 @@ async def link_patient(*, settings: Settings, email: str, mrn: str) -> None:
                     f"linked to a patient record"
                 )
             try:
-                patient = await patients_service.link_user(
+                patient, changed = await patients_service.link_user(
                     session, audit, mrn=mrn, user_id=user.id, actor_user_id=CLI_ACTOR
                 )
             except DomainError as exc:
                 await session.rollback()
                 raise _fail(exc.detail) from None
             await session.commit()
-            print(f"linked user id={user.id} to patient id={patient.id} mrn={patient.mrn}")
+            verb = "linked" if changed else "already linked:"
+            print(f"{verb} user id={user.id} to patient id={patient.id} mrn={patient.mrn}")
     finally:
         await mongo.close()
         await engine.dispose()

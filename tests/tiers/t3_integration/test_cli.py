@@ -145,13 +145,17 @@ async def test_link_patient_links_the_login_audits_it_and_me_then_works(
 
 
 async def test_linking_the_same_pair_again_is_a_no_op_with_one_audit_entry(
-    db_settings, factory, linking, audit_documents
+    db_settings, factory, linking, audit_documents, capsys
 ):
     user, patient = await linking.user(), await linking.patient()
 
     await link_patient(settings=db_settings, email=user.email, mrn=patient.mrn)
+    first = capsys.readouterr().out
     await link_patient(settings=db_settings, email=user.email, mrn=patient.mrn)
+    second = capsys.readouterr().out
 
+    assert first.startswith("linked ")
+    assert second.startswith("already linked: ")
     assert await _linked_user(factory, patient.id) == user.id
     assert await audit_documents.count_documents({"entity_id": str(patient.id)}) == 1
 

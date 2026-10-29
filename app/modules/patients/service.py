@@ -186,16 +186,17 @@ async def link_user(
     mrn: str,
     user_id: uuid.UUID,
     actor_user_id: str | None,
-) -> Patient:
+) -> tuple[Patient, bool]:
     """Link the login `user_id` to the patient with this MRN, so that login can read its
     own record and book for itself (PRD R-5).
 
-    Idempotent: the same pair again returns the patient untouched and writes no second
-    audit entry. Refused with `NotFound` for an unknown MRN and `Conflict` when the
-    record already belongs to a different login or the login to a different record --
-    never a silent re-link, which would hand one person's appointments to another's
-    account. Whether `user_id` names a real, patient-role user is the caller's to check:
-    this module does not read the users table.
+    Returns `(patient, changed)`. Idempotent: the same pair again returns
+    `(patient, False)`, untouched, and writes no second audit entry. Refused with
+    `NotFound` for an unknown MRN and `Conflict` when the record already belongs to a
+    different login or the login to a different record -- never a silent re-link, which
+    would hand one person's appointments to another's account. Whether `user_id` names a
+    real, patient-role user is the caller's to check: this
+    module does not read the users table.
 
     The patient row is locked, so two linkers cannot both see it unlinked; the unique
     constraint still backstops the login side across different records.
@@ -206,7 +207,7 @@ async def link_user(
     if patient is None:
         raise NotFound(f"no patient with MRN {mrn}")
     if patient.user_id == user_id:
-        return patient
+        return patient, False
     if patient.user_id is not None:
         raise Conflict(f"patient {mrn} is already linked to a different user")
     other_mrn = await session.scalar(select(Patient.mrn).where(Patient.user_id == user_id))
@@ -231,4 +232,4 @@ async def link_user(
             after=_snapshot(patient),
         )
     )
-    return patient
+    return patient, True
