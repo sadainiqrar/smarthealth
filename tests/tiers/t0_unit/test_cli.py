@@ -70,3 +70,23 @@ async def test_a_valid_address_passes_validation_and_proceeds(sentinel_engine):
         await cli.create_user(
             settings=None, email="admin@example.com", password="s3cret", role="admin"
         )
+
+
+def test_link_patient_takes_an_email_and_an_mrn(monkeypatch):
+    seen = {}
+
+    async def fake_link(*, settings, email, mrn):
+        seen.update(email=email, mrn=mrn)
+
+    monkeypatch.setattr(cli, "link_patient", fake_link)
+    cli.main(["link-patient", "--email", "pat@example.com", "--mrn", "MRN-1"])
+    assert seen == {"email": "pat@example.com", "mrn": "MRN-1"}
+
+
+@pytest.mark.parametrize("argv", [["link-patient", "--email", "a@example.com"],
+                                  ["link-patient", "--mrn", "MRN-1"]])
+def test_link_patient_requires_both_arguments(argv, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main(argv)
+    assert exit_info.value.code == 2
+    assert "required" in capsys.readouterr().err

@@ -34,6 +34,9 @@ ENTITY = "patient"
 #: Verified against the running database: asyncpg reports exactly this name.
 MRN_UNIQUE_CONSTRAINT = "ix_patients_mrn"
 
+#: `patients.user_id` is unique: one login belongs to at most one patient record.
+USER_UNIQUE_CONSTRAINT = "uq_patients_user_id"
+
 
 def _snapshot(patient: Patient) -> dict[str, object]:
     """The audited shape of a patient: every column a mutation can change, including
@@ -173,4 +176,59 @@ async def get_patient_for_user(session: AsyncSession, user_id: uuid.UUID) -> Pat
     patient = await session.scalar(select(Patient).where(Patient.user_id == user_id))
     if patient is None:
         raise NotFound("no patient record is linked to this login")
+    return patient
+
+
+async def link_user(
+    session: AsyncSession,
+    audit: AuditLog,
+    *,
+    mrn: str,
+    user_id: uuid.UUID,
+    actor_user_id: str | None,
+) -> Patient:
+    """Link the login `user_id` to the patient with this MRN, so that login can read its
+    own record and book for itself (PRD R-5).
+
+    Idempotent: the same pair again returns the patient untouched and writes no second
+    audit entry. Refused with `NotFound` for an unknown MRN and `Conflict` when the
+    record already belongs to a different login or the login to a different record --
+    never a silent re-link, which would hand one person's appointments to another's
+    account. Whether `user_id` names a real, patient-role user is the caller's to check:
+    this module does not read the users table.
+
+    The patient row is locked, so two linkers cannot both see it unlinked; the unique
+    constraint still backstops the login side across different records.
+    """
+    patient = await session.scalar(
+        select(Patient).where(Patient.mrn == mrn).with_for_update()
+    )
+    if patient is None:
+        raise NotFound(f"no patient with MRN {mrn}")
+    if patient.user_id == user_id:
+        return patient
+    if patient.user_id is not None:
+        raise Conflict(f"patient {mrn} is already linked to a different user")
+    other_mrn = await session.scalar(select(Patient.mrn).where(Patient.user_id == user_id))
+    if other_mrn is not None:
+        raise Conflict(f"that user is already linked to patient {other_mrn}")
+
+    before = _snapshot(patient)
+    patient.user_id = user_id
+    try:
+        await session.flush()
+    except IntegrityError as exc:
+        if violated_constraint(exc) == USER_UNIQUE_CONSTRAINT:
+            raise Conflict("that user is already linked to another patient") from exc
+        raise
+    await audit.record(
+        AuditEvent(
+            entity_type=ENTITY,
+            entity_id=str(patient.id),
+            action="account_linked",
+            actor_user_id=actor_user_id,
+            before=before,
+            after=_snapshot(patient),
+        )
+    )
     return patient

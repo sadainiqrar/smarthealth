@@ -1,8 +1,9 @@
 """Operational command-line entry point.
 
-`python -m app.cli create-user` is the only way to put a login into the system
-outside of a test fixture, which is what makes a running instance demonstrable to a
-human reviewer. This module must never import `app.main` or any router: it is an
+Three commands make a running instance demonstrable to a human reviewer, outside of a
+test fixture: `create-user` puts a login into the system, `seed` fills it with a clinic
+network (and one login per role), and `link-patient` connects a patient login to its
+patient record. This module must never import `app.main` or any router: it is an
 operational entry point, not part of the request path.
 """
 
@@ -14,13 +15,19 @@ import sys
 from collections.abc import Sequence
 
 from pydantic import EmailStr, TypeAdapter, ValidationError
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from app.core.audit import AuditLog
+from app.core.clock import Clock
+from app.core.errors import DomainError
 from app.db.constraints import violated_constraint
 from app.db.engine import create_engine
+from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import hash_password
+from app.modules.patients import service as patients_service
 from app.seed import USERS as SEED_USERS
 from app.seed import clear as seed_clear
 from app.seed import seed as seed_data
@@ -90,6 +97,52 @@ async def create_user(*, settings: Settings, email: str, password: str, role: st
                 raise
             print(f"created user id={user.id} role={user.role.value}")
     finally:
+        await engine.dispose()
+
+
+#: The audit actor for changes made from this command line: there is no logged-in user.
+CLI_ACTOR = "system:cli"
+
+
+def _fail(message: str) -> SystemExit:
+    print(f"error: {message}", file=sys.stderr)
+    return SystemExit(1)
+
+
+async def link_patient(*, settings: Settings, email: str, mrn: str) -> None:
+    """Link the login with this email to the patient with this MRN, or exit(1) with the
+    reason: unknown email, unknown MRN, a login that is not a patient, a record or login
+    already linked elsewhere. Linking the same pair twice is a no-op.
+
+    Owns the transaction and the audit client, like `run_seed` owns its transaction. The
+    audit entry is written before the commit, so a Mongo outage fails the command rather
+    than linking silently.
+    """
+    engine = create_engine(settings)
+    mongo = create_mongo_client(settings)
+    try:
+        factory = create_session_factory(engine)
+        audit = AuditLog(get_audit_collection(mongo, settings), Clock())
+        async with factory() as session:
+            user = await session.scalar(select(User).where(User.email == email))
+            if user is None:
+                raise _fail(f"no user with email '{email}'")
+            if user.role is not UserRole.PATIENT:
+                raise _fail(
+                    f"'{email}' has role '{user.role.value}'; only a patient login can be "
+                    f"linked to a patient record"
+                )
+            try:
+                patient = await patients_service.link_user(
+                    session, audit, mrn=mrn, user_id=user.id, actor_user_id=CLI_ACTOR
+                )
+            except DomainError as exc:
+                await session.rollback()
+                raise _fail(exc.detail) from None
+            await session.commit()
+            print(f"linked user id={user.id} to patient id={patient.id} mrn={patient.mrn}")
+    finally:
+        await mongo.close()
         await engine.dispose()
 
 
@@ -170,6 +223,19 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Remove the seeded rows instead of creating them.",
     )
 
+    link_parser = subparsers.add_parser(
+        "link-patient",
+        help="Link a patient login to its patient record (by MRN).",
+        description=(
+            "Sets patients.user_id for the patient with --mrn to the user with --email, "
+            "so that login can read its own record and appointments. The user must have "
+            "the patient role. Linking the same pair again does nothing; a record or "
+            "login already linked to someone else is refused."
+        ),
+    )
+    link_parser.add_argument("--email", required=True)
+    link_parser.add_argument("--mrn", required=True)
+
     return parser.parse_args(argv)
 
 
@@ -184,6 +250,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 role=args.role,
             )
         )
+    elif args.command == "link-patient":
+        asyncio.run(link_patient(settings=Settings(), email=args.email, mrn=args.mrn))
     elif args.command == "seed":
         if args.patients < 0:
             print("error: --patients cannot be negative", file=sys.stderr)
