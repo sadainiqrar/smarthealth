@@ -50,3 +50,9 @@ def visit_workflow_id(appointment_id: object) -> str:
     """Pure, so the workflow module can name the visit it starts without importing the
     Temporal client."""
     return f"visit-{appointment_id}"
+
+
+def booking_workflow_id(appointment_id: object) -> str:
+    """Pure for the same reason: the reschedule workflow names the booking it runs as a
+    child, and the sandbox cannot import `booking` (it pulls in the Temporal client)."""
+    return f"booking-{appointment_id}"

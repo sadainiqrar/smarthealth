@@ -18,7 +18,7 @@ from temporalio.service import RPCError, RPCStatusCode
 
 from app.core.errors import ServiceUnavailable, Unprocessable
 from app.core.ids import uuid7
-from app.modules.scheduling.contracts import BookingRequest
+from app.modules.scheduling.contracts import BookingRequest, booking_workflow_id
 from app.modules.scheduling.workflows import BookAppointmentWorkflow
 
 #: Fixed namespace for idempotency-key ids. Never change it: every derived appointment
@@ -37,10 +37,6 @@ def appointment_id_for(caller: str, idempotency_key: str | None) -> uuid.UUID:
     if idempotency_key is None:
         return uuid7()
     return uuid.uuid5(IDEMPOTENCY_NAMESPACE, f"{caller}:{idempotency_key}")
-
-
-def booking_workflow_id(appointment_id: uuid.UUID | str) -> str:
-    return f"booking-{appointment_id}"
 
 
 #: The workflow memo key holding the request fingerprint.

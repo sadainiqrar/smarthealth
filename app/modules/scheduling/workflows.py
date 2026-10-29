@@ -16,9 +16,21 @@ from datetime import datetime, timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
-from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
+from temporalio.exceptions import (
+    ActivityError,
+    ApplicationError,
+    ChildWorkflowError,
+    WorkflowAlreadyStartedError,
+)
 
-from app.modules.scheduling.contracts import BookingRequest, VisitRequest, visit_workflow_id
+from app.modules.scheduling.contracts import (
+    BookingRequest,
+    FollowUpRequest,
+    RescheduleRequest,
+    VisitRequest,
+    booking_workflow_id,
+    visit_workflow_id,
+)
 
 with workflow.unsafe.imports_passed_through():
     from app.modules.scheduling.activities import SchedulingActivities
@@ -160,3 +172,115 @@ class VisitWorkflow:
         return await workflow.execute_activity_method(
             SchedulingActivities.no_show, request, **VISIT_STEP
         )
+
+
+#: Every follow-up activity (refund, reschedule completion, waitlist). They are things that
+#: must eventually happen and each is idempotent, so they retry until the database is back
+#: rather than ending the workflow and losing the follow-up; a domain error is
+#: non-retryable and still ends it.
+FOLLOW_UP = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": UNLIMITED_RETRY}
+
+
+async def _stop_visit(appointment_id: str) -> None:
+    """Tell the visit timer its appointment is gone. Best-effort: if this is lost the timer
+    still ends by itself at the deadline, when `no_show` finds the appointment no longer
+    confirmed and answers "closed"."""
+    try:
+        await workflow.get_external_workflow_handle(visit_workflow_id(appointment_id)).signal(
+            "cancel"
+        )
+    except ApplicationError:
+        pass  # no visit workflow (a booking from before slice 3, or it already finished)
+
+
+async def _promote_waitlist(slot_id: str) -> str | None:
+    """Offer a released slot to waitlisted patients, oldest first; return the id of the
+    appointment that confirmed, or None.
+
+    Each attempt is a child booking with the id `booking-wl-<entry>`. With
+    ALLOW_DUPLICATE_FAILED_ONLY a failed attempt may be retried by a later release, while
+    a confirmed one can never run twice and a running one cannot be started again -- so
+    two releases racing for the same entry cannot double-book it. `candidates` is a plain
+    read; this id, not a lock, is the guard."""
+    candidates = await workflow.execute_activity_method(
+        SchedulingActivities.waitlist_candidates, slot_id, **FOLLOW_UP
+    )
+    for entry_id, patient_id in candidates:
+        appointment_id = str(workflow.uuid4())
+        try:
+            await workflow.execute_child_workflow(
+                BookAppointmentWorkflow.run,
+                BookingRequest(
+                    appointment_id, patient_id, slot_id, actor_user_id="system:waitlist"
+                ),
+                id=f"booking-wl-{entry_id}",
+                id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+            )
+        except (WorkflowAlreadyStartedError, ChildWorkflowError):
+            continue  # already promoted or being promoted, or this booking failed: next
+        try:
+            await workflow.execute_activity_method(
+                SchedulingActivities.waitlist_fulfil, entry_id, **FOLLOW_UP
+            )
+        except ActivityError:
+            # The booking is confirmed; the entry was cancelled or expired meanwhile. The
+            # id above already stops it being promoted again, so this changes nothing.
+            pass
+        return appointment_id
+    return None
+
+
+@workflow.defn(name="CancelFollowUp")
+class CancelFollowUpWorkflow:
+    """What must eventually follow a cancellation that is already committed: stop the visit
+    timer, refund, and offer the freed slot to the waitlist. Started best-effort after the
+    cancel's own transaction (spec §4.3), so none of it can fail or delay the cancel.
+
+    Returns "no-slot", "released" (nobody to promote) or "promoted:<appointment id>"."""
+
+    @workflow.run
+    async def run(self, request: FollowUpRequest) -> str:
+        await _stop_visit(request.appointment_id)
+        await workflow.execute_activity_method(
+            SchedulingActivities.refund, request, **FOLLOW_UP
+        )
+        if request.slot_id is None:
+            return "no-slot"
+        promoted = await _promote_waitlist(request.slot_id)
+        return f"promoted:{promoted}" if promoted else "released"
+
+
+@workflow.defn(name="Reschedule")
+class RescheduleWorkflow:
+    """Book the new slot first, release the old one only if that confirmed (D-14): a failed
+    reschedule leaves the patient with the appointment they had.
+
+    Returns "failed" (the new booking failed and compensated itself; the old appointment
+    is untouched), "superseded" (the old appointment was cancelled or checked in while the
+    new booking ran; nothing was released and the new booking stands) or "rescheduled"."""
+
+    @workflow.run
+    async def run(self, request: RescheduleRequest) -> str:
+        try:
+            await workflow.execute_child_workflow(
+                BookAppointmentWorkflow.run,
+                BookingRequest(
+                    request.new_appointment_id, request.patient_id, request.new_slot_id,
+                    request.actor_user_id, request.reason,
+                    rescheduled_from_id=request.old_appointment_id,
+                ),
+                id=booking_workflow_id(request.new_appointment_id),
+            )
+        except ChildWorkflowError:
+            return "failed"
+        result = await workflow.execute_activity_method(
+            SchedulingActivities.reschedule_complete, request, **FOLLOW_UP
+        )
+        if result["outcome"] == "superseded":
+            return "superseded"
+        await _stop_visit(request.old_appointment_id)
+        # No refund: a reschedule moves the booking rather than ending it. The released
+        # slot goes to the waitlist, as a cancelled one does.
+        if result["released_slot_id"] is not None:
+            await _promote_waitlist(result["released_slot_id"])
+        return "rescheduled"
