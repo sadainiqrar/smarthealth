@@ -12,7 +12,7 @@ The project is delivered in two parts:
 
 ## Status
 
-**Week 1 complete; Week 2 in progress.** Auth, patient and provider management, an
+**Weeks 1 and 2 complete.** Auth, patient and provider management, an
 audited mutation path, a CLI to create the first user, and the application containerised
 behind a compose profile. Week 2 has landed a Temporal worker, the **booking workflow**
 (an appointment is confirmed only after every step succeeds, and compensated to `failed`
@@ -21,7 +21,9 @@ and a durable workflow marks an appointment `no_show` if nobody checks in by the
 plus a grace period. It has also landed **cancel, reschedule and the waitlist**: a cancel frees the
 slot in the same transaction that cancels the appointment, a reschedule books the new slot
 before it releases the old one, and a freed slot is offered to waiting patients. Patient
-self-service (listing one's own appointments) is next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
+self-service closes Week 2: a patient lists their own appointments (`GET /appointments`),
+staff list them with filters, and `python -m app.cli link-patient` connects a patient login
+to its record. Week 3 (Kafka, Celery, notifications, analytics, observability) is next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
 
 ## Architecture
 
@@ -170,7 +172,7 @@ CHECK) — the assignment's headline invariant, made structural.
 | [`docs/superpowers/specs/2026-09-01-testing-harness-design.md`](docs/superpowers/specs/2026-09-01-testing-harness-design.md) | Testing harness design |
 | [`docs/superpowers/specs/2026-09-02-week1-foundation-design.md`](docs/superpowers/specs/2026-09-02-week1-foundation-design.md) | Domain model and schema decisions |
 | [`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`](docs/superpowers/specs/2026-09-03-week1-management-apis-design.md) | Management API design, and what Week 1 deliberately deferred |
-| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking, visit, cancel/reschedule and waitlist (built), self-service (designed) |
+| [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking, visit, cancel/reschedule, waitlist and patient self-service (all built) |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking, visit, cancel and reschedule workflows, and the designed event flows |
 | [`tests/README.md`](tests/README.md) | How to run and author tests |
 
@@ -217,6 +219,7 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | GET | `/patients/me` | `patient` — the record linked to the caller's login; 404 if none is linked |
 | GET | `/slots` | any authenticated — a provider's free, future slots; `provider_id` is required, and `from`/`to` must carry a timezone or the answer is a 422 |
 | POST | `/appointments` | `patient` (for themselves only), `front_desk`, `admin` — answers **202**; optional `Idempotency-Key` header |
+| GET | `/appointments` | `patient` (always their own: another `patient_id` is a **403**, a login with no linked record a **404**), `provider`, `front_desk`, `admin` (filters `patient_id`, `provider_id`, `status`, `from`, `to`; `from`/`to` bound the slot's start, inclusive and exclusive, and must carry a timezone or the answer is a 422). Paginated, newest slot first, appointments with no slot last; each item carries `starts_at` |
 | GET | `/appointments/{id}` | the owning `patient`, `provider`, `front_desk`, `admin` |
 | POST | `/appointments/{id}/check-in` | `front_desk`, `admin` — answers **200** `VisitRead`; 409 on an illegal step |
 | POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider`, `admin` — answer **200** `VisitRead`; 409 on an illegal step |
@@ -285,9 +288,11 @@ Mongo outage fails the request rather than silently dropping the record.
 provider being restricted to their own patients' visits (any provider may mark any visit seen
 or complete — PRD R-14).
 
-**Not yet implemented:** a patient listing their own appointments. A patient can read their
-own patient record (`GET /patients/me`) and an appointment they own, but there is no list
-endpoint (Week 2 slice 5).
+**Patient self-service.** A patient reads their own record (`GET /patients/me`), an
+appointment they own, and their own list (`GET /appointments`), which is forced to their
+record server-side. All of it needs the login to be linked to a patient record
+(`link-patient`, below). Provider per-object scoping is still not built: a provider's list
+is every appointment (PRD R-14).
 
 ### Running it
 
@@ -305,6 +310,10 @@ curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json
 ```
 
 `--build` matters: without it compose reuses an existing image and runs old code.
+
+A `--role patient` login also needs linking to its patient record before it can read its own
+data: `python -m app.cli link-patient --email … --mrn …`, described under
+[Frontend](#frontend).
 
 To stop the stack, keeping its data: `docker compose --profile app -f docker-compose.infra.yml down`.
 Adding `-v` also deletes the dev stack's volumes, and with them all dev data.
@@ -339,7 +348,7 @@ application in-process. The worker starts only once `app` is healthy, because th
 container applies the migrations. Its healthcheck, `python -m app.worker --check`,
 executes a canary workflow, so `--wait` returns only when a worker is actually polling
 and executing — not merely when the process is up. It runs the booking, visit, cancel follow-up and
-reschedule workflows; patient self-service (slice 5) is designed in
+reschedule workflows. The design of all five Week 2 slices is in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
@@ -510,9 +519,11 @@ in a browser. Design: [`docs/superpowers/specs/2026-10-28-frontend-demo-client-d
 It talks to the backend only over HTTP, through a same-origin `/api` proxy, so the backend
 needs no CORS configuration.
 
-Screens: login; patients (front desk, admin, provider); providers (every role); and Book
+Screens: login; patients (front desk, admin, provider); providers (every role); Book
 (patient, front desk, admin), which picks a patient, provider and slot, then follows the
-appointment until it reads `confirmed` or `failed`. The navigation shows only what the
+appointment until it reads `confirmed` or `failed`; and Appointments (every role), which
+lists appointments (a patient's own; staff get status and provider filters) and cancels a
+`pending` or `confirmed` one. The navigation shows only what the
 login's role may use; the API still enforces it.
 
 **Dev mode** — the backend on `:8000`, then:
@@ -535,13 +546,17 @@ FRONTEND_PORT=5174 docker compose --profile app -f docker-compose.infra.yml up -
 **Tests** — `cd frontend && npm test` (Vitest).
 
 **A patient login needs a linked record.** `GET /patients/me` finds the patient whose
-`user_id` is the caller's login, and there is no UI or CLI to link one yet. Create the login
-with `app.cli create-user --role patient`, then link it in SQL:
+`user_id` is the caller's login. Create the login with `app.cli create-user --role patient`,
+then link it to the patient record with that MRN (the MRN is on the record, from
+`GET /patients` or the registration answer):
 
 ```bash
-docker compose --profile app -f docker-compose.infra.yml exec -T postgres \
-  psql -U smarthealth -d smarthealth -c \
-  "UPDATE patients SET user_id = '<user id>' WHERE id = '<patient id>'"
+docker compose --profile app -f docker-compose.infra.yml exec app \
+  python -m app.cli link-patient --email patient@example.com --mrn MRN-000123
 ```
 
-Until it is linked, `/patients/me` answers 404.
+It refuses (exit 1, with the reason) an unknown email or MRN, a login whose role is not
+`patient`, and a record or login already linked to something else; running it again for the
+same pair does nothing. A successful link is audited, with actor `system:cli`. Until a
+login is linked, `/patients/me` and `GET /appointments` answer 404 for it. The seeded
+patient login (`j.okonkwo@example.com`) is already linked, to `MRN-000001`.

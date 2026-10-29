@@ -1,7 +1,7 @@
 # Week 2 — Scheduling and Service Workflows — Design
 
 **Date:** 2026-10-28
-**Status:** Approved (design). Slices 1–4 built; slice 5 (patient self-service) designed, not built.
+**Status:** Approved (design). Slices 1–5 built.
 **Depends on:** `2026-09-02-week1-foundation-design.md` (schema, constraints),
 `2026-09-03-week1-management-apis-design.md` (request path, auth, audit),
 `docs/ARCHITECTURE.md` §3 (the booking and cancellation flows designed in Week 1)
@@ -156,7 +156,7 @@ means the same key replays the failure, so retrying needs a new key.
 | 4 | `billing_precheck` (stand-in) | permanent if declined |
 | 5 | `schedule_reminders` (stand-in) | retryable |
 | 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retried **without limit** (idempotent): it may have committed before a transient failure, and giving up would end the workflow failed while the row says confirmed. A non-retryable `Conflict` still ends it |
-| 7 | start `visit-<appointment_id>` (the no-show timer, §4.2) — as built, a child with `ParentClosePolicy.ABANDON` so it outlives booking, and `REJECT_DUPLICATE` so it never reopens a closed visit; if `waitlist_entry_id` was given, mark that entry `fulfilled` (**slice 4, not built**) | after `confirmed`, outside compensation; "already started" is ignored |
+| 7 | start `visit-<appointment_id>` (the no-show timer, §4.2) — as built, a child with `ParentClosePolicy.ABANDON` so it outlives booking, and `REJECT_DUPLICATE` so it never reopens a closed visit; if `waitlist_entry_id` was given, mark that entry `fulfilled` (slice 4, built) | after `confirmed`, outside compensation; "already started" is ignored |
 
 Any failure from step 1 on runs `compensate_booking` (as built, `fail_booking`; step 1 is
 inside the compensated region because it may commit and still fail, and compensation no-ops

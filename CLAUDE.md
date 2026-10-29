@@ -11,7 +11,7 @@ provider management with role-gated writes, paginated and filtered reads, and ev
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
 Dockerfile plus an `app` service behind a compose profile.
 
-**Week 2 in progress — slices 1 to 4 of 5 have landed.** Slice 1: a Temporal worker
+**Week 2 complete — all five slices have landed.** Slice 1: a Temporal worker
 process (`app/worker.py`, the `worker` compose service) with workflow/activity registries,
 a canary workflow as its readiness probe, and Temporal in `/ready`. Slice 2, the booking
 workflow: `POST /appointments` (202) starts `BookAppointmentWorkflow`, which creates the
@@ -35,9 +35,21 @@ and a release promotes up to three matching entries as child bookings
 pre-check and reminder scheduling, and no notification or domain event exists for cancel or
 reschedule yet (Week 3). Code in `app/modules/scheduling/`. The schema now has four
 migrations, `0001_baseline` to `0004_live_reschedule_unique`; slice 4 added the last.
-**Next:** slice 5, patient
-self-service — the appointment list (PRD R-5). All five are designed in
+Slice 5, patient
+self-service (PRD R-5, closed): `GET /appointments` lists a patient's own appointments —
+forced server-side to their own record, 403 for another `patient_id`, 404 for a login with
+no linked record — or, for provider, front desk and admin, filters by `patient_id`,
+`provider_id`, `status` and a slot window; newest slot first, slot-less rows last, and each
+item carries the slot's `starts_at`. `python -m app.cli link-patient --email … --mrn …`
+links a patient login to its record (audited), which `GET /patients/me` needs. The demo
+client gained an Appointments page with cancel. All five slices are designed in
 `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
+
+**Next: Week 3** — Kafka + Schema Registry, Celery/RabbitMQ, notifications, analytics and
+observability (PRD §10). None of it exists yet, and the Week 2 stand-ins (billing pre-check,
+reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
+Not built in Week 2, by decision: a provider availability generator (slots are seeded) and
+clinic/department endpoints (PRD `PART-A-FR-1.5`).
 
 `README.md` carries the endpoint/role table and the architecture diagrams. The design and
 the list of what was deliberately deferred are in
@@ -67,6 +79,7 @@ Commands that work today:
 | `python -m tests.runner.route_check` | validate and route the case catalog |
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
+| `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
 | `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
@@ -206,7 +219,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 898 fast tests (plus 1 skip) in ~38s (38.15s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 917 fast tests (plus 1 skip) in ~55s (54.95s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
