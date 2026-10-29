@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from temporalio import workflow
-from temporalio.common import RetryPolicy
+from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ActivityError, ApplicationError, WorkflowAlreadyStartedError
 
 from app.modules.scheduling.contracts import BookingRequest, VisitRequest, visit_workflow_id
@@ -86,19 +86,22 @@ class BookAppointmentWorkflow:
                 await workflow.start_child_workflow(
                     VisitWorkflow.run, VisitRequest(request.appointment_id),
                     id=visit_workflow_id(request.appointment_id),
-                    # The visit outlives the booking: it runs until the patient is seen.
+                    # The visit outlives the booking: it runs until check-in or deadline.
                     parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                    # Never a second run under a closed one: a late child start would
+                    # arm a second no-show timer for an appointment already settled.
+                    id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
                 )
             except WorkflowAlreadyStartedError:
-                # `visit-<id>` already exists. Nothing else starts one, so this is
-                # defensive: a second start must never fail a confirmed booking.
+                # `visit-<id>` exists, running or closed. Nothing else starts one, so
+                # this is defensive: it must never fail a confirmed booking.
                 pass
         return "confirmed"
 
 
 #: Every visit activity. The visit workflow has no compensation to fall back on: a step
 #: that gave up would end the workflow failed and leave the appointment with no timer at
-#: all -- the review's "a five-minute database outage permanently fails the visit". Both
+#: all, so a short database outage would permanently cost the appointment its no-show. Both
 #: activities are idempotent reads or guarded writes, so retrying until the database is
 #: back is safe; a domain error (NotFound) is non-retryable and still ends it.
 VISIT_STEP = {"start_to_close_timeout": timedelta(seconds=30), "retry_policy": UNLIMITED_RETRY}

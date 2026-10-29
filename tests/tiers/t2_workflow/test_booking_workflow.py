@@ -168,6 +168,40 @@ async def test_a_visit_already_started_does_not_fail_the_booking(isolated_env):
         assert calls.count("confirm") == 1
 
 
+async def test_a_closed_visit_is_not_started_again_by_a_late_booking(isolated_env):
+    """A visit run that already closed for this appointment (one started before this
+    design, say, and cancelled) must not be restarted by a booking whose child start runs
+    late: a second run would arm a second no-show timer for the same appointment. The
+    child start uses REJECT_DUPLICATE, so it fails, and the booking still confirms. Kills:
+    the reuse policy left at its ALLOW_DUPLICATE default."""
+    request = _request()
+    release = asyncio.Event()
+    release.set()
+    queue = f"t2-book-{uuid.uuid4().hex[:8]}"
+    async with build_worker(
+        isolated_env.client, queue, workflows=[BookAppointmentWorkflow, VisitWorkflow],
+        activities=[*_fakes([]), *open_visit_fakes(isolated_env, release)],
+    ):
+        visit = await isolated_env.client.start_workflow(
+            VisitWorkflow.run, VisitRequest(request.appointment_id),
+            id=visit_workflow_id(request.appointment_id), task_queue=queue,
+        )
+        await visit.signal(VisitWorkflow.cancel)
+        assert await visit.result() == "cancelled"
+        first_run = (await visit.describe()).run_id
+
+        result = await isolated_env.client.execute_workflow(
+            BookAppointmentWorkflow.run, request,
+            id=f"booking-{uuid.uuid4()}", task_queue=queue,
+        )
+        assert result == "confirmed"
+        latest = await isolated_env.client.get_workflow_handle(
+            visit_workflow_id(request.appointment_id)
+        ).describe()
+        assert latest.run_id == first_run
+        assert latest.status == WorkflowExecutionStatus.COMPLETED
+
+
 async def test_a_failed_booking_starts_no_visit(temporal_env):
     request = _request()
     release = asyncio.Event()
