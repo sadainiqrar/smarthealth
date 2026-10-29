@@ -219,7 +219,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 917 fast tests (plus 1 skip) in ~55s (54.95s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 918 fast tests (plus 1 skip) in ~46s (45.78s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
