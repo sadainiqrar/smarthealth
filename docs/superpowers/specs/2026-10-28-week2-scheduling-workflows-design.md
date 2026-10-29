@@ -1,7 +1,7 @@
 # Week 2 — Scheduling and Service Workflows — Design
 
 **Date:** 2026-10-28
-**Status:** Approved (design). Slices 1 and 2 built; slices 3–5 pending.
+**Status:** Approved (design). Slices 1–4 built; slice 5 (patient self-service) designed, not built.
 **Depends on:** `2026-09-02-week1-foundation-design.md` (schema, constraints),
 `2026-09-03-week1-management-apis-design.md` (request path, auth, audit),
 `docs/ARCHITECTURE.md` §3 (the booking and cancellation flows designed in Week 1)
@@ -22,7 +22,7 @@ orchestration ready; reliable appointment state machine"*.
 - Visit lifecycle: check-in / seen / complete written synchronously by the endpoints, and a
   `VisitWorkflow` per confirmed appointment that owns the durable no-show timer (D-12, as
   amended 2026-10-29).
-- Cancel and reschedule as workflows, including the paired-write slot release.
+- Cancel as a synchronous paired write with a follow-up workflow; reschedule as a workflow.
 - Waitlist: `POST /waitlist`, and promotion of a waitlisted patient onto a freed slot.
 - Patient self-service (PRD R-5): a patient reads their own record and their own bookings.
 - Closing PRD R-2, R-3, R-4, R-5.
@@ -52,7 +52,7 @@ Each is numbered so the PRD can adopt it (§8 continues from D-8).
 | **D-10** | The booking workflow creates the `pending` row; the router only starts the workflow | Router inserts the row, then starts the workflow | Two systems cannot be written atomically. Workflow-first means a failed start leaves nothing behind, and a started workflow is guaranteed by Temporal to reach `confirmed` or `failed`. Router-first leaves a permanently `pending` orphan whenever the start fails, which needs a reconciler to clean up. Workflow-first needs none — *unless someone terminates a workflow*: termination skips compensation, so the operational rule is "cancel, never terminate", and a reconciler for stale `pending` rows is deferred (§6) |
 | **D-11** | Duplicate submission is prevented by deterministic workflow ids: `Idempotency-Key` → `appointment_id` → `booking-<appointment_id>` | Dedupe table keyed on request hash | Temporal already refuses a second start under a running workflow id; a second store would be a second source of truth for the same fact |
 | **D-12** | *Amended 2026-10-29.* **The database records human actions; the workflow owns time.** Check-in, seen and complete are written synchronously by their endpoints, in the request's transaction, under the appointment row lock, and answer 200. One `VisitWorkflow` per confirmed appointment is only the durable no-show timer; at the deadline it asks the database, under the same lock, whether anyone checked in | (a) *The original D-12:* a long-running workflow driven by staff signals, writing each action through an activity after a 202 — a review proved it loses check-ins (§4.2); (b) Temporal Updates, so the endpoint waits for the workflow's write — considered and not chosen: the write still lives behind the workflow, every action then depends on Temporal being up, and the no-show race still has to be settled in the database; (c) no-show by periodic job — needs a scheduler, and Temporal is one | Each human action is recorded the moment staff are told it was, so a timer can never overrule it, and a Temporal outage cannot fail one. The timer keeps what Temporal is uniquely good at: a durable per-appointment deadline that survives restarts, with an inspectable history |
-| **D-13** | Waitlist promotion is an activity of the cancel/reschedule workflows in Week 2 | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the activity is replaced by publishing `appointments.cancelled` and the promotion moves to a consumer |
+| **D-13** | Waitlist promotion is part of the cancel and reschedule workflows in Week 2: the shared workflow code `_promote_waitlist` (`app/modules/scheduling/workflows.py`) over the `waitlist.candidates` and `waitlist.fulfil` activities, each candidate tried as a child booking `booking-wl-<entry_id>` with `ALLOW_DUPLICATE_FAILED_ONLY` | Defer promotion to a Week 3 Kafka consumer | "Waitlist movement" is a named cancellation effect. In Week 3 the promotion moves to a consumer of `appointments.cancelled`, and the child-booking id stays its guard |
 | **D-14** | Reschedule books the new slot **before** releasing the old one | Cancel then book | A failed reschedule must leave the patient with their original appointment, not with nothing |
 | **D-15** | `patients` exposes a published interface, `app/modules/patients/public.py`; scheduling may import that file and nothing else from `patients` | Scheduling queries the `patients` table directly | A read-only query against another module's table is still coupling to its schema. Two declared edges (from `scheduling.activities` and `scheduling.router`) onto one file are visible in a diff and in the meta-test |
 | **D-16** | **Cancel is a synchronous paired write answering 200**; its follow-ups (visit timer, refund, waitlist promotion) run in `CancelFollowUpWorkflow`, started best-effort after commit. Reschedule stays a workflow (202) because it must book first | The original §4.3: a `CancelAppointmentWorkflow` doing the transition itself after a 202 | Amended D-12's reasoning: a 202 followed by an asynchronous write races with the visit timer and a concurrent booking, and a Temporal outage would then fail a cancel the patient was promised. The cost is that a failed follow-up start loses the follow-ups -- a known gap closed by Week 3's transactional outbox |
@@ -79,7 +79,10 @@ app/modules/scheduling/
     state.py        appointment and visit transition tables — pure, no I/O
     service.py      async DB operations; raise domain errors; callable from routers and activities
     activities.py   Temporal activities: own session, call one service function, commit
-    workflows.py    BookAppointment, CancelAppointment, RescheduleAppointment, Visit
+    contracts.py    BookingRequest and the other dataclasses passed to workflows and activities
+    booking.py      starting a booking: id derivation and the workflow-start policy
+    followups.py    starting the cancel follow-up (best-effort) and the reschedule (503 on failure)
+    workflows.py    BookAppointment, Visit, CancelFollowUp, Reschedule
     visits.py       notify_checked_in — the best-effort check-in signal sent after the request's commit
     schemas.py      request/response models
     router.py       HTTP surface (framework-bound)
@@ -243,7 +246,8 @@ backfill that starts timers for them is deferred. `VisitWorkflow` itself needed 
 
 *Amended 2026-10-29 (D-16).* `POST /appointments/{id}/cancel` -- `{reason}`. Roles: owning
 patient, `front_desk`, `admin`. Legal only from `pending` or `confirmed`, and only while no
-visit exists (a checked-in patient is not cancelled) -- otherwise 409.
+visit exists (a checked-in patient is not cancelled), and not while the reschedule that
+created it is still completing -- otherwise 409.
 
 Cancel is a **synchronous paired write** answering **200**, in the request's transaction and
 under the appointment row lock: `appointments.status = cancelled` (with `cancelled_at` and
@@ -273,8 +277,9 @@ released by the cancel.
 
 ### 4.4 Reschedule
 
-`POST /appointments/{id}/reschedule` -- `{new_slot_id, reason?}`. Same roles and legality as
-cancel, checked synchronously. Reschedule is inherently a workflow -- it must book before it
+`POST /appointments/{id}/reschedule` -- `{new_slot_id, reason?}`. Same roles as cancel.
+Legal only from `confirmed`, with no visit and with any predecessor's reschedule settled,
+checked synchronously -- otherwise 409. Reschedule is inherently a workflow -- it must book before it
 releases -- so it answers **202** with the new appointment id. That id is derived like a
 booking's (D-11) but in its own name space (`reschedule:<caller>:<key>`), so one
 Idempotency-Key used for a booking and a reschedule names two appointments, never one.
@@ -293,8 +298,11 @@ Idempotency-Key used for a booking and a reschedule names two appointments, neve
    `superseded` -- the old appointment stands; releasing it would leave the patient with
    nothing. Then the old one: if it is still `confirmed` with no visit, it moves to
    `rescheduled` and its slot to `free`, together. If it was cancelled or checked in
-   meanwhile, nothing is released and the reschedule ends `superseded`: the new booking
-   stands, and the patient holds two confirmed appointments until staff cancel one.
+   meanwhile, nothing is released and the reschedule ends `superseded`. Old one
+   **cancelled**: the new booking stands as the patient's only appointment. Old one
+   **checked in**: both stay `confirmed` -- the old one closes with its visit, and staff can
+   cancel the new one, because `require_reschedule_settled` counts a predecessor with a
+   visit as settled.
    Otherwise: signal `cancel` to the old `visit-<id>`, then `promote_waitlist(old_slot_id)`.
 
 **At most one live replacement (D-5).** Two reschedules of one appointment, accepted
@@ -401,8 +409,8 @@ The cheapest tier that proves each property:
 | T0 unit | Every allowed and forbidden transition in `state.py`; idempotency-key derivation |
 | T1 contract | Routes, role gates, 200/202/403/404/409/503, fake Temporal client; a check-in still answers 200 when the post-commit signal fails |
 | T2 workflow (time-skipping, mocked activities) | Confirm only after all steps; each failing step → `failed` and compensation called; conflict not retried; reschedule failure leaves original confirmed; no-show timer fires and returns the database's answer; a check-in signalled before a past deadline is kept; visit activities outlast a transient outage; `checked_in` / `cancel` end the visit workflow |
-| T3 integration (compose Postgres) | Two concurrent `claim_slot` → exactly one wins and `version` incremented once; every R-2 row leaves slot and appointment agreeing; `create_pending` idempotent; past slot rejected; `promote_waitlist` under concurrency takes one entry; a check-in holding the appointment lock makes `mark_no_show` wait and answer `visit_exists`; strict visit actions; a real timer marks a no-show |
-| T4 journey (compose Temporal + worker) | Book → confirmed → check-in → seen → complete; book → cancel → waitlisted patient confirmed |
+| T3 integration (compose Postgres) | Two concurrent `claim_slot` → exactly one wins and `version` incremented once; every R-2 row leaves slot and appointment agreeing; `create_pending` idempotent; past slot rejected; `promote_waitlist` under concurrency takes one entry (designed; realised as T2 `test_an_entry_already_promoted_is_skipped`); a check-in holding the appointment lock makes `mark_no_show` wait and answer `visit_exists`; strict visit actions; a real timer marks a no-show |
+| T4 journey (compose Temporal + worker) | Book → confirmed → check-in → seen → complete; book → cancel → waitlisted patient confirmed (designed; realised as T3 with real Temporal and an in-process worker: `vst-004` and `wtl-001`) |
 | Meta | Workflow determinism (sandbox-validate every registered workflow); single slot-status write path; the two declared edges (from `scheduling.activities` and `scheduling.router`) onto `patients.public` |
 
 Each flow gets case YAML under `tests/cases/`, authored with the `smarthealth-testcase`

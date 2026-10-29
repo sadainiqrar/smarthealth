@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Repository status
 
 **Week 1 complete.** On top of the foundation (settings, core utilities, async SQLAlchemy
-with Alembic migrations (four: `0001_baseline` to `0004_live_reschedule_unique`), the ten-table domain schema, Mongo and Redis clients,
+with Alembic migrations, the ten-table domain schema, Mongo and Redis clients,
 liveness/readiness) the business surface now exists: `POST /auth/login`; patient and
 provider management with role-gated writes, paginated and filtered reads, and every
 mutation audited to Mongo; a `create-user` CLI so a running system is demonstrable; and a
@@ -33,7 +33,9 @@ slot before it releases the old one**; `POST /waitlist` and `GET /waitlist` mana
 and a release promotes up to three matching entries as child bookings
 (`booking-wl-<entry>`). The refund (`cancel.refund`) is a stand-in, as are the billing
 pre-check and reminder scheduling, and no notification or domain event exists for cancel or
-reschedule yet (Week 3). Code in `app/modules/scheduling/`. **Next:** slice 5, patient
+reschedule yet (Week 3). Code in `app/modules/scheduling/`. The schema now has four
+migrations, `0001_baseline` to `0004_live_reschedule_unique`; slice 4 added the last.
+**Next:** slice 5, patient
 self-service — the appointment list (PRD R-5). All five are designed in
 `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
@@ -204,7 +206,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 897 fast tests (plus 1 skip) in ~35s (34.99s and 34.37s on two runs of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 898 fast tests (plus 1 skip) in ~38s (38.15s on a run of `python -m pytest -m "not docker" -q`), measured 2026-10-29; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist

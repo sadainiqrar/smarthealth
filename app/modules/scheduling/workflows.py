@@ -266,9 +266,14 @@ class RescheduleWorkflow:
     reschedule leaves the patient with the appointment they had.
 
     Returns "failed" (the new booking failed and compensated itself; the old appointment
-    is untouched), "superseded" (nothing was released: the old appointment was cancelled or
-    checked in while the new booking ran, and the new booking stands -- or the new one was
-    cancelled before the old one was released, and the old one stands) or "rescheduled"."""
+    is untouched), "rescheduled", or "superseded" -- nothing was released, because:
+
+    - the old appointment was cancelled while the new booking ran: the new booking stands
+      as the patient's only appointment;
+    - the patient checked in at the old one: both stay `confirmed`. The old one closes with
+      its visit; the visit settles the chain guard (`require_reschedule_settled`), so staff
+      can cancel the new one if it is no longer wanted;
+    - the new one was cancelled before the old one was released: the old one stands."""
 
     @workflow.run
     async def run(self, request: RescheduleRequest) -> str:

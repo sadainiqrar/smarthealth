@@ -391,7 +391,7 @@ actually happened (`Visit`), and who to promote when a slot frees up (`WaitlistE
 | --- | --- |
 | `models.py` | `ProviderSlot` and `SlotStatus` (moved here from `providers`, PRD D-9), `Appointment`, `Visit`, `WaitlistEntry` and their status enums |
 | `state.py` | `APPOINTMENT_TRANSITIONS` as data, `can_transition`, `require_transition` (raises `Conflict`) and `require_cancellable` (`state.py:40`: `pending` or `confirmed`, and no visit row); and for visits `VisitAction`, `VISIT_PRECONDITIONS` / `VISIT_RESULT` as data, `require_visit_action` (`state.py:86`) and `NoShowOutcome` (`state.py:51`). Pure; every status write asks it first |
-| `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment` — the visit operations (`service.py:348` on): the **strict** staff actions `check_in`, `mark_seen`, `complete_visit` (called only by the endpoints), the **idempotent** timer operations `no_show_deadline` and `mark_no_show` (called only by activities), and the read `get_visit` — the cancel and reschedule operations (`service.py:517` on): `cancel_appointment` (`:546`, **strict**, called only by the endpoint), `complete_reschedule` (`:580`, **idempotent**, called only by the `reschedule.complete` activity), `_release_slot` (`:535`, the one release write both use) and the chain guard `_lock_with_predecessor` / `require_reschedule_settled` (`:129`, `:145`) — the waitlist operations `add_waitlist_entry`, `list_waitlist`, `waitlist_candidates` and `fulfil_waitlist_entry` (`:659`–`:767`) — and the read `list_free_slots` (`service.py:770`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
+| `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment` — the visit operations (`service.py:363` on): the **strict** staff actions `check_in`, `mark_seen`, `complete_visit` (called only by the endpoints), the **idempotent** timer operations `no_show_deadline` and `mark_no_show` (called only by activities), and the read `get_visit` — the cancel and reschedule operations (`service.py:532` on): `cancel_appointment` (`:561`, **strict**, called only by the endpoint), `complete_reschedule` (`:595`, **idempotent**, called only by the `reschedule.complete` activity), `_release_slot` (`:550`, the one release write both use) and the chain guard `_lock_with_predecessor` / `require_reschedule_settled` (`:129`, `:145`) — the waitlist operations `add_waitlist_entry`, `list_waitlist`, `waitlist_candidates` and `fulfil_waitlist_entry` (`:674`–`:782`) — and the read `list_free_slots` (`service.py:785`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
 | `contracts.py` | `BookingRequest`, `VisitRequest`, `FollowUpRequest` and `RescheduleRequest`, frozen dataclasses of strings passed between a workflow and its activities (`BookingRequest.rescheduled_from_id` is last and defaulted, so a request recorded in an older workflow history still decodes), and the three pure workflow-id functions `visit_workflow_id` (`visit-<appointment_id>`), `booking_workflow_id` (`booking-<id>`) and `reschedule_workflow_id` (`reschedule-<new appointment id>`) (`contracts.py:49-65`). The last two live here rather than beside the code that starts those workflows: the workflow sandbox cannot import `booking` (it pulls in the Temporal client), and `booking` must name a reschedule without importing `followups`, which imports `booking`. Pure, so the workflow sandbox imports it directly |
 | `activities.py` | `SchedulingActivities`: thirteen activities — seven `booking.*`, two `visit.*` (`deadline`, `no_show`), `cancel.refund`, `reschedule.complete` and `waitlist.candidates` / `waitlist.fulfil` — each one service call in its own session and transaction, except `cancel.refund`, which makes none; domain errors become non-retryable `ApplicationError`s. Built with the no-show grace, which has no default here — `Settings` is its only source. `billing_precheck`, `schedule_reminders` and `cancel.refund` are stand-ins until Week 3 |
 | `workflows.py` | `BookAppointmentWorkflow` (type name `BookAppointment`): the step sequence, the retry policies, compensation, and the patched start of the visit child; `VisitWorkflow` (type name `Visit`), the no-show timer (§3.2a); `CancelFollowUpWorkflow` (`CancelFollowUp`) and `RescheduleWorkflow` (`Reschedule`), with the shared helpers `_stop_visit` and `_promote_waitlist` (§3.3). No I/O, no clock |
@@ -919,9 +919,9 @@ sequenceDiagram
 (`_require`, `service.py:110`), reads the visit under its own lock, and asks
 `require_visit_action` (`state.py:86`) whether the action is legal *now* — so there is no
 separate precheck to go stale between the check and the write. The `ON CONFLICT DO NOTHING`
-(`service.py:430-437`) is a second gate behind the check: if anything ever inserted a visit
+(`service.py:445-452`) is a second gate behind the check: if anything ever inserted a visit
 without the lock, the unique `appointment_id` still allows one, and zero rows affected is a
-`Conflict` too (`service.py:438-439`). The functions are **strict**: a repeat is a 409, not a
+`Conflict` too (`service.py:453-454`). The functions are **strict**: a repeat is a 409, not a
 silent success, because nothing retries them — a duplicate is a human mistake worth
 reporting, and a no-op would tell staff the second check-in "worked".
 
@@ -1057,13 +1057,13 @@ against an operation that detects it already ran.
 
 | # | Activity | Service call | Where | Failure |
 | --- | --- | --- | --- | --- |
-| 1 | `booking.create_pending` | `service.create_pending` — insert-or-nothing; audits `booking_requested` only if it inserted | `activities.py:96-111`, `service.py:154-209` | Unknown slot or patient → `NotFound`; the id already used for a different patient, provider or clinic → `Conflict` |
-| 2 | `booking.validate_booking` | `patients.public.ensure_bookable_patient`, then `service.ensure_slot_bookable` | `activities.py:113-119`, `service.py:212-221`, `app/modules/patients/public.py:20-29` | Unknown patient or slot → `NotFound`; a slot whose `starts_at <= now` → `Unprocessable` |
-| 3 | `booking.claim_slot` | `service.claim_slot` — the conditional UPDATE, then `slot_id` attached and flushed; audits `slot_claimed` | `activities.py:121-130`, `service.py:224-284` (UPDATE at `:248-257`) | Zero rows: re-read the slot and raise `NotFound`, `Unprocessable` (it started) or `Conflict` ("no longer free"). A violation of `ux_appointments_live_slot` or `fk_appointments_slot_provider_clinic` on attach → `Conflict`. An appointment no longer `pending`, or already holding another slot → `Conflict`. Re-claiming its own slot is a no-op |
+| 1 | `booking.create_pending` | `service.create_pending` — insert-or-nothing; audits `booking_requested` only if it inserted | `activities.py:96-111`, `service.py:169-224` | Unknown slot or patient → `NotFound`; the id already used for a different patient, provider or clinic → `Conflict` |
+| 2 | `booking.validate_booking` | `patients.public.ensure_bookable_patient`, then `service.ensure_slot_bookable` | `activities.py:113-119`, `service.py:227-236`, `app/modules/patients/public.py:20-29` | Unknown patient or slot → `NotFound`; a slot whose `starts_at <= now` → `Unprocessable` |
+| 3 | `booking.claim_slot` | `service.claim_slot` — the conditional UPDATE, then `slot_id` attached and flushed; audits `slot_claimed` | `activities.py:121-130`, `service.py:239-299` (UPDATE at `:263-272`) | Zero rows: re-read the slot and raise `NotFound`, `Unprocessable` (it started) or `Conflict` ("no longer free"). A violation of `ux_appointments_live_slot` or `fk_appointments_slot_provider_clinic` on attach → `Conflict`. An appointment no longer `pending`, or already holding another slot → `Conflict`. Re-claiming its own slot is a no-op |
 | 4 | `booking.billing_precheck` | none — stand-in | `activities.py:132-139` | Never fails today. Week 3: a decline must raise a non-retryable `ApplicationError` |
 | 5 | `booking.schedule_reminders` | none — stand-in | `activities.py:141-147` | Never fails today |
-| 6 | `booking.confirm` | `service.confirm_booking` — `require_transition(pending → confirmed)`, slot `held → booked` | `activities.py:149-156`, `service.py:287-311` | Already confirmed → no-op. No slot, slot not `held`, or an illegal transition → `Conflict` |
-| — | `booking.fail_booking` | `service.fail_booking` — the compensation | `activities.py:158-165`, `service.py:314-345` | No row, or no longer `pending` → no-op |
+| 6 | `booking.confirm` | `service.confirm_booking` — `require_transition(pending → confirmed)`, slot `held → booked` | `activities.py:149-156`, `service.py:302-326` | Already confirmed → no-op. No slot, slot not `held`, or an illegal transition → `Conflict` |
+| — | `booking.fail_booking` | `service.fail_booking` — the compensation | `activities.py:158-165`, `service.py:329-360` | No row, or no longer `pending` → no-op |
 
 The loop over steps 1–5 is `workflows.py:73-80`, confirm is `:82-84`, and the compensation
 handler is `:85-92`. Every activity has an explicit prefixed name — `booking.` for these, `visit.` for slice 3's
@@ -1158,7 +1158,7 @@ held two confirmed appointments for the one they moved — with every other cons
 satisfied, because the two rows held different slots; the router's precheck cannot close
 it, since both requests pass it before either workflow writes. With the index the second
 booking's `create_pending` fails on insert and `service.create_pending` raises `Conflict`
-(`LIVE_RESCHEDULE_INDEX`, `service.py:66`, `:189-197`), so it never claims a slot and its
+(`LIVE_RESCHEDULE_INDEX`, `service.py:66`, `:204-212`), so it never claims a slot and its
 compensation is a no-op (§3.3). Partial on status, like `ux_appointments_live_slot`: a
 replacement that failed or was cancelled does not block another attempt. Unlike
 `ux_appointments_live_slot` it is **declared in the model** (`Index(...,
@@ -1183,11 +1183,11 @@ lock re-evaluates `status = 'free'` once the winner commits and matches nothing
 
 1. **`version = version + 1`** (R-4, closed). Nothing increments `provider_slots.version`
    automatically (`models.py:128-129`). Every slot write in `service.py` — the claim
-   (`:255`), confirm (`:303`), compensation (`:340`) and the cancel/reschedule release
-   (`_release_slot`, `:542`) — sets it explicitly.
+   (`:270`), confirm (`:318`), compensation (`:355`) and the cancel/reschedule release
+   (`_release_slot`, `:557`) — sets it explicitly.
 2. **No booking a slot that has started** (R-3, closed). `CHECK (starts_at > now())` is
    impossible — Postgres requires check conditions to be immutable. `ensure_slot_bookable`
-   rejects it in step 2, and the claim's own `WHERE` repeats `starts_at > now` (`:253`),
+   rejects it in step 2, and the claim's own `WHERE` repeats `starts_at > now` (`:268`),
    because a retry or a backlogged worker can reach step 3 after the slot started.
 3. **Slot status agrees with appointment status, in one transaction** (R-2, restated;
    closed for every path). Done for booking (`held → booked` with `confirmed`),
@@ -1261,10 +1261,10 @@ flowchart TD
 
 | Step | Where | What |
 | --- | --- | --- |
-| Deadline | `workflows.py:153-158`, `activities.py:167-176`, `service.no_show_deadline` (`service.py:397`) | The `visit.deadline` activity returns the slot's end plus `Settings.no_show_grace_minutes` (default 15, `ge=0`, `settings.py:88`) as an ISO string. The worker passes the grace in as a `timedelta` (`app/worker.py:82`); `SchedulingActivities` has no default of its own, so a second default cannot disagree with `Settings` |
+| Deadline | `workflows.py:153-158`, `activities.py:167-176`, `service.no_show_deadline` (`service.py:412`) | The `visit.deadline` activity returns the slot's end plus `Settings.no_show_grace_minutes` (default 15, `ge=0`, `settings.py:88`) as an ISO string. The worker passes the grace in as a `timedelta` (`app/worker.py:82`); `SchedulingActivities` has no default of its own, so a second default cannot disagree with `Settings` |
 | Wait | `workflows.py:159-167` | Only if neither flag is set **and** `deadline - workflow.now()` is positive: `wait_condition(…, timeout=remaining)`, with `TimeoutError` caught. Past the deadline it never waits — a zero-length wait would raise even though the condition holds, which is correction (2) above |
 | Flags | `workflows.py:140-146,168-171` | `checked_in` → `"checked_in"`; `cancel` → `"cancelled"`. The handlers only set flags; no I/O happens in one |
-| Ask the database | `workflows.py:172-174`, `activities.py:178-188`, `service.mark_no_show` (`service.py:485-514`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:51`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
+| Ask the database | `workflows.py:172-174`, `activities.py:178-188`, `service.mark_no_show` (`service.py:500-529`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:51`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
 
 The `checked_in` signal is a **hint**, not the record. It lets the timer finish early; if it
 is lost or late, the timer still fires and `mark_no_show` finds the visit row. Because
@@ -1367,14 +1367,14 @@ sequenceDiagram
     R-->>C: 200 AppointmentRead
 ```
 
-**The write is the check.** `service.cancel_appointment` (`service.py:546-577`) locks the
+**The write is the check.** `service.cancel_appointment` (`service.py:561-592`) locks the
 appointment first (`_lock_with_predecessor`, `:129-142`), then asks `require_reschedule_settled`
-(`:145-151`), reads the visit, and asks `require_cancellable` (`state.py:40-48`): `pending` or
+(`:145-166`), reads the visit, and asks `require_cancellable` (`state.py:40-48`): `pending` or
 `confirmed`, and **no visit row** — a checked-in patient is not cancelled, even though
 `confirmed → cancelled` is a legal transition on its own. The functions are **strict**, like
 the visit actions: a second cancel is a 409, not a silent success, because only the endpoint
 calls it and nothing retries it. Only then does it release the slot with `_release_slot`
-(`:535-543`) and move the appointment; the caller owns the commit (§2.1), so both land
+(`:550-558`) and move the appointment; the caller owns the commit (§2.1), so both land
 together or neither does. A cancelled appointment **keeps its `slot_id`** (as a failed one
 does, PRD R-10) so the follow-up can say which slot to offer the waitlist.
 
@@ -1430,21 +1430,24 @@ repeat by the new row linking back to this appointment, and `start_reschedule` a
 workflow already started, or 422 if the key now names a different reschedule
 (`reschedule_fingerprint`, `followups.py:76-84`).
 
-`RescheduleWorkflow.run` (`workflows.py:273-309`) runs the booking as a **child** so it gets
+`RescheduleWorkflow.run` (`workflows.py:278-314`) runs the booking as a **child** so it gets
 booking's compensation for free: `REJECT_DUPLICATE`, because the new id is derived for this
 reschedule alone, so `booking-<id>` can only be this child, and `ParentClosePolicy.ABANDON`,
 so terminating the reschedule cannot kill the booking between its claim and its compensation.
 If the child fails, the workflow returns `failed` and **the old appointment was never
 touched**. If it confirms, `reschedule.complete` runs `service.complete_reschedule`
-(`service.py:580-630`), which locks both appointments in ascending id order, so two
+(`service.py:595-645`), which locks both appointments in ascending id order, so two
 reschedules touching the same pair cannot deadlock, and checks the **new** one first: it must
 still be `confirmed` and still name the old one in `rescheduled_from_id`. If it was cancelled
 in the instant between its booking confirming and this step, releasing the old slot would leave
 the patient with nothing, so nothing is written and the answer is `superseded` — the old
 appointment stands. Then the old one: already `rescheduled` is a retried activity and answers
-the same, writing nothing; not `confirmed`, or a visit exists (it was cancelled, or the patient
-checked in, while the new booking ran), is `superseded` too — nothing released, the new
-booking stands, and the patient holds two confirmed appointments until staff cancel one.
+the same, writing nothing; not `confirmed`, or a visit exists, is `superseded` too — nothing
+released, and what remains depends on why. If the old appointment was **cancelled** while the
+new booking ran, the new booking stands as the patient's only appointment. If the patient
+**checked in** at the old one, both stay `confirmed`: the old one is being seen and closes with
+its visit, and staff cancel the new one if it is no longer wanted — the visit settles the
+chain guard below, so that cancel is not refused.
 Otherwise the old appointment becomes `rescheduled`, its slot `free` with `version + 1`, in one
 transaction and audited once. On `superseded` the workflow stops there; otherwise it signals
 the old visit timer to stop and offers the released slot to the waitlist.
@@ -1459,8 +1462,13 @@ to end, `test_two_concurrent_reschedules_of_one_appointment_confirm_one` (case `
 
 **The chain guard.** The index sees one link of a chain at a time, so it cannot stop a
 reschedule of an appointment that is itself mid-reschedule: while the new appointment's
-predecessor is still `confirmed`, cancelling or rescheduling the new one could leave both
-confirmed. `require_reschedule_settled` (`service.py:145-151`) refuses it with a 409 ("the
+predecessor is still `confirmed` with no visit, cancelling or rescheduling the new one could
+leave both confirmed. A predecessor with a visit counts as settled even while `confirmed`:
+`complete_reschedule` can only answer `superseded` for it and will never move it, so waiting
+would block the new appointment until the old visit closed, while the old one cannot be
+cancelled either. The visit is read under the predecessor's row lock, which `check_in` also
+takes (T3 `test_a_checked_in_predecessor_settles_the_chain_so_the_replacement_can_be_cancelled`,
+case `rsc-004`). `require_reschedule_settled` (`service.py:145-166`) refuses it with a 409 ("the
 reschedule that created this appointment is still completing") in `cancel_appointment`, in
 `create_pending` for a reschedule's new appointment (under the locks, since the router's own
 check at `router.py:279-281` cannot see a reschedule that starts after it), and in the router's
@@ -1480,7 +1488,7 @@ withdraws one and nothing expires one (PRD R-18).
 `_promote_waitlist(slot_id)` (`workflows.py:196-240`) is shared workflow code, run by the
 cancel follow-up and by reschedule (PRD D-13):
 
-1. `waitlist.candidates` → `service.waitlist_candidates` (`service.py:703-743`) returns up to
+1. `waitlist.candidates` → `service.waitlist_candidates` (`service.py:718-758`) returns up to
    **three** `(entry, patient)` pairs, oldest first: `active`, window containing the slot's
    `starts_at` (`window_start <= starts_at < window_end`), and provider/department matching
    the slot wherever the entry names one. It returns **nothing** unless the slot is still
@@ -1494,7 +1502,7 @@ cancel follow-up and by reschedule (PRD D-13):
    row lock, is the guard** — a lock cannot be held across a child workflow. A started or
    failed child moves the loop on to the next candidate.
 3. The first child that confirms is followed by `waitlist.fulfil` (`fulfil_waitlist_entry`,
-   `service.py:746-767`, idempotent, `active → fulfilled`), and the loop stops. If the entry
+   `service.py:761-782`, idempotent, `active → fulfilled`), and the loop stops. If the entry
    was cancelled or expired meanwhile that activity fails, and is ignored: the booking
    stands and the id already prevents a second promotion.
 
@@ -1519,11 +1527,11 @@ already in the past):
 
 | Path | Service function | Slot | Proven by |
 | --- | --- | --- | --- |
-| Confirm | `confirm_booking` (`service.py:287`) | `held → booked` | T3 `test_confirm_books_the_slot_and_is_idempotent` |
-| Compensate | `fail_booking` (`:314`) | `held → free`, only if held by this appointment | T3 `test_fail_booking_releases_its_held_slot` |
-| Cancel | `cancel_appointment` (`:546`) via `_release_slot` (`:535`) | `held`/`booked → free`, `version + 1` | T3 `test_cancelling_a_confirmed_appointment_frees_its_slot_in_one_write` (case `cnl-001`), `test_cancelling_a_pending_appointment_that_holds_a_slot_releases_it` |
-| Reschedule | `complete_reschedule` (`:580`) via `_release_slot` | the old slot `→ free`, `version + 1`; none when `superseded` | T3 `test_completing_a_reschedule_frees_the_old_slot_and_says_which`, `test_a_reschedule_over_a_cancelled_appointment_is_superseded` |
-| Complete, no-show | `complete_visit` (`:462`), `mark_no_show` (`:485`) | none — stays `booked`, `version` unchanged | T3 `test_complete_finishes_visit_and_appointment_and_leaves_the_slot_booked`, `test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked` |
+| Confirm | `confirm_booking` (`service.py:302`) | `held → booked` | T3 `test_confirm_books_the_slot_and_is_idempotent` |
+| Compensate | `fail_booking` (`:329`) | `held → free`, only if held by this appointment | T3 `test_fail_booking_releases_its_held_slot` |
+| Cancel | `cancel_appointment` (`:561`) via `_release_slot` (`:550`) | `held`/`booked → free`, `version + 1` | T3 `test_cancelling_a_confirmed_appointment_frees_its_slot_in_one_write` (case `cnl-001`), `test_cancelling_a_pending_appointment_that_holds_a_slot_releases_it` |
+| Reschedule | `complete_reschedule` (`:595`) via `_release_slot` | the old slot `→ free`, `version + 1`; none when `superseded` | T3 `test_completing_a_reschedule_frees_the_old_slot_and_says_which`, `test_a_reschedule_over_a_cancelled_appointment_is_superseded` |
+| Complete, no-show | `complete_visit` (`:477`), `mark_no_show` (`:500`) | none — stays `booked`, `version` unchanged | T3 `test_complete_finishes_visit_and_appointment_and_leaves_the_slot_booked`, `test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked` |
 
 Two things keep it from regressing. Slot status is written **only** in `scheduling/service.py`,
 enforced by `tests/meta/test_slot_writes.py` (§3.2), so there is one file in which to forget

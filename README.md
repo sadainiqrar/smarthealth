@@ -221,8 +221,8 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/appointments/{id}/check-in` | `front_desk`, `admin` — answers **200** `VisitRead`; 409 on an illegal step |
 | POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider`, `admin` — answer **200** `VisitRead`; 409 on an illegal step |
 | GET | `/appointments/{id}/visit` | the owning `patient`, `provider`, `front_desk`, `admin` — 404 until a check-in exists |
-| POST | `/appointments/{id}/cancel` | the owning `patient`, `front_desk`, `admin` — body `{reason}`; answers **200** with the appointment; 409 unless it is `pending` or `confirmed` with no visit |
-| POST | `/appointments/{id}/reschedule` | the owning `patient`, `front_desk`, `admin` — body `{new_slot_id, reason?}`; answers **202** with the new appointment's id; optional `Idempotency-Key` header |
+| POST | `/appointments/{id}/cancel` | the owning `patient`, `front_desk`, `admin` — body `{reason}`; answers **200** with the appointment; 409 unless it is `pending` or `confirmed` with no visit, and also while the reschedule that created it is still completing |
+| POST | `/appointments/{id}/reschedule` | the owning `patient`, `front_desk`, `admin` — body `{new_slot_id, reason?}`; answers **202** with the new appointment's id; only a `confirmed` appointment (no visit); 409 otherwise; optional `Idempotency-Key` header |
 | POST | `/waitlist` | `patient` (for themselves only), `front_desk`, `admin` — answers **201** |
 | GET | `/waitlist` | `patient` (their own entries, whatever `patient_id` they send), `front_desk`, `admin` |
 
@@ -343,7 +343,11 @@ reschedule workflows; patient self-service (slice 5) is designed in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
-the password you gave `seed`. `GET /slots?provider_id=…` lists a provider's free slots, but
+the password you gave `seed`. If the stack was seeded earlier with a password you do not
+know, create your own logins with
+`python -m app.cli create-user --email … --password … --role front_desk` (and again with
+`--role provider` for the visit demo below) and use those instead.
+`GET /slots?provider_id=…` lists a provider's free slots, but
 the snippet below picks a slot and a patient straight from Postgres, which needs no
 provider id (bash / Git Bash):
 
@@ -383,9 +387,7 @@ a new `KEY`: the same key with a different slot is a 422, and `$APPOINTMENT` sta
 Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
 provider login `a.osei@medinova.example` (same password as the other seeded logins) can
 do both. To use a login of your own instead, create one the way the admin was created above,
-with `--role provider`. If the stack was seeded earlier with a password you do not know,
-create your own logins with `python -m app.cli create-user --email … --password … --role front_desk`
-(and again with `--role provider`) and use those below.
+with `--role provider`.
 
 ```bash
 : "${APPOINTMENT:?booking failed}"
@@ -430,7 +432,7 @@ until_status() { for _ in $(seq 30); do [ "$(status_of $1)" = "$2" ] && return 0
   echo "$1 is $(status_of $1), not $2" >&2; return 1; }
 
 SLOT_A=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1")
-SLOT_B=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1 offset 1")
+SLOT_B=$(sql "select id from provider_slots where status = 'free' and starts_at > now() and id <> '$SLOT_A' and provider_id = (select provider_id from provider_slots where id = '$SLOT_A') order by starts_at limit 1")
 PATIENT=$(sql "select id from patients order by created_at limit 1")
 WAITER=$(sql "select id from patients order by created_at limit 1 offset 1")
 : "${SLOT_A:?no free slot}" "${SLOT_B:?need a second free slot}" "${PATIENT:?no patient}" "${WAITER:?need a second patient}"
@@ -454,7 +456,10 @@ until_status $OLD rescheduled
 FROM=$(sql "select to_char((starts_at - interval '1 minute') at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') from provider_slots where id = '$SLOT_B'")
 UNTIL=$(sql "select to_char((starts_at + interval '1 minute') at time zone 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') from provider_slots where id = '$SLOT_B'")
 : "${FROM:?no window}" "${UNTIL:?no window}"
-post /waitlist "{\"patient_id\": \"$WAITER\", \"window_start\": \"$FROM\", \"window_end\": \"$UNTIL\"}"   # 201, "status":"active"
+# No Idempotency-Key: the waitlist ignores it, so re-running this line adds another entry.
+curl -s -X POST http://localhost:8000/waitlist -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d "{\"patient_id\": \"$WAITER\", \"window_start\": \"$FROM\", \"window_end\": \"$UNTIL\"}"   # 201, "status":"active"
 
 # Cancel the replacement: 200 with the appointment, the slot freed in the same transaction.
 curl -s -X POST http://localhost:8000/appointments/$NEW/cancel -H "Authorization: Bearer $TOKEN" \

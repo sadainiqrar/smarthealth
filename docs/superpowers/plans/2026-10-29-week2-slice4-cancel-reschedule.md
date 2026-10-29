@@ -1,5 +1,7 @@
 # Week 2 Slice 4 — Cancel, Reschedule and Waitlist Implementation Plan
 
+> **Extended after review.** The tasks below are the plan as written. Review findings then added work from `8dfb4e4` on, which this plan does not describe: `8dfb4e4` migration 0004, at most one live replacement per appointment; `9aedf86` `complete_reschedule` knowing its replacement and checking it before releasing the old slot; `74f5def` a reschedule's new appointment reads as pending, not 404, after the 202; `0b85058` minor findings on waitlist promotion and reschedule ids; `b14390c` the chain guard (`require_reschedule_settled`); `3e6a950` a checked-in predecessor settles that guard; and `bfbd840` the concurrent-reschedule test's outcomes. `docs/ARCHITECTURE.md` and `docs/PRD.md` (D-5, R-17 to R-22) describe the result.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Cancellation and reschedule as first-class flows (CLAUDE.md): cancel releases the slot in the same transaction as the appointment change, stops the visit timer, runs the refund stand-in and promotes a waitlisted patient onto the freed slot; reschedule books the new slot **before** releasing the old one (D-14).
