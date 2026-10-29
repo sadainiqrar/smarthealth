@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.core.errors import InvalidCredentials, PermissionDenied
 from app.modules.identity.models import UserRole
@@ -26,6 +27,17 @@ from app.settings import Settings, get_settings
 #: Built fresh per raise rather than shared as a module-level singleton: an exception
 #: instance accumulates traceback state, and one reused across requests is a leak.
 _UNAUTHORISED_DETAIL = "missing or invalid credentials"
+
+
+#: Declared for the OpenAPI schema only: it gives `/docs` its Authorize button and puts
+#: the bearer requirement on every gated route. `auto_error=False`, and its result is
+#: ignored, because the scheme must not decide anything -- with `auto_error=True` a
+#: missing header would be FastAPI's own 401/403 `{"detail": ...}`, the envelope R-6
+#: removed. `dependency` below still reads and judges the header itself.
+BEARER = HTTPBearer(
+    auto_error=False, scheme_name="BearerAuth", bearerFormat="JWT",
+    description="The `access_token` from `POST /auth/login`.",
+)
 
 
 def get_token_settings() -> Settings:
@@ -44,7 +56,8 @@ def require_role(*allowed: UserRole) -> Callable[..., TokenClaims]:
     permitted = frozenset(allowed)
 
     def dependency(
-        request: Request, settings: Settings = Depends(get_token_settings)
+        request: Request, settings: Settings = Depends(get_token_settings),
+        _schema: HTTPAuthorizationCredentials | None = Depends(BEARER),
     ) -> TokenClaims:
         header = request.headers.get("Authorization", "")
         scheme, _, token = header.partition(" ")

@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 44 |
-| contract | 5 |
+| Total cases | 45 |
+| contract | 6 |
 | integration | 25 |
 | unit | 5 |
 | workflow | 9 |
 | P0 | 26 |
-| P1 | 18 |
+| P1 | 19 |
 | declarative | 1 |
-| impl-backed | 43 |
+| impl-backed | 44 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -57,6 +57,7 @@
 | sys-007-every-rejection-uses-one-error-envelope | contract | P0 | impl | PART-A-OBS-1 | An authorisation rejection answers the same {error, detail} shape as every other failure |
 | sys-008-every-workflow-is-registered-and-sandbox-safe | unit | P0 | impl | PART-A-NFR-2 | Every Temporal workflow and activity in app/ is registered, and every registered workflow passes the sandbox |
 | sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |
+| sys-010-swagger-can-authorise-every-gated-route | contract | P1 | impl | PART-A-NFR-8 | Every role-gated route declares the bearer scheme in OpenAPI; login and health declare none |
 | vst-001-a-second-check-in-is-a-conflict | integration | P0 | impl | PART-A-FR-3 | A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted |
 | vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes, and the database's answer is the workflow's result |
 | vst-003-pre-visit-bookings-still-replay | workflow | P0 | impl | PART-A-NFR-2 | A booking that was in flight before the visit slice deployed still replays against the new workflow code |

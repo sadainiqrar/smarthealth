@@ -269,7 +269,7 @@ documentation generated from the route definitions and response models:
 
 | URL | What it is |
 | --- | --- |
-| <http://localhost:8000/docs> | Swagger UI — authorise once, then execute any endpoint against the running system |
+| <http://localhost:8000/docs> | Swagger UI — get a token from `POST /auth/login`, paste its `access_token` into **Authorize** (`BearerAuth`), then execute any endpoint against the running system |
 | <http://localhost:8000/redoc> | ReDoc — a reference-style read of the same schema |
 | <http://localhost:8000/openapi.json> | The raw OpenAPI schema |
 

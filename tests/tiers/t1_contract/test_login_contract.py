@@ -49,15 +49,15 @@ async def test_login_is_not_behind_an_auth_gate(api_client):
 
 
 async def test_login_is_published_in_the_openapi_schema(api_client):
-    """The route is mounted and documented, not merely reachable by accident.
+    """The route is mounted and documented, not merely reachable by accident -- and,
+    being how a token is obtained, it declares no security requirement.
 
-    This deliberately does not assert the absence of a `security` requirement:
-    `require_role` is a plain dependency that reads the header off the `Request`
-    rather than a FastAPI security scheme, so it contributes nothing to the schema
-    and *every* route in this application — guarded or not — omits `security`.
-    Such an assertion would pass whether or not the route were public, which is
-    why the gate is proven behaviourally above instead.
+    That absence means something now: `require_role` also depends on the `BearerAuth`
+    scheme, so every gated route carries `security` in the schema
+    (test_openapi_security.py). Before that, every route omitted it, gated or not, and
+    this assertion would have passed either way.
     """
     response = await api_client.get("/openapi.json")
     assert response.status_code == 200
-    assert "post" in response.json()["paths"]["/auth/login"]
+    login = response.json()["paths"]["/auth/login"]["post"]
+    assert "security" not in login

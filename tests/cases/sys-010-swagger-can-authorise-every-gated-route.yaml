@@ -1,0 +1,14 @@
+id: sys-010-swagger-can-authorise-every-gated-route
+title: "Every role-gated route declares the bearer scheme in OpenAPI; login and health declare none"
+requirement: [PART-A-NFR-8]
+tier: contract
+priority: P1
+status: ready
+# `require_role` read the Authorization header by hand, so OpenAPI had no security
+# scheme and Swagger UI no Authorize button, while the README promised "authorise once,
+# then execute any endpoint". It now also depends on HTTPBearer(auto_error=False) --
+# schema only; the header is still parsed and judged by require_role, so the 401/403
+# envelope (test_authz.py, sys-007) is unchanged. The test asserts a bearer scheme in
+# components.securitySchemes, that POST /appointments and other gated routes list it,
+# and that /auth/login, /health and /ready do not.
+impl: "tests/tiers/t1_contract/test_openapi_security.py::test_a_gated_route_requires_the_bearer_scheme"
