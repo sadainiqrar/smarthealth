@@ -311,6 +311,19 @@ curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json
 
 `--build` matters: without it compose reuses an existing image and runs old code.
 
+**Or run the API and worker on the host** against the infrastructure containers alone —
+handy for a debugger. `Settings` defaults to the dev stack's ports on `localhost` and its
+`smarthealth` credentials; a different stack needs `SMARTHEALTH_POSTGRES_PORT` and friends
+(every variable is in `.env.example`, which `cp .env.example .env` turns into config). Stop
+the `app` profile's `app` and `worker` first, or they share the task queue and port 8000:
+
+```bash
+docker compose -f docker-compose.infra.yml up -d --wait     # infrastructure only, no profile
+python -m alembic upgrade head
+python -m app.worker                                        # terminal 1
+uvicorn app.main:app --port 8000                            # terminal 2
+```
+
 A `--role patient` login also needs linking to its patient record before it can read its own
 data: `python -m app.cli link-patient --email … --mrn …`, described under
 [Frontend](#frontend).
@@ -392,6 +405,16 @@ a new `KEY`: the same key with a different slot is a 422, and `$APPOINTMENT` sta
 `booking_requested`, `slot_claimed`, `confirmed` — is in Mongo, and the workflow's history
 (`booking-<appointment_id>`) is in Temporal.
 
+**Seeing a workflow.** The `app` profile runs Temporal's web UI at <http://localhost:8080>
+(`TEMPORAL_UI_PORT` to move it): search for the workflow id — `booking-<id>`, `visit-<id>`,
+`cancel-<id>`, `reschedule-<id>` — for its every step, retry and failure. Without a browser,
+the same history from the CLI inside the Temporal container:
+
+```bash
+docker compose -f docker-compose.infra.yml exec temporal \
+  temporal workflow show -w booking-$APPOINTMENT --address temporal:7233
+```
+
 **Run a visit.** Continue from the booking above once `$APPOINTMENT` reads `confirmed`.
 Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
 provider login `a.osei@medinova.example` (same password as the other seeded logins) can
@@ -422,7 +445,8 @@ the grace setting (default 15 minutes; only the `worker` process reads it: set
 `NO_SHOW_GRACE_MINUTES` on the compose command line, e.g.
 `NO_SHOW_GRACE_MINUTES=1 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait worker`,
 or `SMARTHEALTH_NO_SHOW_GRACE_MINUTES` for a host-run worker)
-and its workflow, `visit-<appointment_id>`, ends `no_show` in Temporal. The slot you
+and its workflow, `visit-<appointment_id>`, ends `no_show` in Temporal (see *Seeing a
+workflow*, above). The slot you
 booked is in the future, so you will not see that happen in a demo without waiting; the test
 `test_nobody_checking_in_becomes_a_no_show_on_the_real_timer` runs it against a real
 timer with a one-second slot.

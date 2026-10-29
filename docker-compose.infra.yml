@@ -98,6 +98,20 @@ services:
       timeout: 12s
       retries: 8
 
+  temporal-ui:
+    # Temporal's web UI: every workflow's history and state (booking-<id>, visit-<id>,
+    # cancel-<id>, reschedule-<id>) at http://localhost:8080. Read-only use; nothing in the
+    # application depends on it.
+    profiles: ["app"]
+    image: temporalio/ui:2.31.2
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports: ["${TEMPORAL_UI_PORT:-8080}:8080"]
+    depends_on:
+      temporal:
+        condition: service_healthy
+
   frontend:
     # The demo client: nginx serving the built SPA and proxying /api to `app`.
     profiles: ["app"]
