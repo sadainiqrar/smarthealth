@@ -83,12 +83,12 @@ async def start_booking(client: Client, request: BookingRequest, *, task_queue: 
         raise ServiceUnavailable("the scheduling service is unavailable") from exc
     # Checked after every start, not only on WorkflowAlreadyStartedError: under
     # USE_EXISTING a repeat while the first still runs returns normally.
-    if await _started_fingerprint(client, workflow_id) not in (fingerprint, None):
+    if await started_fingerprint(client, workflow_id) not in (fingerprint, None):
         raise Unprocessable("Idempotency-Key reused with a different request")
     return workflow_id
 
 
-async def _started_fingerprint(client: Client, workflow_id: str) -> str | None:
+async def started_fingerprint(client: Client, workflow_id: str) -> str | None:
     """The fingerprint the workflow was started with. None for a workflow started
     before fingerprints existed, which is accepted rather than refused."""
     try:
