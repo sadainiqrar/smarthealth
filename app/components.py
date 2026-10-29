@@ -36,6 +36,10 @@ _SCHEDULING_ACTIVITIES = (
     SchedulingActivities.fail_booking,
     SchedulingActivities.deadline,
     SchedulingActivities.no_show,
+    SchedulingActivities.refund,
+    SchedulingActivities.reschedule_complete,
+    SchedulingActivities.waitlist_candidates,
+    SchedulingActivities.waitlist_fulfil,
 )
 
 

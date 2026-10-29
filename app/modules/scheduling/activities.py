@@ -31,7 +31,12 @@ from app.core.clock import Clock
 from app.core.errors import DomainError
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.scheduling import service
-from app.modules.scheduling.contracts import BookingRequest, VisitRequest
+from app.modules.scheduling.contracts import (
+    BookingRequest,
+    FollowUpRequest,
+    RescheduleRequest,
+    VisitRequest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +98,16 @@ class SchedulingActivities:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         patient_id = parse_id(request.patient_id, "patient_id")
         slot_id = parse_id(request.slot_id, "slot_id")
+        rescheduled_from_id = (
+            parse_id(request.rescheduled_from_id, "rescheduled_from_id")
+            if request.rescheduled_from_id is not None else None
+        )
         async with self._unit_of_work() as session:
             await service.create_pending(
                 session, self._audit, appointment_id=appointment_id,
                 patient_id=patient_id, slot_id=slot_id,
                 reason=request.reason, actor_user_id=request.actor_user_id,
+                rescheduled_from_id=rescheduled_from_id,
             )
 
     @activity.defn(name="booking.validate_booking")
@@ -176,3 +186,46 @@ class SchedulingActivities:
                 actor_user_id="system:visit-workflow",
             )
         return outcome.value
+
+    @activity.defn(name="cancel.refund")
+    async def refund(self, request: FollowUpRequest) -> None:
+        """Stand-in: logs. Week 3 issues the refund; a decline there must not be retried
+        blindly, and a second call must not refund twice (key it on the appointment)."""
+        logger.info(
+            "refund issued (stand-in)", extra={"appointment_id": request.appointment_id}
+        )
+
+    @activity.defn(name="reschedule.complete")
+    async def reschedule_complete(self, request: RescheduleRequest) -> dict[str, str | None]:
+        """`{"outcome": "rescheduled" | "superseded", "released_slot_id": str | None}` --
+        JSON-friendly, so the default converter round-trips it. The slot id is what the
+        workflow offers the waitlist."""
+        old_appointment_id = parse_id(request.old_appointment_id, "old_appointment_id")
+        async with self._unit_of_work() as session:
+            result = await service.complete_reschedule(
+                session, self._audit, old_appointment_id=old_appointment_id,
+                actor_user_id=request.actor_user_id,
+            )
+        return {
+            "outcome": result.outcome,
+            "released_slot_id": (
+                str(result.released_slot_id) if result.released_slot_id else None
+            ),
+        }
+
+    @activity.defn(name="waitlist.candidates")
+    async def waitlist_candidates(self, slot_id: str) -> list[list[str]]:
+        """`[[entry_id, patient_id], ...]`, oldest first, as strings."""
+        parsed = parse_id(slot_id, "slot_id")
+        async with self._unit_of_work() as session:
+            candidates = await service.waitlist_candidates(session, slot_id=parsed)
+        return [[str(entry_id), str(patient_id)] for entry_id, patient_id in candidates]
+
+    @activity.defn(name="waitlist.fulfil")
+    async def waitlist_fulfil(self, entry_id: str) -> None:
+        parsed = parse_id(entry_id, "entry_id")
+        async with self._unit_of_work() as session:
+            await service.fulfil_waitlist_entry(
+                session, self._audit, entry_id=parsed,
+                actor_user_id="system:waitlist",
+            )

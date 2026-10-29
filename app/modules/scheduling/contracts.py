@@ -17,6 +17,28 @@ class BookingRequest:
     slot_id: str
     actor_user_id: str | None
     reason: str | None = None
+    #: Set only for the new appointment of a reschedule. Last and defaulted, so a request
+    #: recorded in a workflow history before it existed still decodes.
+    rescheduled_from_id: str | None = None
+
+
+@dataclass(frozen=True)
+class FollowUpRequest:
+    """What the cancel follow-up needs to know."""
+
+    appointment_id: str  # the cancelled (or rescheduled-away) appointment
+    slot_id: str | None  # the slot it released, if any
+    actor_user_id: str | None
+
+
+@dataclass(frozen=True)
+class RescheduleRequest:
+    old_appointment_id: str
+    new_appointment_id: str
+    patient_id: str
+    new_slot_id: str
+    actor_user_id: str | None
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
