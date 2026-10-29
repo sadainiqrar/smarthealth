@@ -14,7 +14,8 @@ export interface Slot {
 }
 export interface Appointment {
   id: string; status: string; in_progress: boolean; patient_id: string | null;
-  provider_id: string | null; slot_id: string | null; reason: string | null;
-  confirmed_at: string | null; created_at: string | null;
+  provider_id: string | null; slot_id: string | null;
+  starts_at: string | null; // the slot's start; null until a slot is claimed
+  reason: string | null; confirmed_at: string | null; created_at: string | null;
 }
 export interface BookingAccepted { appointment_id: string; status: string }

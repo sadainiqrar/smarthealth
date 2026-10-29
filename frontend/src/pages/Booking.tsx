@@ -27,6 +27,7 @@ export default function Booking() {
         <div className="card">
           <p>Status: <span className={`badge ${appt.status}`}>{appt.status}</span></p>
           {appt.confirmed_at && <p>Confirmed at {new Date(appt.confirmed_at).toLocaleString()}</p>}
+          {appt.starts_at && <p>Appointment time: {new Date(appt.starts_at).toLocaleString()}</p>}
           {appt.slot_id && <p>Slot: <code>{appt.slot_id}</code></p>}
           {appt.reason && <p>Reason: {appt.reason}</p>}
           {appt.status === "failed" && (

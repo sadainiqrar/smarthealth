@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import type { Role } from "./auth";
+import Appointments from "./pages/Appointments";
 import Book from "./pages/Book";
 import Booking from "./pages/Booking";
 import Login from "./pages/Login";
@@ -15,6 +16,7 @@ import "./styles.css";
 const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: "/patients", label: "Patients", roles: ["front_desk", "admin", "provider"] },
   { to: "/providers", label: "Providers", roles: ["patient", "provider", "front_desk", "admin"] },
+  { to: "/appointments", label: "Appointments", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/book", label: "Book", roles: ["patient", "front_desk", "admin"] },
 ];
 
@@ -54,6 +56,7 @@ function App() {
         <Route path="/" element={<Home />} />
         <Route path="/patients" element={<Patients />} />
         <Route path="/providers" element={<Providers />} />
+        <Route path="/appointments" element={<Appointments />} />
         <Route path="/book" element={<Book />} />
         <Route path="/bookings/:id" element={<Booking />} />
       </Route>

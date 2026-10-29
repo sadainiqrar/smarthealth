@@ -49,3 +49,11 @@ th { color: var(--muted); font-weight: 600; font-size: .85rem; }
 .badge.confirmed { background: #2e7d32; color: #fff; }
 .badge.failed { background: var(--err); color: #fff; }
 .badge.pending { background: #f9a825; color: #1c2230; }
+.badge.cancelled { background: #667085; color: #fff; }
+.badge.rescheduled { background: #6a1b9a; color: #fff; }
+.badge.completed { background: #00695c; color: #fff; }
+.badge.no_show { background: #e65100; color: #fff; }
+.filters { display: flex; gap: .75rem; flex-wrap: wrap; align-items: flex-end; margin-bottom: .5rem; }
+.filters select { padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font: inherit; color: inherit; }
+.cancel-form { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.cancel-form input { flex: 1; min-width: 160px; }
