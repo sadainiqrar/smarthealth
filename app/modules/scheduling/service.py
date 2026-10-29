@@ -126,6 +126,31 @@ async def _audit(
     )
 
 
+async def _lock_with_predecessor(
+    session: AsyncSession, appointment_id: uuid.UUID
+) -> tuple[Appointment | None, Appointment | None]:
+    """The appointment and the one it was rescheduled from, both locked, in ascending id
+    order -- the order `complete_reschedule` takes, so the two cannot deadlock. The link
+    is immutable, so reading it before the lock is safe; the statuses are read after."""
+    unlocked = await get_appointment(session, appointment_id)
+    if unlocked is None:
+        return None, None
+    ids = {appointment_id}
+    if unlocked.rescheduled_from_id is not None:
+        ids.add(unlocked.rescheduled_from_id)
+    locked = {i: await get_appointment(session, i, for_update=True) for i in sorted(ids)}
+    return locked[appointment_id], locked.get(unlocked.rescheduled_from_id)
+
+
+def require_reschedule_settled(predecessor: Appointment | None) -> None:
+    """An appointment whose predecessor is still `confirmed` is mid-reschedule:
+    `complete_reschedule` has not yet moved the old one out. Rescheduling or cancelling
+    it now could leave both confirmed (the live-replacement index only sees one link),
+    so it is refused until that step has run."""
+    if predecessor is not None and predecessor.status is AppointmentStatus.CONFIRMED:
+        raise Conflict("the reschedule that created this appointment is still completing")
+
+
 async def create_pending(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     patient_id: uuid.UUID, slot_id: uuid.UUID, reason: str | None,
@@ -145,6 +170,12 @@ async def create_pending(
     slot = await session.get(ProviderSlot, slot_id)
     if slot is None:
         raise NotFound(f"slot {slot_id} does not exist")
+    if rescheduled_from_id is not None:
+        # Rescheduling an appointment that is itself mid-reschedule (its own predecessor
+        # still confirmed) is refused here, under the locks, as the router's precheck
+        # cannot see a reschedule that starts in the window after it.
+        _, predecessor = await _lock_with_predecessor(session, rescheduled_from_id)
+        require_reschedule_settled(predecessor)
     try:
         result = await session.execute(
             insert(Appointment)
@@ -528,7 +559,10 @@ async def cancel_appointment(
     `fail_booking` leaves it alone (spec 4.3).
 
     The audit entry goes to Mongo before the caller commits (PRD R-1), as everywhere."""
-    appointment = await _require(session, appointment_id)
+    appointment, predecessor = await _lock_with_predecessor(session, appointment_id)
+    if appointment is None:
+        raise NotFound(f"appointment {appointment_id} does not exist")
+    require_reschedule_settled(predecessor)
     visit = await get_visit(session, appointment_id)
     require_cancellable(appointment.status, visit is not None)
     require_transition(appointment.status, AppointmentStatus.CANCELLED)

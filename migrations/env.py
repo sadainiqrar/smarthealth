@@ -28,8 +28,11 @@ target_metadata = Base.metadata
 #: proposes dropping them on every run - verified to happen even for a database built
 #: by `Base.metadata.create_all()` with no migration involved.
 #:
-#: The partial index: a `WHERE`-clause index has no SQLAlchemy metadata equivalent, so
-#: autogenerate always sees it as unmanaged.
+#: `ux_appointments_live_slot`: a partial (`WHERE`) unique index, excluded for historical
+#: reasons -- it predates `ux_appointments_live_reschedule`, which is declared in the model
+#: with `Index(..., postgresql_where=...)` and is tracked by `alembic check`. SQLAlchemy can
+#: model a partial index, so this one could be declared the same way and dropped from
+#: `UNMANAGED_INDEXES`; that has simply not been done.
 #:
 #: Each of these is covered by an integration test that proves the database actually
 #: enforces it, so excluding them from the diff loses no real coverage - and keeps

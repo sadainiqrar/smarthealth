@@ -10,7 +10,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.core.clock import Clock
 from app.core.errors import Conflict, NotFound
@@ -335,7 +335,18 @@ async def test_cancelling_the_new_appointment_first_keeps_the_old_one(factory):
     audit = RecordingAudit()
     b, appointment_id = await confirmed_appointment(factory, audit)
     new_id, new_slot = await confirmed_replacement(factory, audit, b, appointment_id)
-    await _cancel(factory, audit, new_id)
+    # Written directly: `cancel_appointment` now refuses to cancel an appointment whose
+    # reschedule is still completing, but `complete_reschedule` must hold on its own.
+    async with factory() as session:
+        await session.execute(
+            update(Appointment).where(Appointment.id == new_id)
+            .values(status=AppointmentStatus.CANCELLED)
+        )
+        await session.execute(
+            update(ProviderSlot).where(ProviderSlot.id == new_slot)
+            .values(status=SlotStatus.FREE)
+        )
+        await session.commit()
     events = len(audit.events)
     version = (await _slot(factory, b.slot_id)).version
 
@@ -423,3 +434,47 @@ async def test_a_failed_replacement_does_not_block_another(factory):
     second = await _replacement(factory, audit, b, old_id, starts_in=timedelta(days=3))
 
     assert (await _appointment(factory, second)).rescheduled_from_id == old_id
+
+
+# --- a reschedule still completing blocks the appointment it created ----------------------
+
+MID_RESCHEDULE = "the reschedule that created this appointment is still completing"
+
+
+async def test_an_appointment_cannot_be_cancelled_while_its_reschedule_is_completing(factory):
+    """O -> N, and N is cancelled before `complete_reschedule(O, N)` has run: refused, so O
+    is never left confirmed beside a cancelled N. Allowed once O has been moved out.
+    Kills: the predecessor check removed from `cancel_appointment`."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    new_id, _ = await confirmed_replacement(factory, audit, b, old_id)
+
+    with pytest.raises(Conflict, match=MID_RESCHEDULE):
+        await _cancel(factory, audit, new_id)
+    assert (await _appointment(factory, new_id)).status is AppointmentStatus.CONFIRMED
+
+    await _complete_reschedule(factory, audit, old_id, new_id)
+    assert (await _cancel(factory, audit, new_id)).status is AppointmentStatus.CANCELLED
+
+
+async def test_an_appointment_cannot_be_rescheduled_while_its_reschedule_is_completing(factory):
+    """O -> N, then N -> N2 before `complete_reschedule(O, N)`: the second booking's insert
+    is a Conflict (so it compensates), because N2 replacing N would not stop O staying
+    confirmed. Allowed after completion. Kills: the predecessor check removed from
+    `create_pending`."""
+    audit = RecordingAudit()
+    b, old_id = await confirmed_appointment(factory, audit)
+    new_id, _ = await confirmed_replacement(factory, audit, b, old_id)
+
+    with pytest.raises(Conflict, match=MID_RESCHEDULE):
+        await _replacement(factory, audit, b, new_id, starts_in=timedelta(days=3))
+    async with factory() as session:
+        assert not list(
+            await session.scalars(
+                select(Appointment.id).where(Appointment.rescheduled_from_id == new_id)
+            )
+        )
+
+    await _complete_reschedule(factory, audit, old_id, new_id)
+    second = await _replacement(factory, audit, b, new_id, starts_in=timedelta(days=4))
+    assert (await _appointment(factory, second)).rescheduled_from_id == new_id

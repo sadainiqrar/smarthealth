@@ -359,6 +359,25 @@ async def test_only_a_confirmed_appointment_can_be_rescheduled(
     assert temporal.starts == []
 
 
+async def test_an_appointment_whose_own_reschedule_is_completing_is_a_409(
+    api_client, temporal, world
+):
+    """Its predecessor is still `confirmed`, so `complete_reschedule` has not run: a second
+    reschedule now could leave both confirmed."""
+    predecessor = uuid.uuid4()
+    world["appointment"] = _appointment(
+        AppointmentStatus.CONFIRMED, rescheduled_from_id=predecessor
+    )
+    world["new_row"] = _appointment(AppointmentStatus.CONFIRMED, id=predecessor)
+    response = await api_client.post(
+        f"/appointments/{APPOINTMENT}/reschedule", json=RESCHEDULE_BODY,
+        headers=auth(UserRole.ADMIN),
+    )
+    assert response.status_code == 409
+    assert "still completing" in response.text
+    assert temporal.starts == []
+
+
 async def test_a_checked_in_patient_cannot_be_rescheduled(api_client, temporal, world):
     world["visit"] = SimpleNamespace(appointment_id=APPOINTMENT)
     response = await api_client.post(

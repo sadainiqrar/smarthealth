@@ -276,6 +276,9 @@ async def reschedule_appointment(
                 f"a {old.status.value} appointment cannot be rescheduled; only a confirmed "
                 "one can"
             )
+        if old.rescheduled_from_id is not None:
+            predecessor = await service.get_appointment(session, old.rescheduled_from_id)
+            service.require_reschedule_settled(predecessor)
     await start_reschedule(
         temporal,
         RescheduleRequest(
