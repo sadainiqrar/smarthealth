@@ -294,7 +294,7 @@ async def fail_booking(
 # check-in "worked". `mark_no_show` is the timer's activity, and idempotent like booking.
 # All of them lock the appointment row first (`_require`), so a check-in and the no-show
 # timer serialise on it. None writes a slot: a completed or no-show appointment's slot is
-# in the past and stays `booked` (spec 2, the R-2 table).
+# never freed (normally already in the past) and stays `booked` (spec 2, the R-2 table).
 
 
 def _visit_snapshot(visit: Visit) -> dict[str, object]:
@@ -406,7 +406,7 @@ async def complete_visit(
     """in_progress -> completed, and the appointment confirmed -> completed, together.
     Strict: completing twice is a Conflict (the appointment is no longer `confirmed`).
 
-    No slot write: the slot is in the past and stays `booked` (R-2)."""
+    No slot write: completion never frees a slot (normally already in the past) (R-2)."""
     appointment = await _require(session, appointment_id)
     visit = await get_visit(session, appointment_id, for_update=True)
     check_visit_action(VisitAction.COMPLETE, appointment.status, visit.status if visit else None)

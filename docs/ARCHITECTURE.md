@@ -388,7 +388,7 @@ actually happened (`Visit`), and who to promote when a slot frees up (`WaitlistE
 | File | Responsibility |
 | --- | --- |
 | `models.py` | `ProviderSlot` and `SlotStatus` (moved here from `providers`, PRD D-9), `Appointment`, `Visit`, `WaitlistEntry` and their status enums |
-| `state.py` | `APPOINTMENT_TRANSITIONS` as data, `can_transition`, `require_transition` (raises `Conflict`); and for visits `VisitAction`, `VISIT_PRECONDITIONS` / `VISIT_RESULT` as data, `require_visit_action` (`state.py:300`) and `NoShowOutcome` (`state.py:265`). Pure; every status write asks it first |
+| `state.py` | `APPOINTMENT_TRANSITIONS` as data, `can_transition`, `require_transition` (raises `Conflict`); and for visits `VisitAction`, `VISIT_PRECONDITIONS` / `VISIT_RESULT` as data, `require_visit_action` (`state.py:75`) and `NoShowOutcome` (`state.py:40`). Pure; every status write asks it first |
 | `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment` — the visit operations (`service.py:288` on): the **strict** staff actions `check_in`, `mark_seen`, `complete_visit` (called only by the endpoints), the **idempotent** timer operations `no_show_deadline` and `mark_no_show` (called only by activities), and the read `get_visit` — and the read `list_free_slots` (`service.py:457`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
 | `contracts.py` | `BookingRequest` and `VisitRequest`, frozen dataclasses of strings passed between a workflow and its activities, and `visit_workflow_id` (`visit-<appointment_id>`). Pure, so the workflow sandbox imports it directly |
 | `activities.py` | `SchedulingActivities`: seven `booking.*` and two `visit.*` activities (`deadline`, `no_show`), each one service call in its own session and transaction; domain errors become non-retryable `ApplicationError`s. Built with the no-show grace, which has no default here — `Settings` is its only source. `billing_precheck` and `schedule_reminders` are stand-ins until Week 3 |
@@ -485,7 +485,7 @@ sequenceDiagram
     end
 ```
 
-**The constant-time path.** `_DUMMY_PASSWORD_HASH` (`app/modules/identity/service.py:25`) is
+**The constant-time path.** `_DUMMY_PASSWORD_HASH` (`app/modules/identity/service.py:26`) is
 a real argon2 hash of a throwaway string, verified against whenever no user matches.
 
 The timing oracle it defeats is specific. An identical error message is not sufficient,
@@ -495,8 +495,8 @@ because `or` short-circuits: written the obvious way —
 trivially readable over a network, so response time alone would enumerate which email
 addresses are registered, defeating the identical message entirely. Instead
 `verify_password` runs exactly once on every path and its result is consulted afterwards
-(`app/modules/identity/service.py:49-53`). The rationale is written out at
-`service.py:38-47`.
+(`app/modules/identity/service.py:59-63`). The rationale is written out at
+`service.py:39-48`.
 
 Two supporting details:
 
@@ -507,7 +507,7 @@ Two supporting details:
   `iat` against the wall clock with zero leeway, and a few seconds of clock skew between
   issuer and validator would reject a good token. `exp` is still fully enforced.
 
-`is_active` is read once, at login (`service.py:52`). A deactivated user therefore keeps
+`is_active` is read once, at login (`service.py:62`). A deactivated user therefore keeps
 access until their token expires — up to `jwt_expiry_minutes`, currently 60. That is a
 deliberate deferral, recorded in the management-APIs spec §11: closing it means a database
 lookup on every request, which trades away exactly the statelessness the JWT was chosen for.
@@ -909,7 +909,7 @@ sequenceDiagram
 
 **The write is the check.** `service.check_in` takes the appointment row lock first
 (`_require`, `service.py:91`), reads the visit under its own lock, and asks
-`require_visit_action` (`state.py:300`) whether the action is legal *now* — so there is no
+`require_visit_action` (`state.py:75`) whether the action is legal *now* — so there is no
 separate precheck to go stale between the check and the write. The `ON CONFLICT DO NOTHING`
 (`service.py:370-377`) is a second gate behind the check: if anything ever inserted a visit
 without the lock, the unique `appointment_id` still allows one, and zero rows affected is a
@@ -921,7 +921,7 @@ reporting, and a no-op would tell staff the second check-in "worked".
 (`router.py:144`, `service.mark_seen`) sets `seen_at` and the visit `in_progress`;
 `POST /appointments/{id}/complete` (`router.py:160`, `service.complete_visit`) sets
 `completed_at`, the visit `completed` *and* the appointment `completed` in one transaction,
-and writes no slot — the slot is in the past and stays `booked` (PRD R-2). Neither signals
+and writes no slot — completion never frees a slot (it is normally already in the past, and stays `booked`; PRD R-2). Neither signals
 Temporal. Both are gated to `provider` and `admin`; check-in to `front_desk` and `admin`.
 `GET /appointments/{id}/visit` (`router.py:176`) reads: the owning patient, any provider and
 front desk, and admin; another patient's appointment is a 404, like `GET /appointments/{id}`,
@@ -929,10 +929,10 @@ and an appointment with no visit yet is a 404 too.
 
 **Why the signal cannot fail the request.** By the time it is sent the check-in is committed.
 Failing the response would tell staff a recorded check-in failed — and their retry would then
-be a 409. So `notify_checked_in` (`visits.py:197`) swallows every failure: `NOT_FOUND`
+be a 409. So `notify_checked_in` (`visits.py:35`) swallows every failure: `NOT_FOUND`
 (the visit already closed, or a booking confirmed before slice 3 has no visit workflow) at
 INFO, an `RPCError`, a `RuntimeError` from a lazy client that cannot connect, and a timeout
-of `NOTIFY_TIMEOUT` (5 s, `visits.py:194`) at WARNING. The bound exists because connecting a
+of `NOTIFY_TIMEOUT` (5 s, `visits.py:32`) at WARNING. The bound exists because connecting a
 lazy client to a blackholed host takes tens of seconds in the SDK. The contract tier proves a
 failing Temporal still answers 200 with one commit
 (`test_temporal_failing_after_the_commit_still_answers_200`); no test exercises the 5-second
@@ -1045,7 +1045,7 @@ flowchart TD
 #### The steps, as built
 
 Each activity opens its own session, makes one service call and commits
-(`_unit_of_work`, `activities.py:63-85`), so a retry re-runs exactly one unit of work
+(`_unit_of_work`, `activities.py:67-89`), so a retry re-runs exactly one unit of work
 against an operation that detects it already ran.
 
 | # | Activity | Service call | Where | Failure |
@@ -1237,7 +1237,7 @@ flowchart TD
 | Deadline | `workflows.py:141-146`, `activities.py:157-166`, `service.no_show_deadline` (`service.py:337`) | The `visit.deadline` activity returns the slot's end plus `Settings.no_show_grace_minutes` (default 15, `ge=0`, `settings.py:88`) as an ISO string. The worker passes the grace in as a `timedelta` (`app/worker.py:82`); `SchedulingActivities` has no default of its own, so a second default cannot disagree with `Settings` |
 | Wait | `workflows.py:147-155` | Only if neither flag is set **and** `deadline - workflow.now()` is positive: `wait_condition(…, timeout=remaining)`, with `TimeoutError` caught. Past the deadline it never waits — a zero-length wait would raise even though the condition holds, which is correction (2) above |
 | Flags | `workflows.py:128-134,156-159` | `checked_in` → `"checked_in"`; `cancel` → `"cancelled"`. The handlers only set flags; no I/O happens in one |
-| Ask the database | `workflows.py:160-162`, `activities.py:168-178`, `service.mark_no_show` (`service.py:425-454`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:265`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
+| Ask the database | `workflows.py:160-162`, `activities.py:168-178`, `service.mark_no_show` (`service.py:425-454`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:40`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
 
 The `checked_in` signal is a **hint**, not the record. It lets the timer finish early; if it
 is lost or late, the timer still fires and `mark_no_show` finds the visit row. Because
@@ -1338,8 +1338,8 @@ individually wrong.
 
 Therefore: **slot status must agree with appointment status, written in one transaction**
 — PRD R-2 as restated in Week 2 (spec §2). Cancel and reschedule return the slot to `free`;
-completion and no-show leave it `booked`, because that slot is in the past and must not be
-offered again. (The Week 1 wording, "all four paths must release the slot", was wrong for
+completion and no-show leave it `booked`: the slot is normally already in the past, and
+neither path ever frees a slot. (The Week 1 wording, "all four paths must release the slot", was wrong for
 those two.) Booking's half is built — `confirm_booking` (`held → booked`) and the
 compensating `fail_booking` (`held → free`) in `app/modules/scheduling/service.py` — and the
 cancel and reschedule paths join them there in slice 4. The visit paths needed no slot write

@@ -1,11 +1,15 @@
 # Week 2 Slice 3 — Visit Workflow Implementation Plan
 
-> **Superseded in part (2026-10-29).** Tasks 4, 5 and 7 below were built as written
-> (`ee60bc9`, `e572237`, `b443ffa`) and then replaced after review by the synchronous
-> design in spec D-12 as amended (§2, §4.2): the database records staff actions in the
+> **Superseded in part (2026-10-29).** Tasks 2–5 and 7 below were built as written
+> (`1221473`, `bfe4073`, `ee60bc9`, `e572237`, `b443ffa`) and then reworked after review.
+> Beyond the synchronous design in spec D-12 as amended (§2, §4.2): the database records staff actions in the
 > request's own transaction (200, not 202), and `VisitWorkflow` is only the durable
 > no-show timer. The signal-with-start helper (`signal_visit`) and the signal-driven
-> workflow described in those tasks no longer exist. The commits that implement the
+> workflow described in those tasks no longer exist. Also changed from what the tasks
+> say: the visit service operations are strict (a repeat is a `Conflict`) where Task 2
+> makes them idempotent, except the timer's `mark_no_show`; `mark_no_show` returns a
+> `NoShowOutcome`, not a bool; there are two `visit.*` activities, not five; `VisitSignal`
+> is gone; and the cases added in `7839bc9` were re-pointed in `b9ed7df`. The commits that implement the
 > amended design: `a31e284` (the three-way no-show outcome), `b9ed7df` (actions written
 > in the request, workflow reduced to its timer), `70cec30` (`REJECT_DUPLICATE` on the
 > child start), `75cc2b2` (the grace validated once, in `Settings`), `2746aab` (the no-show

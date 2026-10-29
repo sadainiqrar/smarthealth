@@ -51,7 +51,7 @@ flowchart TB
     services -->|awaited audit write| mongo
     app -.-> redis
 
-    routers -->|"starts the booking<br/>workflow"| temporal
+    routers -->|"starts the booking<br/>workflow · signals check-in"| temporal
     temporal -->|"activities call the same services<br/>with no HTTP request"| services
     services -.-> kafka
     kafka -.-> celery
@@ -331,9 +331,10 @@ sql() { docker compose --profile app -f docker-compose.infra.yml exec -T postgre
 SLOT=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1")
 PATIENT=$(sql "select id from patients order by created_at limit 1")
 
+KEY=demo-$(date +%s)   # once per run: the same key with a different slot is a 422
 book() { curl -s -X POST http://localhost:8000/appointments \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: demo-1' \
+  -H "Idempotency-Key: $KEY" \
   -d "{\"patient_id\": \"$PATIENT\", \"slot_id\": \"$SLOT\"}"; }
 book    # 202 {"appointment_id":"…","status":"pending"}
 APPOINTMENT=$(book | python -c 'import json,sys; print(json.load(sys.stdin)["appointment_id"])')
@@ -347,8 +348,8 @@ booking whose row does not exist yet. A pending appointment that has a row reads
 `in_progress: false`.
 
 The second `book` is itself the idempotency demonstration: the same `Idempotency-Key` and
-body return the same `appointment_id` and book nothing new. (To book again, change the
-key: the same key with a different slot is a 422.) The appointment's audit trail —
+body return the same `appointment_id` and book nothing new. (To book again, generate
+a new `KEY`: the same key with a different slot is a 422, and `$APPOINTMENT` stays empty.) The appointment's audit trail —
 `booking_requested`, `slot_claimed`, `confirmed` — is in Mongo, and the workflow's history
 (`booking-<appointment_id>`) is in Temporal.
 
@@ -356,9 +357,12 @@ key: the same key with a different slot is a 422.) The appointment's audit trail
 Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
 provider login `a.osei@medinova.example` (same password as the other seeded logins) can
 do both. To use a login of your own instead, create one the way the admin was created above,
-with `--role provider`.
+with `--role provider`. If the stack was seeded earlier with a password you do not know,
+create your own logins with `python -m app.cli create-user --email … --password … --role front_desk`
+(and again with `--role provider`) and use those below.
 
 ```bash
+: "${APPOINTMENT:?booking failed}"
 login() { curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
   -d "{\"email\": \"$1\", \"password\": \"...\"}" \
   | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])'; }
@@ -372,7 +376,7 @@ act complete  $PROVIDER_TOKEN   # 200 {"status":"completed", "completed_at":"…
 
 curl -s http://localhost:8000/appointments/$APPOINTMENT/visit -H "Authorization: Bearer $TOKEN"
 curl -s http://localhost:8000/appointments/$APPOINTMENT       -H "Authorization: Bearer $TOKEN"
-# the appointment is now "completed"; its slot stays "booked" (a past slot is never freed)
+# the appointment is now "completed"; completion never frees a slot
 ```
 
 Each action is audited in Mongo with the acting user. The no-show side needs no request: a

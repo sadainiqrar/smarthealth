@@ -79,6 +79,7 @@ app/modules/scheduling/
     service.py      async DB operations; raise domain errors; callable from routers and activities
     activities.py   Temporal activities: own session, call one service function, commit
     workflows.py    BookAppointment, CancelAppointment, RescheduleAppointment, Visit
+    visits.py       notify_checked_in — the best-effort check-in signal sent after the request's commit
     schemas.py      request/response models
     router.py       HTTP surface (framework-bound)
 app/modules/patients/public.py   ensure_bookable_patient(), patient_id_for_user() (D-15)
@@ -110,7 +111,7 @@ PRD R-8 claims.
 **The single release path.** Slot status is written only in `scheduling/service.py`, each
 write in the same transaction as the appointment write that justifies it (the R-2 table):
 `claim_slot` (`free → held`), `confirm_booking` (`held → booked`) and `fail_booking`
-(`held → free`), joined by the cancel and visit paths as later slices add them there. The
+(`held → free`), joined by the cancel and reschedule paths (the visit paths write no slot) as later slices add them there. The
 meta-test (`tests/meta/test_slot_writes.py`) enforces the file, not a list of functions: it
 fails if any other code in `app/` writes `ProviderSlot.status` or `provider_slots.status`.
 
@@ -151,7 +152,7 @@ means the same key replays the failure, so retrying needs a new key.
 | 4 | `billing_precheck` (stand-in) | permanent if declined |
 | 5 | `schedule_reminders` (stand-in) | retryable |
 | 6 | `confirm` — appointment `confirmed`, `confirmed_at`; slot `booked` | retried **without limit** (idempotent): it may have committed before a transient failure, and giving up would end the workflow failed while the row says confirmed. A non-retryable `Conflict` still ends it |
-| 7 | start `visit-<appointment_id>` (the no-show timer, §4.2) — as built, a child with `ParentClosePolicy.ABANDON` so it outlives booking, and `REJECT_DUPLICATE` so it never reopens a closed visit; if `waitlist_entry_id` was given, mark that entry `fulfilled` | after `confirmed`, outside compensation; "already started" is ignored |
+| 7 | start `visit-<appointment_id>` (the no-show timer, §4.2) — as built, a child with `ParentClosePolicy.ABANDON` so it outlives booking, and `REJECT_DUPLICATE` so it never reopens a closed visit; if `waitlist_entry_id` was given, mark that entry `fulfilled` (**slice 4, not built**) | after `confirmed`, outside compensation; "already started" is ignored |
 
 Any failure from step 1 on runs `compensate_booking` (as built, `fail_booking`; step 1 is
 inside the compensated region because it may commit and still fail, and compensation no-ops
@@ -306,14 +307,14 @@ An appointment may move to `completed` only from `confirmed` with a visit in `in
 
 | Situation | Handling |
 | --- | --- |
-| Database/connection error in an activity | Propagates; Temporal retries with backoff (max 5 attempts, configurable) |
+| Database/connection error in an activity | Propagates; Temporal retries with backoff. Booking steps 1–5 are bounded (5 attempts, then the workflow compensates); `confirm`, the compensation and both visit activities retry without limit (`workflows.py`: `CONFIRM`, `COMPENSATION`, `VISIT_STEP`) |
 | Any `DomainError` (`Conflict`, `NotFound`, `Unprocessable`, …) in an activity | Converted to `ApplicationError(non_retryable=True)`; the workflow compensates at once |
 | Worker crash mid-workflow | Temporal replays the workflow on another worker; activities are idempotent so a re-run of a completed step changes nothing |
 | Worker crash mid-compensation | Same — compensation is idempotent |
 | Temporal unreachable at the API | 503 in the standard error envelope — including `GET` for an id with no row, which returns 503, not 404 |
 | Malformed id reaching an activity | `ApplicationError(type="InvalidRequest", non_retryable=True)` before the unit of work opens; never retried |
 | Workflow **terminated** (not cancelled) from the Temporal UI/CLI | Termination runs no workflow code, so compensation is skipped: a held slot and a `pending` row are stranded. Operational rule: **cancel, never terminate** — cancellation raises inside the workflow and compensates (verified on temporalio 1.34: a booking cancelled mid-`claim_slot` runs `fail_booking` and ends failed). A reconciler for stale `pending` rows is **deferred**; it is needed only if someone terminates a workflow (D-10) |
-| Signal for an illegal transition | Rejected synchronously at the endpoint (409); the activity re-checks and no-ops if it slips through |
+| Illegal visit action | 409 from the locked write in the request; nothing is written or signalled |
 
 Every appointment and visit transition is audited to Mongo with the same envelope Week 1
 uses, actor being the requesting user for HTTP-initiated steps and `system:<workflow>` for

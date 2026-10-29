@@ -1,4 +1,4 @@
-id: vst-001-a-visit-runs-check-in-to-complete
+id: vst-001-a-second-check-in-is-a-conflict
 title: "A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted"
 requirement: [PART-A-FR-3]
 tier: integration
