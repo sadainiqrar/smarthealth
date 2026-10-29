@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 40 |
+| Total cases | 42 |
 | contract | 5 |
-| integration | 21 |
+| integration | 23 |
 | unit | 5 |
 | workflow | 9 |
-| P0 | 23 |
-| P1 | 17 |
+| P0 | 24 |
+| P1 | 18 |
 | declarative | 1 |
-| impl-backed | 39 |
+| impl-backed | 41 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -35,9 +35,11 @@
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |
+| ops-004-the-cli-links-a-patient-login | integration | P1 | impl | PART-A-FR-1 | link-patient ties a patient login to its record, audited, so GET /patients/me then works |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |
+| pat-004-a-patient-lists-only-their-own-appointments | integration | P0 | impl | PART-A-FR-1 | A patient's appointment list is their own, newest slot first, and cannot be widened |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | rsc-001-a-reschedule-books-before-it-releases | workflow | P0 | impl | PART-A-FR-2 | A reschedule confirms the new appointment first, and only then releases the old slot |
 | rsc-002-a-failed-reschedule-leaves-the-original | workflow | P0 | impl | PART-A-NFR-2 | When the new booking fails, the old appointment is untouched and nothing is promoted |

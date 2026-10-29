@@ -1,0 +1,13 @@
+id: ops-004-the-cli-links-a-patient-login
+title: "link-patient ties a patient login to its record, audited, so GET /patients/me then works"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P1
+status: ready
+# Replaces the hand-run SQL UPDATE the README used to document for PRD R-5. The test runs
+# the command against a real database, asserts patients.user_id is set, one
+# patient/account_linked audit entry by system:cli exists, and that the login can then read
+# its record through GET /patients/me. Sibling tests in the same file prove the refusals:
+# unknown email or MRN, a non-patient login, a record or login already linked elsewhere,
+# and that linking the same pair twice writes no second audit entry.
+impl: "tests/tiers/t3_integration/test_cli.py::test_link_patient_links_the_login_audits_it_and_me_then_works"

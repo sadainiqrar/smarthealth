@@ -1,0 +1,14 @@
+id: pat-004-a-patient-lists-only-their-own-appointments
+title: "A patient's appointment list is their own, newest slot first, and cannot be widened"
+requirement: [PART-A-FR-1]
+tier: integration
+priority: P0
+status: ready
+# Closes the list half of PRD R-5. GET /appointments is forced to the caller's own patient
+# record server-side, so naming another patient_id is a 403 (never a silent substitution)
+# and a login with no linked record is a 404. The test seeds one patient with three
+# appointments (confirmed tomorrow, cancelled in three days, and a pending one with no slot)
+# beside another patient's, then asserts the patient sees exactly their three, ordered
+# cancelled, confirmed, slot-less, each carrying its slot's starts_at. Dropping the patient
+# scoping, or NULLS LAST on the ordering, fails it.
+impl: "tests/tiers/t3_integration/test_appointment_list_api.py::test_a_patient_sees_only_their_own_newest_slot_first_and_slotless_last"
