@@ -368,6 +368,15 @@ async def _ensure_patient_is_free(
         )
 
 
+async def slot_provider_id(session: AsyncSession, slot_id: uuid.UUID) -> uuid.UUID | None:
+    """The provider whose slot this is, or None for no such slot. Lets the booking
+    activity ask `providers.public` about the provider without this module reading
+    `providers` itself (D-15)."""
+    return await session.scalar(
+        select(ProviderSlot.provider_id).where(ProviderSlot.id == slot_id)
+    )
+
+
 async def claim_slot(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     slot_id: uuid.UUID, now: datetime, actor_user_id: str | None,

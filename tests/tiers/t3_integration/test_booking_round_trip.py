@@ -24,6 +24,7 @@ from app.db.session import create_session_factory
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import hash_password
 from app.modules.patients.models import Patient
+from app.modules.providers.models import Provider
 from app.modules.scheduling.booking import booking_workflow_id
 from app.modules.scheduling.models import ProviderSlot, SlotStatus
 from tests.tiers.t3_integration import scheduling_helpers
@@ -184,6 +185,35 @@ async def test_an_overlapping_booking_for_the_same_patient_fails_and_frees_its_s
     async with factory() as session:
         slot = await session.get(ProviderSlot, second.slot_id)
     assert slot.status is SlotStatus.FREE
+
+
+async def test_a_booking_with_a_deactivated_provider_fails_and_frees_its_slot(
+    api, token_for, booking_stack
+):
+    """PRD R-24 end to end: `booking.validate_booking` asks `providers.public`, the
+    inactive provider is a non-retryable Unprocessable, and the booking compensates."""
+    factory, client = booking_stack
+    async with factory() as session:
+        b = await seed_bookable(session)
+        await session.execute(
+            update(Provider).where(Provider.id == b.provider_id).values(is_active=False)
+        )
+        await session.commit()
+    headers = token_for(UserRole.FRONT_DESK)
+
+    accepted = await api.post(
+        "/appointments", json={"patient_id": str(b.patient_id), "slot_id": str(b.slot_id)},
+        headers=headers,
+    )
+    appointment_id = accepted.json()["appointment_id"]
+    with pytest.raises(WorkflowFailureError):
+        await _finish(client, appointment_id)
+
+    read = await api.get(f"/appointments/{appointment_id}", headers=headers)
+    assert read.json()["status"] == "failed"
+    async with factory() as session:
+        slot = await session.get(ProviderSlot, b.slot_id)
+    assert slot.status is SlotStatus.FREE and slot.version == 0
 
 
 # --- Patient-role authorisation -------------------------------------------------------

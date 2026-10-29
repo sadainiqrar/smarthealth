@@ -84,9 +84,9 @@ dropped"*), which an HTTP status code cannot express.
 **The module rule** (horizontal): `app/modules/<x>` does not import `app/modules/<y>`.
 Every `service.py` imports only shared infrastructure and its own module; the only
 cross-module edges in the codebase are declared as explicit pairs in
-`tests/meta/test_import_boundaries.py` — nine router-layer auth edges onto `identity`, and
-two from scheduling (its router and its activities) onto `patients/public.py`, the one file
-`patients` publishes for other modules. Scheduling shows
+`tests/meta/test_import_boundaries.py` — nine router-layer auth edges onto `identity`, two
+from scheduling (its router and its activities) onto `patients/public.py`, and the same two
+onto `providers/public.py` — the one file each of those modules publishes for others. Scheduling shows
 why the rule is about code and not data: `appointments` carries foreign keys into two
 other modules' tables (`patients`; `providers`, `clinics`, `departments`), declared as table-name strings, so it is fully coupled in the
 database and not coupled at all in Python. Shared schema is what a modular monolith *is*;

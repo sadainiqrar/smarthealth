@@ -10,6 +10,7 @@ from sqlalchemy import update
 from app.db.engine import create_engine
 from app.db.session import create_session_factory
 from app.modules.identity.models import UserRole
+from app.modules.providers.models import Provider
 from app.modules.scheduling.models import ProviderSlot, SlotStatus
 from tests.tiers.t3_integration import scheduling_helpers
 from tests.tiers.t3_integration.scheduling_helpers import add_slot, seed_bookable
@@ -109,3 +110,22 @@ async def test_a_future_from_excludes_earlier_free_slots(api, token_for, factory
     body = response.json()
     assert [item["id"] for item in body["items"]] == [str(later)]
     assert body["total"] == 1
+
+
+async def test_an_inactive_providers_slots_are_not_listed(api, token_for, factory):
+    """PRD R-24: a deactivated provider takes no new bookings, so the list a client books
+    from shows none of their slots -- an empty page, as for a provider with no free
+    slots, not an error. Kills: the router's `is_active_provider` check removed."""
+    async with factory() as session:
+        b = await seed_bookable(session)
+        await session.execute(
+            update(Provider).where(Provider.id == b.provider_id).values(is_active=False)
+        )
+        await session.commit()
+
+    response = await api.get(
+        f"/slots?provider_id={b.provider_id}", headers=token_for(UserRole.PATIENT)
+    )
+
+    assert response.status_code == 200
+    assert response.json()["items"] == [] and response.json()["total"] == 0

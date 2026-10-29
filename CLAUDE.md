@@ -148,13 +148,15 @@ These are the requirements most likely to be violated by an obvious implementati
   the HTTP layer may reach FastAPI/Starlette, directly or transitively. *Horizontal:*
   `app/modules/<x>` may not import `app/modules/<y>` — `service.py`, `models.py` and
   `schemas.py` take no exception at all, and every other edge is an explicit pair in
-  `CROSS_MODULE_ALLOWED`: nine router-layer auth edges onto `identity`, and two onto
-  `patients.public`. When a module needs another's data, the answer is a published
-  interface or a domain event, never a direct import. Booking was the first real test, and
-  it held: `scheduling.activities` (the patient check) and `scheduling.router` (patient
-  ownership) reach `app/modules/patients/public.py` through declared pairs, while
-  `scheduling/service.py` takes no cross-module import — the activity does the patient check
-  and hands the service ids only. Decisions D-8 and D-15 in `docs/PRD.md`; rationale in
+  `CROSS_MODULE_ALLOWED`: nine router-layer auth edges onto `identity`, two onto
+  `patients.public` and two onto `providers.public`. When a module needs another's data,
+  the answer is a published interface or a domain event, never a direct import. Booking was
+  the first real test, and it held: `scheduling.activities` (the patient check, and the
+  inactive-provider check) and `scheduling.router` (patient ownership, and hiding an inactive
+  provider's slots) reach `app/modules/patients/public.py` and
+  `app/modules/providers/public.py` through declared pairs, while `scheduling/service.py`
+  takes no cross-module import — the activity does those checks and hands the service ids
+  only (the service supplies the slot's provider id, `slot_provider_id`). Decisions D-8 and D-15 in `docs/PRD.md`; rationale in
   `docs/ARCHITECTURE.md` §1.3.
 - **Appointments confirm only after the whole workflow succeeds.** Slot reservation, conflict
   checks, notification scheduling, and billing pre-check all happen before an appointment is

@@ -30,6 +30,7 @@ from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.errors import DomainError
 from app.modules.patients.public import ensure_bookable_patient
+from app.modules.providers.public import ensure_bookable_provider
 from app.modules.scheduling import service
 from app.modules.scheduling.contracts import (
     BookingRequest,
@@ -117,6 +118,14 @@ class SchedulingActivities:
         async with self._unit_of_work() as session:
             await ensure_bookable_patient(session, patient_id)
             await service.ensure_slot_bookable(session, slot_id=slot_id, now=self._clock.now())
+            # After the slot check, which has already said NotFound for a missing slot.
+            # A deactivated provider takes no new bookings (PRD R-24). Checked here, not
+            # in `claim_slot`: the service may not import `providers` (D-15), and a
+            # deactivation between this step and the claim is the same window every
+            # validation has -- what happens to bookings that already exist is R-25.
+            provider_id = await service.slot_provider_id(session, slot_id)
+            if provider_id is not None:
+                await ensure_bookable_provider(session, provider_id)
 
     @activity.defn(name="booking.claim_slot")
     async def claim_slot(self, request: BookingRequest) -> None:

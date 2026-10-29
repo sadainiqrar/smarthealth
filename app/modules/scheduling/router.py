@@ -29,6 +29,7 @@ from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
 from app.modules.identity.security import TokenClaims
 from app.modules.patients.public import patient_id_for_user
+from app.modules.providers.public import is_active_provider
 from app.modules.scheduling import service
 from app.modules.scheduling.booking import (
     appointment_id_for,
@@ -370,6 +371,12 @@ async def list_slots(
     clock: Clock = Depends(get_clock),
     _: TokenClaims = Depends(require_role(*UserRole)),
 ) -> Page[SlotRead]:
+    # An inactive provider takes no new bookings (PRD R-24), so none of their slots is
+    # one a client could book: an empty page, the same answer as for a provider with no
+    # free slots or no such provider. Not a 404 or 422 -- the request is valid, and the
+    # list is the slot inventory a booking can take, which for this provider is empty.
+    if not await is_active_provider(session, provider_id):
+        return Page[SlotRead](items=[], total=0, limit=page.limit, offset=page.offset)
     slots, total = await service.list_free_slots(
         session, provider_id=provider_id, now=clock.now(), start=from_, end=to, page=page
     )

@@ -1,0 +1,15 @@
+id: bkg-009-a-deactivated-provider-takes-no-new-bookings
+title: "A booking for a deactivated provider's slot ends failed with the slot still free"
+requirement: [PART-A-FR-2]
+tier: integration
+priority: P0
+status: ready
+# PRD R-24. Nothing in scheduling read `providers.is_active`, so deactivating a provider
+# left every one of their free slots bookable. `booking.validate_booking` now asks
+# `providers.public.ensure_bookable_provider` (an inactive provider is a non-retryable
+# Unprocessable) for the slot's provider, which `scheduling.service.slot_provider_id`
+# supplies -- the service never imports providers (D-15). Real HTTP, Temporal, worker
+# and Postgres: the workflow fails, compensates, the appointment reads `failed`, and the
+# slot is `free` at version 0 (it was never claimed). GET /slots listing nothing for an
+# inactive provider is T3 test_an_inactive_providers_slots_are_not_listed.
+impl: "tests/tiers/t3_integration/test_booking_round_trip.py::test_a_booking_with_a_deactivated_provider_fails_and_frees_its_slot"

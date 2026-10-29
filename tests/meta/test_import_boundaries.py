@@ -243,10 +243,15 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # D-15: the booking activity checks patient eligibility through the published
         # interface. Not from scheduling.service -- rule 4 forbids that outright.
         ("app.modules.scheduling.activities", "app.modules.patients.public"),
+        # R-24: the same activity refuses a deactivated provider through providers'
+        # published interface, given the provider id by scheduling.service.
+        ("app.modules.scheduling.activities", "app.modules.providers.public"),
         ("app.modules.scheduling.router", "app.modules.identity.deps"),
         ("app.modules.scheduling.router", "app.modules.identity.models"),
         ("app.modules.scheduling.router", "app.modules.identity.security"),
         ("app.modules.scheduling.router", "app.modules.patients.public"),
+        # R-24: GET /slots lists nothing for an inactive provider.
+        ("app.modules.scheduling.router", "app.modules.providers.public"),
     }
 )
 

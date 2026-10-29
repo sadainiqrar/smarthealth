@@ -212,33 +212,38 @@ of cross-module edges in the application is:
 app/modules/patients/router.py      → identity.deps, identity.models, identity.security
 app/modules/providers/router.py     → identity.deps, identity.models, identity.security
 app/modules/scheduling/router.py    → identity.deps, identity.models, identity.security,
-                                      patients.public
-app/modules/scheduling/activities.py → patients.public
+                                      patients.public, providers.public
+app/modules/scheduling/activities.py → patients.public, providers.public
 ```
 
-Eleven edges, every one declared as an explicit `(importer, imported)` pair in
+Thirteen edges, every one declared as an explicit `(importer, imported)` pair in
 `CROSS_MODULE_ALLOWED` (`tests/meta/test_import_boundaries.py`). Nine are auth at the router
-layer: `require_role`, `UserRole`, `TokenClaims`. The other two are scheduling's reach into
-`patients`, and both go through one file, the published interface
-`app/modules/patients/public.py` (PRD D-15), which returns ids and raises domain errors —
-never a `Patient` ORM object:
+layer: `require_role`, `UserRole`, `TokenClaims`. The other four are scheduling's reach into
+`patients` and `providers`, and each goes through one file, that module's published
+interface — `app/modules/patients/public.py` and `app/modules/providers/public.py` (PRD
+D-15, R-24) — which returns ids or flags and raises domain errors, never an ORM object:
 
 - `scheduling.activities` → `ensure_bookable_patient` — the `validate_booking` activity
-  checks the patient exists (`app/modules/scheduling/activities.py:118`).
+  checks the patient exists (`app/modules/scheduling/activities.py:119`).
 - `scheduling.router` → `patient_id_for_user` — a `patient` caller may book and read only
-  their own appointments (`app/modules/scheduling/router.py:73-74`).
+  their own appointments (`app/modules/scheduling/router.py:74-75`).
+- `scheduling.activities` → `ensure_bookable_provider` — the same activity refuses a
+  deactivated provider (R-24), for the provider id `service.slot_provider_id` reads off the
+  slot (`app/modules/scheduling/activities.py:126-128`).
+- `scheduling.router` → `is_active_provider` — `GET /slots` lists nothing for an inactive
+  provider (`app/modules/scheduling/router.py:378-379`).
 
 Every `service.py` imports only `app/core`, `app/db` and its own module — no exceptions,
 `scheduling/service.py` included. Week 1 expected that file to be the first with a real
 reason to cross the boundary; it was not, because the cross-module work was pushed up a
-layer. The activity performs the patient check and then calls the service with ids only, so
-`service.py` never needs to know a patient table exists. That was not optional: rule 4
+layer. The activity performs the patient and provider checks and then calls the service
+with ids only, so `service.py` never needs to know a patient or provider table exists. That was not optional: rule 4
 (`NEVER_CROSS`) forbids `service.py`, `models.py` and `schemas.py` any cross-module import,
 allowlist or not.
 
 **Two rules, not one, and they are asymmetric.**
 `test_modules_do_not_import_each_other` takes an allowlist (`CROSS_MODULE_ALLOWED`, the
-eleven pairs above) because a router or an activity is a composition point and a declared
+thirteen pairs above) because a router or an activity is a composition point and a declared
 exception there is legitimate. `test_the_service_layer_never_crosses_a_module_boundary` takes none: a
 `service.py`, `models.py` or `schemas.py` edge is always a bug, because the service layer
 is the unit of extraction and the models are what it owns. An allowlist entry for a service
