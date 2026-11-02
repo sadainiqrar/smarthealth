@@ -7,10 +7,10 @@ import { useAuth } from "../auth";
 import { ErrorText, listPath, useDebounced } from "../shared";
 import type { BookingAccepted, Page, Patient, Provider, Slot } from "../types";
 
-const label = (p: { first_name: string; last_name: string }) => `${p.first_name} ${p.last_name}`;
+export const label = (p: { first_name: string; last_name: string }) => `${p.first_name} ${p.last_name}`;
 
 // Staff search for a patient; a patient books for themselves via /patients/me.
-function PatientPicker({ value, onPick }: { value: Patient | null; onPick: (p: Patient) => void }) {
+export function PatientPicker({ value, onPick }: { value: Patient | null; onPick: (p: Patient) => void }) {
   const { session } = useAuth();
   const isPatient = session?.role === "patient";
   const [search, setSearch] = useState("");
@@ -55,7 +55,7 @@ function PatientPicker({ value, onPick }: { value: Patient | null; onPick: (p: P
   );
 }
 
-function ProviderPicker({ value, onPick }: { value: Provider | null; onPick: (p: Provider) => void }) {
+export function ProviderPicker({ value, onPick }: { value: Provider | null; onPick: (p: Provider) => void }) {
   const [search, setSearch] = useState("");
   const term = useDebounced(search);
   const found = useQuery({
@@ -82,7 +82,7 @@ function ProviderPicker({ value, onPick }: { value: Provider | null; onPick: (p:
   );
 }
 
-function SlotPicker({ providerId, value, onPick }: { providerId: string; value: Slot | null; onPick: (s: Slot) => void }) {
+export function SlotPicker({ providerId, value, onPick }: { providerId: string; value: Slot | null; onPick: (s: Slot) => void }) {
   const slots = useQuery({
     queryKey: ["slots", providerId],
     queryFn: () => api<Page<Slot>>(`/slots?provider_id=${providerId}&limit=50`),

@@ -10,6 +10,7 @@ import Booking from "./pages/Booking";
 import Login from "./pages/Login";
 import Patients from "./pages/Patients";
 import Providers from "./pages/Providers";
+import Waitlist from "./pages/Waitlist";
 import "./styles.css";
 
 // Navigation shows only what the role may do; the API still enforces it.
@@ -18,6 +19,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: "/providers", label: "Providers", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/appointments", label: "Appointments", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/book", label: "Book", roles: ["patient", "front_desk", "admin"] },
+  { to: "/waitlist", label: "Waitlist", roles: ["patient", "front_desk", "admin"] },
 ];
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -59,6 +61,7 @@ function App() {
         <Route path="/appointments" element={<Appointments />} />
         <Route path="/book" element={<Book />} />
         <Route path="/bookings/:id" element={<Booking />} />
+        <Route path="/waitlist" element={<Waitlist />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

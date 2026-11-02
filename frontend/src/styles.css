@@ -57,3 +57,12 @@ th { color: var(--muted); font-weight: 600; font-size: .85rem; }
 .filters select { padding: .4rem .6rem; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font: inherit; color: inherit; }
 .cancel-form { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .cancel-form input { flex: 1; min-width: 160px; }
+.actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; margin: .75rem 0; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+.muted { color: var(--muted); font-size: .85rem; }
+.timeline { margin: .25rem 0 0; padding-left: 1.2rem; }
+.badge.checked_in { background: #1565c0; color: #fff; }
+.badge.in_progress { background: #f9a825; color: #1c2230; }
+.badge.active { background: #1565c0; color: #fff; }
+.badge.fulfilled { background: #2e7d32; color: #fff; }
+.badge.expired { background: #667085; color: #fff; }

@@ -9,7 +9,7 @@ import { ErrorText, PAGE_SIZE, Pager } from "../shared";
 import type { Appointment, Page, Provider } from "../types";
 
 // Inline, not window.prompt: a reason is required, and the API's refusal shows beside it.
-function CancelForm({ appointment, onDone }: { appointment: Appointment; onDone: () => void }) {
+export function CancelForm({ appointment, onDone }: { appointment: Appointment; onDone: () => void }) {
   const queryClient = useQueryClient();
   const [reason, setReason] = useState("");
   const mutation = useMutation({
@@ -104,7 +104,7 @@ export default function Appointments() {
                   {!isPatient && <td>{providerName(a.provider_id)}</td>}
                   <td><span className={`badge ${a.status}`}>{a.status}</span></td>
                   <td>{a.reason ?? ""}</td>
-                  <td><Link to={`/bookings/${a.id}`}>view</Link></td>
+                  <td><Link to={`/bookings/${a.id}`}>open</Link></td>
                   <td>
                     {role && canCancel(a.status, role) && (
                       cancelling === a.id

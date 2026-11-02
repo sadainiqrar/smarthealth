@@ -547,7 +547,12 @@ Screens: login; patients (front desk, admin, provider); providers (every role); 
 (patient, front desk, admin), which picks a patient, provider and slot, then follows the
 appointment until it reads `confirmed` or `failed`; and Appointments (every role), which
 lists appointments (a patient's own; staff get status and provider filters) and cancels a
-`pending` or `confirmed` one. The navigation shows only what the
+`pending` or `confirmed` one. Opening an appointment shows its visit and the one next
+visit step the login's role may take — **Check in** (front desk, admin), **Mark seen** and
+**Complete visit** (provider, admin) — plus **Move to another time** (a reschedule: pick a
+slot, then follow the new appointment) and **Cancel**, offered only before check-in.
+Waitlist (patient, front desk, admin) lists entries (a patient's own) and adds one: a
+patient, an optional provider, and a window. The navigation shows only what the
 login's role may use; the API still enforces it. Known demo-client limitation: the staff
 Appointments table shows no patient name, because the API returns only `patient_id`.
 
