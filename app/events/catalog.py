@@ -40,9 +40,10 @@ TOPICS: dict[str, Topic] = {
     entry.name: entry
     for entry in (
         Topic("appointments.booked", TopicKind.EVENT),
-        Topic("appointments.cancelled", TopicKind.EVENT),
+        # v2: clinic_id added (optional, defaulted) for analytics.
+        Topic("appointments.cancelled", TopicKind.EVENT, schema_version=2),
         Topic("appointments.rescheduled", TopicKind.EVENT),
-        Topic("appointments.no_show", TopicKind.EVENT),
+        Topic("appointments.no_show", TopicKind.EVENT, schema_version=2),
         Topic("visits.completed", TopicKind.EVENT),
         Topic("identity.sessions_revoked", TopicKind.EVENT),
         Topic("billing.status_updated", TopicKind.EVENT),

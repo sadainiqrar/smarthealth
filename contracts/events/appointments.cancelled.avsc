@@ -109,6 +109,18 @@
               }
             ],
             "default": null
+          },
+          {
+            "name": "clinic_id",
+            "type": [
+              "null",
+              {
+                "type": "string",
+                "logicalType": "uuid"
+              }
+            ],
+            "default": null,
+            "doc": "v2 (Week 3 slice 6): which clinic, for analytics. Optional with a default, so v1 events still read under this schema (BACKWARD_TRANSITIVE)."
           }
         ]
       }

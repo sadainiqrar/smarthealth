@@ -785,6 +785,7 @@ async def mark_no_show(
         "patient_id": str(appointment.patient_id),
         "provider_id": str(appointment.provider_id),
         "starts_at": starts_at,
+        "clinic_id": str(appointment.clinic_id),
     })
     await _audit(audit, appointment, "no_show", actor_user_id, before)
     return NoShowOutcome.NO_SHOW
@@ -858,6 +859,7 @@ async def cancel_appointment(
         "starts_at": starts_at,
         "reason": reason,
         "initiated_by": actor_user_id,
+        "clinic_id": str(appointment.clinic_id),
     })
     await _audit(audit, appointment, "cancelled", actor_user_id, before)
     return appointment

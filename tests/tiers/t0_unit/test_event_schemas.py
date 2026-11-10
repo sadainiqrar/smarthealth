@@ -35,7 +35,7 @@ def test_emit_adds_a_validated_row_with_json_payload():
     assert session.added == [row]
     assert row.topic == "appointments.cancelled" and row.key == "a1"
     assert row.payload["starts_at"] == NOW.isoformat()
-    assert row.schema_version == 1 and row.producer == "part-a"
+    assert row.schema_version == 2 and row.producer == "part-a"  # v2 added clinic_id
 
 
 def test_emit_refuses_a_payload_missing_a_required_field():
@@ -60,7 +60,7 @@ def test_json_round_trips_to_avro_values():
     stored = schemas.to_json(_cancelled())
     record = schemas.from_json(schemas.parsed_schema("appointments.cancelled"), {
         "event_id": str(uuid.uuid4()), "event_type": "appointments.cancelled",
-        "schema_version": 1, "occurred_at": NOW.isoformat(), "producer": "part-a",
+        "schema_version": 2, "occurred_at": NOW.isoformat(), "producer": "part-a",
         "subject_id": "a1", "payload": stored,
     })
     assert record["occurred_at"] == NOW
