@@ -1,0 +1,10 @@
+id: cln-001-a-signed-note-is-never-edited
+title: "A visit's note is drafted, signed and then only amended as a new version; its events carry no clinical content"
+requirement: [PART-A-FR-3]
+tier: integration
+priority: P0
+status: ready
+# Spec 9.6, D-31. Signing turns drafted prescriptions and orders into rows and emits
+# clinical.note_signed and one clinical.test_ordered per order -- ids and counts only; the
+# test greps the payloads for the diagnosis, the drug and the test and finds none of them.
+impl: "tests/tiers/t3_integration/test_clinical_record.py::test_a_note_is_drafted_signed_and_amended_as_a_new_version"

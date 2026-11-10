@@ -102,8 +102,15 @@ idempotent and versioned) and searched hybrid with the caller's audience and a r
 **Embedding modes:** tests replay `services/knowledge/eval/fixtures/embeddings.jsonl` (fixture);
 after changing the corpus, golden set or model run
 `cd services/knowledge && KNOWLEDGE_EMBEDDING_MODE=record python -m knowledge_service.eval`
-(it prints recall@5 and MRR) and commit the fixture file. Compose runs `live`. Next: Week 4
-slice 2, Part A clinical records (spec §9.6) and R-14.
+(it prints recall@5 and MRR) and commit the fixture file. Compose runs `live`.
+**Week 4 slice 2, the clinical record, is built — Week 4 is complete:** `app/modules/clinical/`
+(versioned notes, prescriptions, test orders against `catalogue.py`, uploaded reports in a
+volume behind `DocumentStore` with text extracted by the Celery task `clinical.extract_document`
+on the `documents` queue). **A visit completes only with a signed note**, and seen/complete are
+the appointment's own provider's (**PRD R-14 closed**); records are read by role and care
+relationship (`scheduling/public.py`). Tests that complete a visit through the API need a
+provider login linked to the record and a signed note (see `test_visit_round_trip.py`). Next:
+Week 5, the assistant (needs the LLM key).
 
 **Slice 7, the Part B skeletons, is built — Week 3 is complete.** `services/knowledge`
 (`knowledge_service`: gRPC `Search` on :50052, its own Postgres `knowledge-db` and `qdrant`, a

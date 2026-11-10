@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+import tempfile
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -60,6 +62,8 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
         rabbitmq_port=int(os.environ.get("SMARTHEALTH_TEST_RABBITMQ_PORT", "5673")),
         smtp_host="localhost",
         smtp_port=int(os.environ.get("SMARTHEALTH_TEST_SMTP_PORT", "11025")),
+        documents_path=str(Path(tempfile.gettempdir()) / "smarthealth-documents"
+                           / isolation.resource_prefix.strip("_")),
     )
 
 
@@ -126,12 +130,18 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
         "SMARTHEALTH_TEMPORAL_HOST": db_settings.temporal_host,
         "SMARTHEALTH_TEMPORAL_PORT": str(db_settings.temporal_port),
         "SMARTHEALTH_RESOURCE_PREFIX": db_settings.resource_prefix,
+        "SMARTHEALTH_DOCUMENTS_PATH": db_settings.documents_path,
     }.items():
         monkeypatch.setenv(key, value)
 
     # Keep a reference to the FastAPI instance: `LifespanManager.app` is a wrapped
     # ASGI callable, not the application, so it carries no `.state`.
     application = create_app()
+    # Text extraction is enqueued to Celery after an upload; the integration tier drives it
+    # directly (test_clinical_record.py), so the enqueue is a no-op here.
+    from app.modules.clinical.router import get_extractor
+
+    application.dependency_overrides[get_extractor] = lambda: (lambda _document_id: None)
     async with LifespanManager(application) as manager:
         # An env var whose name does not match a `Settings` field alias is ignored
         # silently, and the app would then run against the *default* database while

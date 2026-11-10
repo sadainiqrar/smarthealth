@@ -1,0 +1,11 @@
+id: cln-003-a-patient-uploads-a-result
+title: "A patient uploads a result for an open order: its text is extracted, the order moves to result_uploaded, and the ordering clinician reviews it"
+requirement: [PART-A-FR-3, PART-B-FR-1]
+tier: integration
+priority: P1
+status: ready
+# The type is read from the file's bytes (PDF, PNG, JPEG), not its name; the file is
+# written before its row. Extraction is a Celery task (pypdf); the assistant will read the
+# extracted text through Part A's API to explain the report (spec 9.1), marked unreviewed
+# until the clinician reviews it (O-7).
+impl: "tests/tiers/t3_integration/test_clinical_record.py::test_an_uploaded_result_is_extracted_attached_and_reviewed"

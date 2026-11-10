@@ -133,6 +133,21 @@ def writes(monkeypatch):
 
     for name, status, _, _ in ACTIONS.values():
         monkeypatch.setattr(service, name, make(name, status))
+
+    # The router's own checks since Week 4 slice 2, faked like the writes: whether the
+    # provider is the appointment's (R-14), and whether its note is signed (spec 9.6).
+    state["treating"] = True
+    state["signed"] = True
+
+    async def treating(session, claims, appointment_id):
+        if claims.role is UserRole.PROVIDER and not state["treating"]:
+            raise NotFound(f"appointment {appointment_id} does not exist")
+
+    async def signed(session, appointment_id):
+        return state["signed"]
+
+    monkeypatch.setattr(scheduling_router, "_treating", treating)
+    monkeypatch.setattr(scheduling_router, "has_signed_note", signed)
     return state
 
 
@@ -311,3 +326,28 @@ async def test_an_unknown_appointment_has_no_visit(api_client, records):
         f"/appointments/{APPOINTMENT}/visit", headers=auth(UserRole.FRONT_DESK)
     )
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("path", ["seen", "complete"])
+async def test_a_provider_who_is_not_the_appointments_gets_404_and_writes_nothing(
+    api_client, temporal, writes, path
+):
+    """Referenced by tests/cases/vst-010-only-the-treating-provider-acts-on-a-visit.yaml.
+    PRD R-14, closed: any provider could mark any visit seen or complete."""
+    writes["treating"] = False
+    response = await api_client.post(
+        f"/appointments/{APPOINTMENT}/{path}", headers=auth(UserRole.PROVIDER)
+    )
+    assert response.status_code == 404
+    assert writes["calls"] == [] and temporal.session.commits == 0
+
+
+async def test_a_visit_without_a_signed_note_cannot_complete(api_client, temporal, writes):
+    """Spec 9.6: a visit completes with its record."""
+    writes["signed"] = False
+    response = await api_client.post(
+        f"/appointments/{APPOINTMENT}/complete", headers=auth(UserRole.PROVIDER)
+    )
+    assert response.status_code == 409
+    assert "clinical note" in response.json()["detail"]
+    assert writes["calls"] == [] and temporal.session.commits == 0

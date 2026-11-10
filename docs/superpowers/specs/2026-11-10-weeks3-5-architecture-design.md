@@ -788,6 +788,12 @@ as they go) with any diagnoses, prescriptions and orders → **signs it** → `/
 appointment lock), so a completed visit always has its record. A signed note can be amended
 by its author as a new version, audited (O-3).
 
+*As built (Week 4 slice 2):* the files live in a Docker volume behind the `DocumentStore`
+interface (`app/modules/clinical/storage.py`), not MinIO — MinIO's images could not be pulled
+from Docker Hub or Quay on 2026-11-10; an S3 adapter is one class. The upload body is the raw
+file, not multipart. Diagnoses live inside the note version (JSONB); prescriptions and orders
+are rows created on signing.
+
 **Uploads.** `POST /patients/{id}/documents` (multipart; the patient for themselves, front
 desk and the treating provider on their behalf) stores the file in MinIO and the row in one
 step — the row is written last, so a failed upload leaves an orphan object for a sweep, never

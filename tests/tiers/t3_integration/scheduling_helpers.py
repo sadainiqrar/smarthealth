@@ -9,7 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
@@ -155,7 +155,15 @@ async def purge(session: AsyncSession, bookables: list[Bookable]) -> None:
     the run and other tests (the seed's) assert on whole-table counts, so committed rows
     must not outlive the test that made them."""
     for b in bookables:
-        # Billing records first: their foreign key to appointments is RESTRICT.
+        # Clinical rows first: notes reference visits, orders and prescriptions notes.
+        for statement in (
+            "DELETE FROM test_orders WHERE patient_id = :p",
+            "DELETE FROM prescriptions WHERE patient_id = :p",
+            "DELETE FROM clinical_notes WHERE patient_id = :p",
+            "DELETE FROM patient_documents WHERE patient_id = :p",
+        ):
+            await session.execute(text(statement), {"p": b.patient_id})
+        # Billing records next: their foreign key to appointments is RESTRICT.
         await session.execute(
             delete(BillingRecord).where(
                 BillingRecord.appointment_id.in_(

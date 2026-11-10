@@ -83,6 +83,25 @@ async def visit_stack(db_settings):
         yield stack
 
 
+async def _provider_login(factory, provider_record_id) -> str:
+    """A provider-role login linked to the provider record; its id, for `token_for`."""
+    from sqlalchemy import update
+
+    from app.modules.identity.models import User
+    from app.modules.identity.security import hash_password
+    from app.modules.providers.models import Provider
+
+    async with factory() as session:
+        user = User(email=f"dr-{uuid.uuid4().hex[:8]}@example.com",
+                    password_hash=hash_password("x"), role=UserRole.PROVIDER, is_active=True)
+        session.add(user)
+        await session.flush()
+        await session.execute(
+            update(Provider).where(Provider.id == provider_record_id).values(user_id=user.id))
+        await session.commit()
+        return str(user.id)
+
+
 async def _until(read, done, *, timeout: float = 30.0):
     """Poll `read()` until `done(value)`, rather than sleeping blindly."""
     deadline = asyncio.get_running_loop().time() + timeout
@@ -128,7 +147,10 @@ async def test_a_visit_runs_from_booking_to_completion(
     factory, client, started = visit_stack
     async with factory() as session:
         b = await seed_bookable(session)
-    desk_id, provider_id = str(uuid.uuid4()), str(uuid.uuid4())
+    desk_id = str(uuid.uuid4())
+    # The provider's login is linked to the appointment's provider record: since R-14 closed,
+    # only the appointment's own provider may mark its visit seen or complete.
+    provider_id = await _provider_login(factory, b.provider_id)
     desk = token_for(UserRole.FRONT_DESK, desk_id)
     provider = token_for(UserRole.PROVIDER, provider_id)
     appointment_id = await _book(api, b, desk, started)
@@ -160,6 +182,15 @@ async def test_a_visit_runs_from_booking_to_completion(
 
     seen = await api.post(f"/appointments/{appointment_id}/seen", headers=provider)
     assert seen.status_code == 200 and seen.json()["status"] == "in_progress"
+    # Spec 9.6: no completion without a signed note.
+    unsigned = await api.post(f"/appointments/{appointment_id}/complete", headers=provider)
+    assert unsigned.status_code == 409
+    note = {"presenting_complaint": "follow-up", "patient_summary": "All well; no change.",
+            "diagnoses": [{"description": "Hypertension, well controlled", "icd10": "I10"}]}
+    assert (await api.put(f"/appointments/{appointment_id}/note", json=note,
+                          headers=provider)).status_code == 200
+    assert (await api.post(f"/appointments/{appointment_id}/note/sign",
+                           headers=provider)).status_code == 200
     complete = await api.post(f"/appointments/{appointment_id}/complete", headers=provider)
     assert complete.status_code == 200 and complete.json()["status"] == "completed"
     visit = complete.json()

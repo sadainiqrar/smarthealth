@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 83 |
-| contract | 17 |
-| integration | 46 |
+| Total cases | 87 |
+| contract | 18 |
+| integration | 49 |
 | unit | 8 |
 | workflow | 12 |
-| P0 | 48 |
-| P1 | 35 |
+| P0 | 51 |
+| P1 | 36 |
 | declarative | 1 |
-| impl-backed | 82 |
+| impl-backed | 86 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -45,6 +45,9 @@
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
 | bkg-010-booking-is-rate-limited-per-user | contract | P1 | impl | PART-A-NFR-5 | A user over the booking rate limit gets 429 with Retry-After, before any workflow starts |
 | bkg-011-an-orphaned-pending-booking-is-reconciled | integration | P1 | impl | PART-A-NFR-2 | A pending booking left by a terminated workflow is failed, its slot freed and its money released by the beat sweep |
+| cln-001-a-signed-note-is-never-edited | integration | P0 | impl | PART-A-FR-3 | A visit's note is drafted, signed and then only amended as a new version; its events carry no clinical content |
+| cln-002-who-may-read-a-record | integration | P0 | impl | PART-A-FR-3, PART-A-NFR-8 | The record's access table: the treating clinician all of it, the patient their own without clinician notes, front desk order status only, admin and other providers nothing |
+| cln-003-a-patient-uploads-a-result | integration | P1 | impl | PART-A-FR-3, PART-B-FR-1 | A patient uploads a result for an open order: its text is extracted, the order moves to result_uploaded, and the ordering clinician reviews it |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
 | cnl-002-a-cancel-follow-up-cannot-be-lost | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | A cancel's follow-up (visit timer, refund, waitlist) is started from its event, so a Temporal outage at cancel time cannot lose it |
 | evt-001-an-event-commits-with-its-change | integration | P0 | impl | PART-A-FR-4 | A domain event is written in the same transaction as its change: a rollback leaves neither |
@@ -104,4 +107,5 @@
 | vst-007-the-visit-timer-outlasts-a-database-outage | workflow | P1 | impl | PART-A-FR-3, PART-A-NFR-2 | A transient database outage longer than the booking step budget does not permanently fail a visit timer |
 | vst-008-a-real-timer-marks-a-no-show | integration | P1 | impl | PART-A-FR-3 | On real Temporal and Postgres, an appointment nobody checks in for becomes no_show at the slot's end, its slot stays booked, and a late check-in is refused |
 | vst-009-a-completed-visit-is-charged | integration | P1 | impl | PART-A-FR-3 | Completing a visit captures the booking's authorisation, through visits.completed and the post-visit workflow |
+| vst-010-only-the-treating-provider-acts-on-a-visit | contract | P0 | impl | PART-A-FR-3, PART-A-FR-1.3 | Only the appointment's own provider may mark its visit seen or complete, and completing needs a signed note |
 | wtl-001-a-cancelled-slot-is-promoted-to-the-waitlist | integration | P1 | impl | PART-A-FR-2 | Cancelling a booked slot confirms the waiting patient on it and fulfils their entry |

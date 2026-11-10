@@ -1,0 +1,10 @@
+id: cln-002-who-may-read-a-record
+title: "The record's access table: the treating clinician all of it, the patient their own without clinician notes, front desk order status only, admin and other providers nothing"
+requirement: [PART-A-FR-3, PART-A-NFR-8]
+tier: integration
+priority: P0
+status: ready
+# Role and relationship (spec 9.6): a provider reads a record only with a care relationship
+# (a completed visit or a live appointment), else 404 so ids cannot be probed. Every read
+# of a record is audited (record_viewed).
+impl: "tests/tiers/t3_integration/test_clinical_record.py::test_the_access_table"

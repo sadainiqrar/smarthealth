@@ -45,7 +45,11 @@ services:
       # Unset, the development signing key is used -- fine for this compose stack, and
       # refused by the app when SMARTHEALTH_ENVIRONMENT=production.
       SMARTHEALTH_JWT_PRIVATE_KEY: ${SMARTHEALTH_JWT_PRIVATE_KEY:-}
+      SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
+      SMARTHEALTH_RABBITMQ_HOST: rabbitmq
     ports: ["${APP_PORT:-8000}:8000"]
+    # Uploaded reports (spec 9.6), shared with the Celery worker that extracts their text.
+    volumes: ["part-a-documents:/var/smarthealth/documents"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -164,7 +168,8 @@ services:
     profiles: ["app"]
     build: .
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO",
-              "-Q", "notifications,maintenance", "--concurrency=2"]
+              "-Q", "notifications,maintenance,documents", "--concurrency=2"]
+    volumes: ["part-a-documents:/var/smarthealth/documents"]
     environment:
       SMARTHEALTH_ENVIRONMENT: docker
       SMARTHEALTH_POSTGRES_HOST: postgres
@@ -182,6 +187,7 @@ services:
       SMARTHEALTH_RABBITMQ_USER: ${RABBITMQ_USER:-smarthealth}
       SMARTHEALTH_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-smarthealth}
       SMARTHEALTH_SMTP_HOST: mailpit
+      SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
       SMARTHEALTH_SMTP_PORT: 1025
       SMARTHEALTH_TEMPORAL_HOST: temporal
       SMARTHEALTH_TEMPORAL_PORT: 7233
@@ -218,6 +224,7 @@ services:
       SMARTHEALTH_RABBITMQ_USER: ${RABBITMQ_USER:-smarthealth}
       SMARTHEALTH_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-smarthealth}
       SMARTHEALTH_SMTP_HOST: mailpit
+      SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
       SMARTHEALTH_SMTP_PORT: 1025
       SMARTHEALTH_TEMPORAL_HOST: temporal
       SMARTHEALTH_TEMPORAL_PORT: 7233
@@ -534,6 +541,7 @@ services:
 
 volumes:
   postgres-data:
+  part-a-documents:
   knowledge-data:
   qdrant-data:
   knowledge-models:
