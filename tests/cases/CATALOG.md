@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 92 |
-| contract | 22 |
-| integration | 50 |
+| Total cases | 94 |
+| contract | 23 |
+| integration | 51 |
 | unit | 8 |
 | workflow | 12 |
-| P0 | 52 |
-| P1 | 40 |
+| P0 | 53 |
+| P1 | 41 |
 | declarative | 1 |
-| impl-backed | 91 |
+| impl-backed | 93 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -61,6 +61,7 @@
 | kn-001-retrieval-meets-the-golden-set | contract | P0 | impl | PART-B-FR-1, PART-B-FR-2 | Hybrid retrieval over the ingested corpus meets the golden set: recall@5 >= 0.9, MRR >= 0.8, nothing for off-topic questions |
 | kn-002-the-audience-wall | contract | P0 | impl | PART-B-FR-2, PART-A-NFR-8 | A patient's token never retrieves a staff protocol, whatever the question; a clinician's does |
 | kn-003-ingestion-is-idempotent-and-versioned | contract | P1 | impl | PART-B-FR-1 | Ingesting the corpus again embeds nothing and duplicates nothing; a new version leaves no stale chunk |
+| nt-010-staff-message-sent-once | integration | P1 | impl | PART-A-FR-4, PART-B-FR-3 | A message staff approved is queued once per Idempotency-Key through the notifications pipeline; a provider only reaches patients they treat |
 | ntf-001-a-message-is-delivered-once | integration | P0 | impl | PART-A-FR-4, PART-A-NFR-3 | A notification is sent once: a redelivered event queues nothing new, and a redelivered task sends nothing |
 | ntf-002-the-reminder-is-timed-by-the-visit-workflow | workflow | P1 | impl | PART-A-FR-2, PART-A-FR-4 | The appointment reminder is timed by the visit workflow and dies with a cancel |
 | ntf-003-a-booking-email-end-to-end | integration | P0 | impl | PART-A-FR-4, PART-A-FR-2 | A confirmed booking becomes an email: outbox, Kafka, the notifications consumer, RabbitMQ, a Celery worker, SMTP |
@@ -83,6 +84,7 @@
 | pb-006-assistant-degrades-without-model-or-services | contract | P1 | impl | PART-B-FR-2, PART-B-NFR-1 | With no model, a failed model, Part A down or knowledge down, the assistant still answers what it can and says plainly what it cannot |
 | pb-007-assistant-keeps-threads-per-user | contract | P1 | impl | PART-B-FR-2, PART-B-FR-5 | A user keeps many assistant threads: listed newest first, reopened with every turn, a paused flow still answerable, invisible to other users, deletable |
 | pb-008-admin-sees-llm-usage-per-user | contract | P1 | impl | PART-B-FR-5 | Admin sees LLM usage per user -- turns, model turns, tokens, estimated cost -- and every other role is refused |
+| pb-009-drafts-are-sent-only-after-approval | contract | P0 | impl | PART-B-FR-3, PART-B-FR-5 | A drafted notice is edited and sent only after the sender confirms, once per patient, through Part A; patient instructions go into the draft note only |
 | prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |

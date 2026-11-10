@@ -138,9 +138,12 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
         return search
 
     def _context(self, caller: Caller, conversation_id: str, usage: TurnUsage) -> TurnContext:
+        async def drafts(draft_id: str, kind: str, status: str, recipients: int) -> None:
+            await self._usage.draft(caller.user_id, draft_id, kind, status, recipients)
+
         return TurnContext(caller=caller, parta=self._parta, search=self._search_as(caller),
                            conversation_id=conversation_id, timezone=self._timezone,
-                           model=self._model, usage=usage)
+                           model=self._model, usage=usage, drafts=drafts)
 
     async def _turn(self, turn: str, resume_from: int, events, *, caller: Caller,
                     conversation_id: str, user_text: str, usage: TurnUsage):
@@ -304,6 +307,7 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
         if end <= start:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_date is before from_date")
         rows = await self._usage.per_user(start, end)
+        drafted = await self._usage.draft_totals(start, end)
         price_in, price_out = self._prices
 
         def message(t: UserTotals) -> assistant_pb2.UserUsage:
@@ -337,7 +341,9 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             to_date=(end.date() - timedelta(days=1)).isoformat(),
             provider=provider, model=model, price_input_per_mtok=price_in,
             price_output_per_mtok=price_out, users=[message(r) for r in rows],
-            totals=message(totals))
+            totals=message(totals), drafts_generated=drafted.generated,
+            drafts_sent=drafted.sent, drafts_discarded=drafted.discarded,
+            draft_recipients=drafted.recipients)
 
     async def DeleteConversation(self, request, context):  # noqa: N802
         caller = await self._caller(context)

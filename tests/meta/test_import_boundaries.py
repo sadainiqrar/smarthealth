@@ -70,6 +70,7 @@ FRAMEWORK_BOUND: frozenset[str] = frozenset(
         "app.modules.analytics.router",
         "app.modules.clinical.router",
         "app.modules.identity.router",
+        "app.modules.notifications.router",
         "app.modules.patients.router",
         "app.modules.providers.router",
         "app.modules.scheduling.router",
@@ -269,6 +270,13 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # patient or provider record linked to it, through their published interfaces.
         ("app.modules.identity.router", "app.modules.patients.public"),
         ("app.modules.identity.router", "app.modules.providers.public"),
+        # Week 5 (spec 9.5): POST /notifications sends a message staff approved. Role-gated;
+        # a provider only to a patient they treat (care relationship, as for the record).
+        ("app.modules.notifications.router", "app.modules.identity.deps"),
+        ("app.modules.notifications.router", "app.modules.identity.models"),
+        ("app.modules.notifications.router", "app.modules.identity.security"),
+        ("app.modules.notifications.router", "app.modules.providers.public"),
+        ("app.modules.notifications.router", "app.modules.scheduling.public"),
         # The nightly reconcile compares the rollup with scheduling's own counts, through
         # its published interface.
         ("app.modules.analytics.tasks", "app.modules.scheduling.public"),

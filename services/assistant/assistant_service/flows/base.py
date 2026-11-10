@@ -32,6 +32,10 @@ from assistant_service.parta import PartA, PartAError, PartAUnavailable
 
 Emit = Callable[[dict], None]
 Search = Callable[[str, int], Awaitable[list[dict]]]
+#: (instructions, material) -> the model's text, or None.
+Write = Callable[[str, str], Awaitable[str | None]]
+#: (draft id, kind, status, recipients) -> recorded.
+DraftLog = Callable[[str, str, str, int], Awaitable[None]]
 
 
 @dataclass
@@ -123,6 +127,11 @@ class Ctx:
     emit: Emit
     conversation_id: str
     timezone: ZoneInfo
+    #: Drafting with the model (generation use cases, spec 9.1): returns the text, or None
+    #: when there is no model or it failed -- the flow then falls back to a template.
+    write: Write | None = None
+    #: Where drafts are counted (generated, sent, discarded) for PART-B-FR-5.
+    drafts: DraftLog | None = None
     _calls: int = field(default=0)
 
     @property

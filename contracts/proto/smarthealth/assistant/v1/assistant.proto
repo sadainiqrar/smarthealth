@@ -273,4 +273,10 @@ message UsageReply {
   double price_output_per_mtok = 6;
   repeated UserUsage users = 7;
   UserUsage totals = 8;
+  // Generated communication (PART-B-FR-5): drafts written, sent (or saved into a note),
+  // discarded, and how many patients the sent ones reached.
+  int32 drafts_generated = 9;
+  int32 drafts_sent = 10;
+  int32 drafts_discarded = 11;
+  int32 draft_recipients = 12;
 }

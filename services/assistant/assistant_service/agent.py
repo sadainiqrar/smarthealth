@@ -45,7 +45,7 @@ from pydantic import BaseModel, Field
 
 from assistant_service.auth import Caller
 from assistant_service.flows import FLOWS, flows_for
-from assistant_service.flows.base import Ctx, FlowError, NotAnAnswer, Search
+from assistant_service.flows.base import Ctx, DraftLog, FlowError, NotAnAnswer, Search
 from assistant_service.guard import guidance, red_flag
 from assistant_service.llm import LLMUnavailable
 from assistant_service.offline import answer_from_documents, match_flow
@@ -80,6 +80,21 @@ class TurnContext:
     model: BaseChatModel | None
     #: The turn's model calls and tokens, read by the server when the turn ends.
     usage: TurnUsage = field(default_factory=TurnUsage)
+    drafts: DraftLog | None = None
+
+    async def write(self, instructions: str, material: str) -> str | None:
+        """One drafting call to the model; None without a model or on any failure."""
+        if self.model is None:
+            return None
+        try:
+            reply = await self.model.ainvoke(
+                [SystemMessage(instructions), HumanMessage(material)])
+        except Exception:  # noqa: BLE001 - a draft falls back to the template
+            logger.info("drafting with the model failed; using the template", exc_info=True)
+            return None
+        self.usage.add_call(getattr(reply, "usage_metadata", None))
+        text = _text(reply).strip()
+        return text or None
 
     def ctx(self) -> Ctx:
         return Ctx(
@@ -87,6 +102,8 @@ class TurnContext:
             parta=self.parta,
             search=self.search,
             emit=get_stream_writer(),
+            write=self.write,
+            drafts=self.drafts,
             conversation_id=self.conversation_id,
             timezone=self.timezone,
         )
@@ -151,6 +168,10 @@ class _StartFlow(BaseModel):
     flow_id: str = Field(description="Which guided flow to start")
     specialty: str | None = Field(default=None, description="A specialty the user named, if any")
     doctor: str | None = Field(default=None, description="A doctor the user named, if any")
+    message: str | None = Field(
+        default=None,
+        description="For a message to patients: what the user wants them told, in their words",
+    )
 
 
 class _Search(BaseModel):
@@ -226,6 +247,7 @@ async def _model_turn(
                     for k, v in (
                         ("specialty", call["args"].get("specialty")),
                         ("provider_hint", call["args"].get("doctor")),
+                        ("brief_hint", call["args"].get("message")),
                     )
                     if v
                 }

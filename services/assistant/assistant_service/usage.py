@@ -38,7 +38,25 @@ create table if not exists turn_usage (
     primary key (user_id, turn_id)
 );
 create index if not exists ix_turn_usage_created on turn_usage (created_at);
+create table if not exists drafts (
+    user_id text not null,
+    draft_id text not null,
+    kind text not null,
+    status text not null,
+    recipients integer not null default 0,
+    created_at timestamptz not null default now(),
+    decided_at timestamptz,
+    primary key (user_id, draft_id)
+);
 """
+
+
+@dataclass
+class DraftTotals:
+    generated: int = 0
+    sent: int = 0
+    discarded: int = 0
+    recipients: int = 0
 
 
 @dataclass
@@ -117,11 +135,35 @@ def window(start: str, end: str) -> tuple[datetime, datetime]:
 class UsageStore(Protocol):
     async def record(self, row: UsageRow) -> None: ...
     async def per_user(self, start: datetime, end: datetime) -> list[UserTotals]: ...
+    async def draft(
+        self, user_id: str, draft_id: str, kind: str, status: str, recipients: int
+    ) -> None: ...
+    async def draft_totals(self, start: datetime, end: datetime) -> DraftTotals: ...
 
 
 @dataclass
 class InMemoryUsage:
     rows: dict[tuple[str, str], UsageRow] = field(default_factory=dict)
+    drafts: dict[tuple[str, str], dict] = field(default_factory=dict)
+
+    async def draft(
+        self, user_id: str, draft_id: str, kind: str, status: str, recipients: int
+    ) -> None:
+        row = self.drafts.setdefault(
+            (user_id, draft_id),
+            {"kind": kind, "status": status, "recipients": 0, "created_at": datetime.now(UTC)},
+        )
+        if status != "generated":
+            row.update(status=status, recipients=recipients)
+
+    async def draft_totals(self, start: datetime, end: datetime) -> DraftTotals:
+        rows = [r for r in self.drafts.values() if start <= r["created_at"] < end]
+        return DraftTotals(
+            generated=len(rows),
+            sent=sum(1 for r in rows if r["status"] == "sent"),
+            discarded=sum(1 for r in rows if r["status"] == "discarded"),
+            recipients=sum(r["recipients"] for r in rows),
+        )
 
     async def record(self, row: UsageRow) -> None:
         self.rows.setdefault((row.user_id, row.turn_id), row)
@@ -182,6 +224,30 @@ class PostgresUsage:
                     row.outcome,
                 ),
             )
+
+    async def draft(
+        self, user_id: str, draft_id: str, kind: str, status: str, recipients: int
+    ) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                "insert into drafts (user_id, draft_id, kind, status, recipients)"
+                " values (%s, %s, %s, %s, %s) on conflict (user_id, draft_id) do update set"
+                " status = excluded.status, recipients = excluded.recipients,"
+                " decided_at = now() where excluded.status <> 'generated'",
+                (user_id, draft_id, kind, status, recipients),
+            )
+
+    async def draft_totals(self, start: datetime, end: datetime) -> DraftTotals:
+        async with self._pool.connection() as conn:
+            row = await (
+                await conn.execute(
+                    "select count(*), count(*) filter (where status = 'sent'),"
+                    " count(*) filter (where status = 'discarded'), coalesce(sum(recipients), 0)"
+                    " from drafts where created_at >= %s and created_at < %s",
+                    (start, end),
+                )
+            ).fetchone()
+        return DraftTotals(*[int(v) for v in row])
 
     async def per_user(self, start: datetime, end: datetime) -> list[UserTotals]:
         async with self._pool.connection() as conn:

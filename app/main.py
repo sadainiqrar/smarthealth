@@ -25,6 +25,7 @@ from app.db.mongo import create_mongo_client
 from app.db.redis import create_redis_client
 from app.db.session import create_session_factory
 from app.modules.clinical.storage import FilesystemDocumentStore
+from app.celery_app import enqueue_send
 from app.modules.clinical.tasks import enqueue_extraction
 from app.modules.identity.sessions import RedisSessionStore
 from app.settings import DEV_SIGNING_KEY, Settings, get_settings
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.rate_limiter = RedisRateLimiter(app.state.redis, settings)
     app.state.documents = FilesystemDocumentStore.from_settings(settings)
     app.state.enqueue_extraction = enqueue_extraction
+    app.state.enqueue_send = enqueue_send
     # Lazy: the API boots with Temporal down, like every client above. Nothing to
     # close on shutdown -- the SDK client exposes no close(); once /ready has used it,
     # its gRPC channel lives as long as the process.

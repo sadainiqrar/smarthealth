@@ -9,6 +9,7 @@ token may not do whatever this list says.
 from __future__ import annotations
 
 from assistant_service.flows.base import Flow
+from assistant_service.flows.drafts import NotifyPatientsFlow, PatientInstructionsFlow
 from assistant_service.flows.operations import CapacityFlow, MyDayFlow, NoShowsFlow, SnapshotFlow
 from assistant_service.flows.record import (
     BriefFlow,
@@ -44,6 +45,8 @@ FLOWS: dict[str, Flow] = {
         CapacityFlow(),
         NoShowsFlow(),
         SnapshotFlow(),
+        NotifyPatientsFlow(),
+        PatientInstructionsFlow(),
     )
 }
 

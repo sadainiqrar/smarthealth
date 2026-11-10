@@ -47,6 +47,11 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "to prepare; please book it, and upload the result if you have it done elsewhere."
         "\n\nMediNova",
     ),
+    # Written or approved by staff (POST /notifications); the staff member's text, verbatim.
+    "staff_message": (
+        "{subject}",
+        "Hello {name},\n\n{body}\n\nMediNova",
+    ),
     "refund_issued": (
         "Your refund is on its way",
         "Hello {name},\n\nThe charge for your appointment has been refunded.\n\nMediNova",
@@ -78,4 +83,4 @@ def render(kind: str, context: dict[str, Any]) -> tuple[str, str]:
     values = _Lenient(context)
     values["when"] = _when(context.get("when"))
     values["why"] = CANCELLATION_REASONS.get(context.get("reason") or "", "")
-    return subject, Formatter().vformat(body, (), values)
+    return Formatter().vformat(subject, (), values), Formatter().vformat(body, (), values)

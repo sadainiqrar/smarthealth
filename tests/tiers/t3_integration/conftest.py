@@ -142,6 +142,11 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
     from app.modules.clinical.router import get_extractor
 
     application.dependency_overrides[get_extractor] = lambda: (lambda _document_id: None)
+    # Likewise the send of a staff message (POST /notifications): the row is what the
+    # integration tier asserts; test_notifications.py drives the send task itself.
+    from app.modules.notifications.router import get_sender
+
+    application.dependency_overrides[get_sender] = lambda: (lambda _notification_id: None)
     async with LifespanManager(application) as manager:
         # An env var whose name does not match a `Settings` field alias is ignored
         # silently, and the app would then run against the *default* database while

@@ -244,3 +244,18 @@ class PartA:
                 "window_end": window_end,
             },
         )
+
+    async def send_message(self, token: str, *, patient_id: str, subject: str, body: str,
+                           idempotency_key: str) -> dict:
+        """An approved message, through Part A's notifications (spec 9.5)."""
+        return await self.request(
+            "POST", "/notifications", token,
+            json={"patient_id": patient_id, "subject": subject, "body": body},
+            headers={"Idempotency-Key": idempotency_key})
+
+    async def note(self, token: str, appointment_id: str) -> dict:
+        return await self.request("GET", f"/appointments/{appointment_id}/note", token)
+
+    async def save_note(self, token: str, appointment_id: str, body: dict) -> dict:
+        return await self.request("PUT", f"/appointments/{appointment_id}/note", token,
+                                  json=body)

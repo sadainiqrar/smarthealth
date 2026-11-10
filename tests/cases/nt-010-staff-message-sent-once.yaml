@@ -1,0 +1,9 @@
+id: nt-010-staff-message-sent-once
+title: "A message staff approved is queued once per Idempotency-Key through the notifications pipeline; a provider only reaches patients they treat"
+requirement: [PART-A-FR-4, PART-B-FR-3]
+tier: integration
+priority: P1
+status: ready
+# Spec 9.5: approved drafts are sent by Part A's notifications module, so delivery,
+# throttling and audit stay in one place; the assistant never holds an SMTP client.
+impl: "tests/tiers/t3_integration/test_staff_messages_api.py::test_front_desk_sends_an_approved_message_once"

@@ -38,6 +38,10 @@ class FakePartA:
     record: dict = field(default_factory=dict)
     writes: list[tuple[str, str, dict, dict]] = field(default_factory=list)
     keys: dict[str, str] = field(default_factory=dict)
+    #: appointment id -> its clinical note (GET/PUT /appointments/{id}/note).
+    notes: dict[str, dict] = field(default_factory=dict)
+    #: Idempotency-Keys of staff messages already queued (POST /notifications).
+    sent_keys: set[str] = field(default_factory=set)
     down: bool = False
     #: Status a new booking ends in ("confirmed", or "failed" to simulate a decline).
     outcome: str = "confirmed"
@@ -167,7 +171,7 @@ class FakePartA:
             return self._book(body, request.headers)
         if (method, path) == ("GET", "/appointments"):
             return self._page(sorted(self.appointments.values(), key=lambda a: a["starts_at"]))
-        if method == "GET" and path.startswith("/appointments/"):
+        if method == "GET" and path.startswith("/appointments/") and not path.endswith("/note"):
             found = self.appointments.get(path.rsplit("/", 1)[1])
             return (
                 httpx.Response(200, json=found)
@@ -179,6 +183,28 @@ class FakePartA:
             appointment["status"] = "cancelled"
             self._slot(appointment["slot_id"])["status"] = "free"
             return httpx.Response(200, json=appointment)
+        if path.endswith("/note") and path.startswith("/appointments/"):
+            appointment_id = path.split("/")[2]
+            if method == "GET":
+                found = self.notes.get(appointment_id)
+                return (
+                    httpx.Response(200, json=found)
+                    if found
+                    else httpx.Response(404, json={"detail": "no note"})
+                )
+            note = self.notes[appointment_id]
+            if note["status"] != "draft":
+                return httpx.Response(409, json={"detail": "a signed note is not edited"})
+            note.update(body)
+            return httpx.Response(200, json=note)
+        if (method, path) == ("POST", "/notifications"):
+            key = request.headers["idempotency-key"]
+            if key in self.sent_keys:
+                return httpx.Response(202, json={"notification_id": None, "status": "duplicate"})
+            self.sent_keys.add(key)
+            return httpx.Response(
+                202, json={"notification_id": str(uuid.uuid4()), "status": "queued"}
+            )
         if (method, path) == ("POST", "/waitlist"):
             return httpx.Response(
                 201,

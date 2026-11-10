@@ -1,0 +1,11 @@
+id: pb-009-drafts-are-sent-only-after-approval
+title: "A drafted notice is edited and sent only after the sender confirms, once per patient, through Part A; patient instructions go into the draft note only"
+requirement: [PART-B-FR-3, PART-B-FR-5]
+tier: contract
+priority: P0
+status: ready
+# Spec 9.1 "Generation": the assistant drafts text only. A notice reaches patients through
+# Part A's POST /notifications (nt-010) with the sender's token and an Idempotency-Key per
+# draft and patient; instructions are saved into a *draft* note the doctor still signs.
+# Each draft's life is counted for "generated communication usage".
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_front_desk_drafts_edits_and_sends_a_notice_only_on_confirmation"

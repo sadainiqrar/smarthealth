@@ -8,6 +8,7 @@ which is what compose runs until there is a key.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -589,3 +590,138 @@ async def test_usage_rejects_a_bad_date():
                 metadata=_auth(_token(UserRole.ADMIN, user="u-admin")),
             )
     assert raised.value.code() is grpc.StatusCode.INVALID_ARGUMENT
+
+
+# -- drafts a person approves -------------------------------------------------------------------
+
+
+def _booked_with(fake: FakePartA, provider: dict, *, note_status: str | None = None) -> str:
+    """An appointment with `provider` tomorrow, optionally with a clinical note."""
+    slot = next(s for s in fake.slots if s["provider_id"] == provider["id"])
+    appointment_id = str(uuid.uuid4())
+    fake.appointments[appointment_id] = {
+        "id": appointment_id,
+        "status": "confirmed",
+        "patient_id": fake.patient["id"],
+        "provider_id": provider["id"],
+        "slot_id": slot["id"],
+        "starts_at": slot["starts_at"],
+        "reason": None,
+        "in_progress": False,
+    }
+    if note_status:
+        fake.notes[appointment_id] = {
+            "id": str(uuid.uuid4()),
+            "appointment_id": appointment_id,
+            "version": 1,
+            "status": note_status,
+            "presenting_complaint": "Sore throat for five days",
+            "findings": "Inflamed tonsils, no fever",
+            "clinician_notes": "Recheck if no better",
+            "patient_summary": "",
+            "diagnoses": [{"description": "Tonsillitis", "icd10": None}],
+            "prescriptions": [
+                {
+                    "medication": "Amoxicillin",
+                    "dose": "500 mg",
+                    "frequency": "three times a day",
+                    "duration": "7 days",
+                    "instructions": "Take with food.",
+                }
+            ],
+            "orders": [],
+        }
+    return appointment_id
+
+
+async def test_front_desk_drafts_edits_and_sends_a_notice_only_on_confirmation():
+    """Referenced by tests/cases/pb-009-drafts-are-sent-only-after-approval.yaml."""
+    fake = FakePartA.seeded()
+    ada = fake.providers[0]
+    _booked_with(fake, ada)
+    async with Harness(fake) as h:
+        desk = _token(UserRole.FRONT_DESK, user="u-desk")
+        events = await h.chat(desk, starter="notify_patients")
+        events = await h.chat(desk, choice=(last(events, "options").options_id, ada["id"]))
+        events = await h.chat(desk, choice=(last(events, "options").options_id, "7"))
+        assert "should this patient be told" in text(events)
+        events = await h.chat(desk, message="Dr Lovelace is away next week.")
+        draft = last(events, "card")
+        assert draft.badge == "Not sent" and fake.writes == []
+        review = last(events, "options")
+        events = await h.chat(desk, choice=(review.options_id, "edit"))
+        events = await h.chat(desk, message="Dr Lovelace is away. Please pick a new time.")
+        assert "Dr Lovelace is away. Please pick a new time." in {
+            f.value for f in last(events, "card").fields
+        }
+        events = await h.chat(desk, choice=(last(events, "options").options_id, "send"))
+        confirmation = last(events, "confirmation")
+        assert fake.writes == []  # nothing sent until the yes
+        events = await h.confirm(desk, confirmation.confirmation_id, True)
+        usage = await h.stub.Usage(
+            assistant_pb2.UsageRequest(), metadata=_auth(_token(UserRole.ADMIN, user="u-admin"))
+        )
+    [(method, path, body, headers)] = fake.writes
+    assert (method, path) == ("POST", "/notifications")
+    assert body["patient_id"] == fake.patient["id"]
+    assert body["body"] == "Dr Lovelace is away. Please pick a new time."
+    assert headers["authorization"] == f"Bearer {desk}"
+    assert headers["idempotency-key"].endswith(f":{fake.patient['id']}")
+    assert last(events, "card").badge == "Sent"
+    assert (usage.drafts_generated, usage.drafts_sent, usage.draft_recipients) == (1, 1, 1)
+
+
+async def test_a_discarded_notice_sends_nothing():
+    fake = FakePartA.seeded()
+    ada = fake.providers[0]
+    _booked_with(fake, ada)
+    async with Harness(fake) as h:
+        desk = _token(UserRole.FRONT_DESK, user="u-desk")
+        events = await h.chat(desk, starter="notify_patients")
+        events = await h.chat(desk, choice=(last(events, "options").options_id, ada["id"]))
+        events = await h.chat(desk, choice=(last(events, "options").options_id, "1"))
+        events = await h.chat(desk, message="The clinic opens late tomorrow.")
+        events = await h.chat(desk, choice=(last(events, "options").options_id, "discard"))
+    assert "Nothing was sent" in text(events) and fake.writes == []
+
+
+async def test_a_provider_saves_model_written_instructions_into_the_draft_note():
+    fake = FakePartA.seeded()
+    ada = fake.providers[0]
+    appointment_id = _booked_with(fake, ada, note_status="draft")
+    written = "Take amoxicillin 500 mg three times a day for 7 days, with food."
+    model = Scripted(
+        script=[
+            AIMessage(
+                content=written,
+                usage_metadata={"input_tokens": 300, "output_tokens": 40, "total_tokens": 340},
+            )
+        ]
+    )
+    async with Harness(fake, model=model) as h:
+        doctor_token = _token(UserRole.PROVIDER, user="u-ada")
+        events = await h.chat(doctor_token, starter="patient_instructions")
+        events = await h.chat(
+            doctor_token, choice=(last(events, "options").options_id, appointment_id)
+        )
+        assert {f.value for f in last(events, "card").fields} == {written}
+        prompt = model.calls[0]
+        assert "never add a diagnosis" in prompt[0].content and "Tonsillitis" in prompt[1].content
+        events = await h.chat(doctor_token, choice=(last(events, "options").options_id, "save"))
+        events = await h.confirm(doctor_token, last(events, "confirmation").confirmation_id, True)
+    note = fake.notes[appointment_id]
+    assert note["patient_summary"] == written
+    assert note["clinician_notes"] == "Recheck if no better" and note["status"] == "draft"
+    assert "sign when you're ready" in text(events)
+
+
+async def test_a_signed_note_is_not_rewritten():
+    fake = FakePartA.seeded()
+    appointment_id = _booked_with(fake, fake.providers[0], note_status="signed")
+    async with Harness(fake) as h:
+        doctor_token = _token(UserRole.PROVIDER, user="u-ada")
+        events = await h.chat(doctor_token, starter="patient_instructions")
+        events = await h.chat(
+            doctor_token, choice=(last(events, "options").options_id, appointment_id)
+        )
+    assert "Amend it first" in text(events) and fake.writes == []

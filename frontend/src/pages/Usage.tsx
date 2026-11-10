@@ -6,7 +6,7 @@
 // configured price per million tokens.
 
 import { useQuery } from "@tanstack/react-query";
-import { ActivityIcon, CoinsIcon, MessagesSquareIcon, TimerIcon } from "lucide-react";
+import { ActivityIcon, CoinsIcon, FileTextIcon, MessagesSquareIcon, TimerIcon } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/api";
 import { assistant } from "@/assistant/client";
@@ -100,7 +100,7 @@ export default function Usage() {
       {usage.isError && <p className="text-sm text-destructive">Couldn't load usage: {usage.error.message}</p>}
 
       {totals && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Stat icon={<MessagesSquareIcon />} label="Conversations" value={number.format(totals.conversations)}
                 note={`${number.format(totals.turns)} turns, ${number.format(totals.modelTurns)} used the model`} />
           <Stat icon={<ActivityIcon />} label="Tokens" value={number.format(Number(totals.inputTokens + totals.outputTokens))}
@@ -109,6 +109,9 @@ export default function Usage() {
                 note={`at $${usage.data!.priceInputPerMtok} / $${usage.data!.priceOutputPerMtok} per 1M tokens`} />
           <Stat icon={<TimerIcon />} label="Time to first word" value={seconds(totals.avgFirstTokenMs)}
                 note={`whole answer ${seconds(totals.avgTotalMs)} · ${totals.errors} errors`} />
+          <Stat icon={<FileTextIcon />} label="Drafts sent"
+                value={`${usage.data!.draftsSent} of ${usage.data!.draftsGenerated}`}
+                note={`${usage.data!.draftsDiscarded} discarded · reached ${usage.data!.draftRecipients} patients`} />
         </div>
       )}
 
