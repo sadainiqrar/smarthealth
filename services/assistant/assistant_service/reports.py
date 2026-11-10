@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 KINDS = {
     "operations_7": ("Weekly operations report", 7),
     "operations_30": ("Monthly operations report", 30),
+    "utilisation_30": ("Department utilisation report", 30),
 }
 METRICS = ("booked", "completed", "cancelled", "no_show")
 
@@ -53,6 +54,15 @@ NARRATIVE_INSTRUCTIONS = (
     "then 2-4 bullet points of things worth looking into. Use only the figures given: never "
     "invent a number, a cause you cannot see in the data, or a department. Say plainly when "
     "the data is too thin to draw a conclusion. Markdown, no headings, no tables."
+)
+
+UTILISATION_INSTRUCTIONS = (
+    "You write the narrative of a department utilisation report for MediNova clinic "
+    "managers: for each department, how many of the appointment slots it offered were booked. "
+    "In 2 short paragraphs and 2-4 bullet points, say which departments are busiest and "
+    "quietest and where capacity might be moved, using only the figures given -- never invent "
+    "a number or a cause. Say plainly when the data is too thin to conclude. Markdown, no "
+    "headings, no tables."
 )
 
 SCHEMA = """
@@ -288,6 +298,9 @@ class ReportRunner:
                 await self._on_usage(caller, report.id, usage, events)
 
     async def _write(self, caller: Caller, report: Report, emit, usage: TurnUsage) -> None:
+        if report.kind.startswith("utilisation"):
+            await self._write_utilisation(caller, report, emit, usage)
+            return
         token = caller.token
         days = (report.period_to - report.period_from).days + 1
         before_to = report.period_from - timedelta(days=1)
@@ -375,12 +388,84 @@ class ReportRunner:
         )
         await self._narrative(emit, usage, material, figures, busiest)
 
-    async def _narrative(self, emit, usage: TurnUsage, material: str, figures, busiest) -> None:
+    async def _write_utilisation(
+        self, caller: Caller, report: Report, emit, usage: TurnUsage
+    ) -> None:
+        call = "utilisation-1"
+        await emit(
+            {
+                "kind": "tool",
+                "call_id": call,
+                "name": "analytics",
+                "label": "Fetching slot use by department",
+                "status": "running",
+                "summary": "",
+            }
+        )
+        rows = await self._parta.analytics_utilisation(
+            caller.token, start=report.period_from.isoformat(), end=report.period_to.isoformat()
+        )
+        await emit(
+            {
+                "kind": "tool",
+                "call_id": call,
+                "name": "analytics",
+                "label": "Fetching slot use by department",
+                "status": "done",
+                "summary": f"{len(rows)} departments",
+            }
+        )
+        if not rows:
+            await emit(
+                {
+                    "kind": "token",
+                    "text": "No slots were offered in this period, so "
+                    "there is no utilisation to report.",
+                }
+            )
+            return
+
+        def share(row: dict) -> str:
+            pct = "—" if row["utilisation"] is None else f"{row['utilisation'] * 100:.0f}%"
+            return f"{row['booked']} of {row['slots']} slots ({pct})"
+
+        offered = sum(r["slots"] for r in rows)
+        taken = sum(r["booked"] for r in rows)
+        await emit(
+            {
+                "kind": "card",
+                "card_kind": "metrics",
+                "title": f"{report.period_from:%d %b} – {report.period_to:%d %b %Y}",
+                "subtitle": f"Overall: {taken} of {offered} slots booked"
+                f" ({taken / offered * 100:.0f}%)"
+                if offered
+                else "",
+                "fields": [
+                    {"label": f"{r['department']} · {r['clinic']}", "value": share(r)}
+                    for r in rows[:15]
+                ],
+                "badge": "busiest first",
+                "link": "",
+            }
+        )
+        material = (
+            f"Period: {report.period_from} to {report.period_to}. Overall {taken} of "
+            f"{offered} offered slots booked.\nPer department (clinic), booked of "
+            "offered:\n" + "\n".join(f"{r['department']} ({r['clinic']}): {share(r)}" for r in rows)
+        )
+        await self._narrative(emit, usage, material, [], None, kind="utilisation")
+
+    async def _narrative(
+        self, emit, usage: TurnUsage, material: str, figures, busiest, kind: str = "operations"
+    ) -> None:
         if self._model is not None:
             try:
                 whole = None
+                instructions = (
+                    UTILISATION_INSTRUCTIONS if kind == "utilisation" else NARRATIVE_INSTRUCTIONS
+                )
                 async for chunk in self._model.astream(
-                    [SystemMessage(NARRATIVE_INSTRUCTIONS), HumanMessage(material)]
+                    [SystemMessage(instructions), HumanMessage(material)]
                 ):
                     whole = chunk if whole is None else whole + chunk
                     if isinstance(chunk.content, str) and chunk.content:
@@ -392,6 +477,14 @@ class ReportRunner:
                     return
             except Exception:  # noqa: BLE001 - the report still states its figures
                 logger.info("report narrative failed; writing it plainly", exc_info=True)
+        if kind == "utilisation":
+            text = (
+                "Departments are listed busiest first above. Every figure is booked "
+                "slots out of the slots the department offered in the period."
+            )
+            for word in text.split(" "):
+                await emit({"kind": "token", "text": word + " "})
+            return
         lines = [f"- **{n}**: {_pct(a, b)}" for n, a, b in figures[:4]]
         if busiest:
             lines.append(

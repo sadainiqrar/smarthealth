@@ -886,3 +886,20 @@ async def test_conversion_counts_bookings_that_came_from_a_conversation():
     assert (reply.bookings_total, reply.bookings_via_assistant) == (3, 2)
     # A conversation ref this service never had a turn in is not a conversion of ours.
     assert (reply.conversations_with_booking, reply.conversations) == (1, 2)
+
+
+async def test_a_utilisation_report_lists_departments_busiest_first_from_part_a():
+    async with Harness(FakePartA.seeded()) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="utilisation_30"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+    assert job.title == "Department utilisation report"
+    card = last(events, "card")
+    assert [(f.label, f.value) for f in card.fields] == [
+        ("Cardiology · North", "34 of 40 slots (85%)"),
+        ("Dermatology · North", "6 of 30 slots (20%)"),
+    ]
+    assert card.subtitle == "Overall: 40 of 70 slots booked (57%)"
+    assert events[-1].done.reason == "complete"

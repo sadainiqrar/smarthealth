@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.modules.patients.public as patients
+import app.modules.providers.public as providers
+import app.modules.scheduling.public as scheduling
 from app.api.deps import get_session
 from app.core.clock import Clock, get_clock
 from app.core.errors import Unprocessable
@@ -99,3 +101,47 @@ async def get_timeseries(
         session, metric=metric, start=start, end=end, clinic_id=clinic_id
     )
     return TimeseriesRead(metric=metric, points=[Point(day=d, value=v) for d, v in points])
+
+
+class UtilisationRow(BaseModel):
+    clinic_id: uuid.UUID
+    clinic: str
+    department_id: uuid.UUID | None
+    #: "No department" for slots a clinic offers outside any department.
+    department: str
+    slots: int
+    booked: int
+    #: booked / slots, 0..1; None when nothing was offered.
+    utilisation: float | None
+
+
+class UtilisationRead(BaseModel):
+    start: date
+    end: date
+    departments: list[UtilisationRow]
+
+
+@router.get("/utilisation", response_model=UtilisationRead)
+async def get_utilisation(
+    start: date | None = Query(default=None, alias="from"),
+    end: date | None = Query(default=None, alias="to"),
+    session: AsyncSession = Depends(get_session),
+    clock: Clock = Depends(get_clock),
+    _: TokenClaims = Depends(require_role(*VIEWERS)),
+) -> UtilisationRead:
+    """Department utilisation over a window (default: the last 30 days): of the slots each
+    department offered, how many hold an appointment. Busiest first."""
+    start, end = _window(start, end, clock.now().date())
+    uses = await scheduling.slot_use_by_department(session, start=start, end=end)
+    clinics, departments = await providers.clinic_and_department_names(
+        session, list({u.clinic_id for u in uses}),
+        [u.department_id for u in uses if u.department_id])
+    rows = [UtilisationRow(
+        clinic_id=u.clinic_id, clinic=clinics.get(u.clinic_id, "Unknown clinic"),
+        department_id=u.department_id,
+        department=departments.get(u.department_id, "No department") if u.department_id
+        else "No department",
+        slots=u.slots, booked=u.booked,
+        utilisation=round(u.booked / u.slots, 4) if u.slots else None) for u in uses]
+    rows.sort(key=lambda r: (r.utilisation or 0, r.booked), reverse=True)
+    return UtilisationRead(start=start, end=end, departments=rows)

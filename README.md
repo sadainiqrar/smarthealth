@@ -243,7 +243,8 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/patients/{id}/documents` | `patient` (own), `front_desk`, the treating `provider` — body is the file (PDF, PNG, JPEG, ≤ 10 MB); text is extracted in the background |
 | GET | `/patients/{id}/documents/{doc}` | as the record — with the extracted text |
 | POST | `/test-orders/{id}/review` | `provider` (who ordered it) |
-| GET | `/analytics/summary`, `/analytics/timeseries` | `admin` — the five Part A metrics over `from`/`to` |
+| GET | `/analytics/summary`, `/analytics/timeseries` | `admin`, `front_desk` — the five Part A metrics over `from`/`to` |
+| GET | `/analytics/utilisation` | `admin`, `front_desk` — per department: slots offered over `from`/`to`, how many are booked, and the share |
 | GET | `/users?ids=…` | `admin` — name, email and role for given login ids (the AI usage page) |
 | POST | `/notifications` | `front_desk`, `admin`, a `provider` for a patient they treat — send a message a person approved; `Idempotency-Key` required; answers **202** `queued` / `duplicate` / `unreachable` |
 

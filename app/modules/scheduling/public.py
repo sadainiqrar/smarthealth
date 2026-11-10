@@ -8,13 +8,20 @@ from __future__ import annotations
 
 import uuid
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import cast, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Date
 
-from app.modules.scheduling.models import Appointment, AppointmentStatus, Visit
+from app.modules.scheduling.models import (
+    Appointment,
+    AppointmentStatus,
+    ProviderSlot,
+    SlotStatus,
+    Visit,
+)
 
 Key = tuple[date, uuid.UUID, uuid.UUID]
 
@@ -96,3 +103,33 @@ async def has_care_relationship(
         )
     )
     return bool(found)
+
+
+@dataclass(frozen=True)
+class SlotUse:
+    """How much of a department's bookable time was taken, over a window."""
+
+    clinic_id: uuid.UUID
+    department_id: uuid.UUID | None
+    #: Slots offered (blocked ones are not offered, so they do not count).
+    slots: int
+    #: Slots holding an appointment: booked, which completed and no-show visits keep.
+    booked: int
+
+
+async def slot_use_by_department(session: AsyncSession, *, start: date,
+                                 end: date) -> list[SlotUse]:
+    """Department utilisation (PART-B-FR-4): slots starting between `start` and `end`
+    inclusive (UTC days), offered vs taken, per clinic and department. From the slot
+    inventory, not the analytics rollup -- utilisation is a fact about time offered, and only
+    scheduling knows what was offered."""
+    lower = datetime.combine(start, time.min, tzinfo=timezone.utc)
+    upper = datetime.combine(end + timedelta(days=1), time.min, tzinfo=timezone.utc)
+    taken = func.count().filter(ProviderSlot.status == SlotStatus.BOOKED)
+    rows = await session.execute(
+        select(ProviderSlot.clinic_id, ProviderSlot.department_id, func.count(), taken)
+        .where(ProviderSlot.starts_at >= lower, ProviderSlot.starts_at < upper,
+               ProviderSlot.status != SlotStatus.BLOCKED)
+        .group_by(ProviderSlot.clinic_id, ProviderSlot.department_id))
+    return [SlotUse(clinic, department, int(slots), int(booked))
+            for clinic, department, slots, booked in rows]

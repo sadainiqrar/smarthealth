@@ -216,6 +216,34 @@ class FakePartA:
                     "average_wait_seconds": 540.0,
                 },
             )
+        if (method, path) == ("GET", "/analytics/utilisation"):
+            return httpx.Response(
+                200,
+                json={
+                    "start": q.get("from"),
+                    "end": q.get("to"),
+                    "departments": [
+                        {
+                            "clinic_id": "c1",
+                            "clinic": "North",
+                            "department_id": "d1",
+                            "department": "Cardiology",
+                            "slots": 40,
+                            "booked": 34,
+                            "utilisation": 0.85,
+                        },
+                        {
+                            "clinic_id": "c1",
+                            "clinic": "North",
+                            "department_id": "d2",
+                            "department": "Dermatology",
+                            "slots": 30,
+                            "booked": 6,
+                            "utilisation": 0.2,
+                        },
+                    ],
+                },
+            )
         if (method, path) == ("GET", "/analytics/timeseries"):
             return httpx.Response(
                 200,

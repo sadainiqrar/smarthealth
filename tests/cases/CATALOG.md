@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 97 |
+| Total cases | 98 |
 | contract | 26 |
-| integration | 51 |
+| integration | 52 |
 | unit | 8 |
 | workflow | 12 |
 | P0 | 53 |
-| P1 | 44 |
+| P1 | 45 |
 | declarative | 1 |
-| impl-backed | 96 |
+| impl-backed | 97 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -22,6 +22,7 @@
 
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
+| an-010-department-utilisation | integration | P1 | impl | PART-A-FR-5, PART-B-FR-4 | Department utilisation is the share of offered slots that hold an appointment, per department; blocked slots are not offered; admin and front desk only |
 | anl-001-the-five-metrics-come-from-events-counted-once | integration | P0 | impl | PART-A-FR-5, PART-A-NFR-3 | The five Part A metrics are served from events counted once: a redelivered booking or visit changes no number |
 | anl-002-the-nightly-reconcile-finds-drift | integration | P1 | impl | PART-A-FR-5, PART-A-OBS-3 | The nightly reconcile reports a booking the rollup never counted, and nothing once it is counted |
 | anl-003-only-staff-read-clinic-wide-numbers | contract | P1 | impl | PART-A-FR-5, PART-A-FR-1.3 | Only admin and front desk may read the analytics, and malformed windows are refused before any query |

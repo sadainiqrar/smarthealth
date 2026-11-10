@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound, Unprocessable
-from app.modules.providers.models import Provider
+from app.modules.providers.models import Clinic, Department, Provider
 
 
 async def _active_flag(session: AsyncSession, provider_id: uuid.UUID) -> bool | None:
@@ -53,10 +53,41 @@ async def provider_id_for_user(session: AsyncSession, user_id: uuid.UUID) -> uui
 
 
 async def names_for_users(session: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
-    """"Dr <first> <last>" for each login linked to a provider record."""
+    """ "Dr <first> <last>" for each login linked to a provider record."""
     if not user_ids:
         return {}
     rows = await session.execute(
-        select(Provider.user_id, Provider.first_name, Provider.last_name)
-        .where(Provider.user_id.in_(user_ids)))
+        select(Provider.user_id, Provider.first_name, Provider.last_name).where(
+            Provider.user_id.in_(user_ids)
+        )
+    )
     return {r.user_id: f"Dr {r.first_name} {r.last_name}" for r in rows}
+
+
+async def clinic_and_department_names(
+    session: AsyncSession, clinic_ids: list[uuid.UUID], department_ids: list[uuid.UUID]
+) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
+    """Names for ids, for reports that hold ids from elsewhere (department utilisation)."""
+    clinics = (
+        dict(
+            (
+                await session.execute(
+                    select(Clinic.id, Clinic.name).where(Clinic.id.in_(clinic_ids))
+                )
+            ).all()
+        )
+        if clinic_ids
+        else {}
+    )
+    departments = (
+        dict(
+            (
+                await session.execute(
+                    select(Department.id, Department.name).where(Department.id.in_(department_ids))
+                )
+            ).all()
+        )
+        if department_ids
+        else {}
+    )
+    return clinics, departments

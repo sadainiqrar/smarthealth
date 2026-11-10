@@ -1,0 +1,9 @@
+id: an-010-department-utilisation
+title: "Department utilisation is the share of offered slots that hold an appointment, per department; blocked slots are not offered; admin and front desk only"
+requirement: [PART-A-FR-5, PART-B-FR-4]
+tier: integration
+priority: P1
+status: ready
+# From the slot inventory through scheduling.public (not the analytics rollup, which has no
+# department), named through providers.public. Feeds the assistant's utilisation report.
+impl: "tests/tiers/t3_integration/test_utilisation_api.py::test_utilisation_is_booked_slots_of_those_offered_per_department"

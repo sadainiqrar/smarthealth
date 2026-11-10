@@ -82,6 +82,7 @@ export default function Reports() {
           {[
             ["operations_7", "Weekly report"],
             ["operations_30", "Monthly report"],
+            ["utilisation_30", "Department utilisation"],
           ].map(([kind, label]) => (
             <Button key={kind} onClick={() => void start(kind)} disabled={starting !== null}>
               {starting === kind ? <Spinner /> : <FileBarChartIcon />} {label}

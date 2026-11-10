@@ -266,6 +266,10 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("app.modules.analytics.router", "app.modules.identity.models"),
         ("app.modules.analytics.router", "app.modules.identity.security"),
         ("app.modules.analytics.router", "app.modules.patients.public"),
+        # Week 5 (PART-B-FR-4): department utilisation is the slot inventory, read through
+        # scheduling's published interface, with names from providers'.
+        ("app.modules.analytics.router", "app.modules.scheduling.public"),
+        ("app.modules.analytics.router", "app.modules.providers.public"),
         # Week 5: the admin user directory (GET /users) shows each login's name from the
         # patient or provider record linked to it, through their published interfaces.
         ("app.modules.identity.router", "app.modules.patients.public"),

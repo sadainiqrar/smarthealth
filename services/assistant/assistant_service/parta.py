@@ -188,6 +188,12 @@ class PartA:
         return await self.request("GET", "/analytics/summary", token,
                                   params={"from": start, "to": end})
 
+    async def analytics_utilisation(self, token: str, *, start: str, end: str) -> list[dict]:
+        """Per department: slots offered, booked, and the share booked."""
+        reply = await self.request("GET", "/analytics/utilisation", token,
+                                   params={"from": start, "to": end})
+        return reply["departments"]
+
     async def analytics_series(self, token: str, metric: str, *, start: str, end: str) -> list:
         """One point per day with data: [{"day": ..., "value": ...}]."""
         reply = await self.request("GET", "/analytics/timeseries", token,
