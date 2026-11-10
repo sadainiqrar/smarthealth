@@ -54,6 +54,21 @@ class AssistantStub:
                 request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersRequest.SerializeToString,
                 response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersReply.FromString,
                 _registered_method=True)
+        self.ListConversations = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/ListConversations',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsReply.FromString,
+                _registered_method=True)
+        self.GetConversation = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/GetConversation',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.GetConversationRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ConversationReply.FromString,
+                _registered_method=True)
+        self.DeleteConversation = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/DeleteConversation',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.FromString,
+                _registered_method=True)
 
 
 class AssistantServicer:
@@ -91,6 +106,27 @@ class AssistantServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListConversations(self, request, context):
+        """The caller's conversations, most recent first, and one conversation's transcript, so
+        a user keeps many threads and a reload reopens them. Scoped to the caller's user id
+        on the server: no request names whose conversations to read.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetConversation(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DeleteConversation(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AssistantServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -113,6 +149,21 @@ def add_AssistantServicer_to_server(servicer, server):
                     servicer.Starters,
                     request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersRequest.FromString,
                     response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersReply.SerializeToString,
+            ),
+            'ListConversations': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListConversations,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsReply.SerializeToString,
+            ),
+            'GetConversation': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetConversation,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.GetConversationRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ConversationReply.SerializeToString,
+            ),
+            'DeleteConversation': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteConversation,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -223,6 +274,87 @@ class Assistant:
             '/smarthealth.assistant.v1.Assistant/Starters',
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersRequest.SerializeToString,
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartersReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListConversations(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/ListConversations',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListConversationsReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetConversation(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/GetConversation',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.GetConversationRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ConversationReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteConversation(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/DeleteConversation',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.FromString,
             options,
             channel_credentials,
             insecure,

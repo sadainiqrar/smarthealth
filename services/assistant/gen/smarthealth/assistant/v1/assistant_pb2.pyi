@@ -225,3 +225,67 @@ class Starter(_message.Message):
     mode: str
     prompt: str
     def __init__(self, id: _Optional[str] = ..., title: _Optional[str] = ..., description: _Optional[str] = ..., icon: _Optional[str] = ..., mode: _Optional[str] = ..., prompt: _Optional[str] = ...) -> None: ...
+
+class ListConversationsRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class ConversationSummary(_message.Message):
+    __slots__ = ("conversation_id", "title", "updated_at", "turns", "awaiting_input")
+    CONVERSATION_ID_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    UPDATED_AT_FIELD_NUMBER: _ClassVar[int]
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    AWAITING_INPUT_FIELD_NUMBER: _ClassVar[int]
+    conversation_id: str
+    title: str
+    updated_at: str
+    turns: int
+    awaiting_input: bool
+    def __init__(self, conversation_id: _Optional[str] = ..., title: _Optional[str] = ..., updated_at: _Optional[str] = ..., turns: _Optional[int] = ..., awaiting_input: _Optional[bool] = ...) -> None: ...
+
+class ListConversationsReply(_message.Message):
+    __slots__ = ("conversations",)
+    CONVERSATIONS_FIELD_NUMBER: _ClassVar[int]
+    conversations: _containers.RepeatedCompositeFieldContainer[ConversationSummary]
+    def __init__(self, conversations: _Optional[_Iterable[_Union[ConversationSummary, _Mapping]]] = ...) -> None: ...
+
+class GetConversationRequest(_message.Message):
+    __slots__ = ("conversation_id",)
+    CONVERSATION_ID_FIELD_NUMBER: _ClassVar[int]
+    conversation_id: str
+    def __init__(self, conversation_id: _Optional[str] = ...) -> None: ...
+
+class TranscriptTurn(_message.Message):
+    __slots__ = ("turn_id", "user_text", "events")
+    TURN_ID_FIELD_NUMBER: _ClassVar[int]
+    USER_TEXT_FIELD_NUMBER: _ClassVar[int]
+    EVENTS_FIELD_NUMBER: _ClassVar[int]
+    turn_id: str
+    user_text: str
+    events: _containers.RepeatedCompositeFieldContainer[ChatEvent]
+    def __init__(self, turn_id: _Optional[str] = ..., user_text: _Optional[str] = ..., events: _Optional[_Iterable[_Union[ChatEvent, _Mapping]]] = ...) -> None: ...
+
+class ConversationReply(_message.Message):
+    __slots__ = ("conversation_id", "title", "turns")
+    CONVERSATION_ID_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    conversation_id: str
+    title: str
+    turns: _containers.RepeatedCompositeFieldContainer[TranscriptTurn]
+    def __init__(self, conversation_id: _Optional[str] = ..., title: _Optional[str] = ..., turns: _Optional[_Iterable[_Union[TranscriptTurn, _Mapping]]] = ...) -> None: ...
+
+class DeleteConversationRequest(_message.Message):
+    __slots__ = ("conversation_id",)
+    CONVERSATION_ID_FIELD_NUMBER: _ClassVar[int]
+    conversation_id: str
+    def __init__(self, conversation_id: _Optional[str] = ...) -> None: ...
+
+class DeleteConversationReply(_message.Message):
+    __slots__ = ("deleted",)
+    DELETED_FIELD_NUMBER: _ClassVar[int]
+    deleted: bool
+    def __init__(self, deleted: _Optional[bool] = ...) -> None: ...
