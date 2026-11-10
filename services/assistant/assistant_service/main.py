@@ -12,15 +12,22 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
 
 import grpc
 from confluent_kafka import Consumer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import MessageField, SerializationContext
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from redis.asyncio import Redis
 
+from assistant_service.agent import Agent
 from assistant_service.auth import TokenVerifier
+from assistant_service.llm import chat_model
+from assistant_service.parta import PartA
 from assistant_service.server import SERVING, build_server
 from assistant_service.settings import AssistantSettings
 from assistant_service.stores import RedisStores, Stores
@@ -65,8 +72,34 @@ async def main() -> None:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     stores = RedisStores(redis, turn_ttl=settings.turn_ttl_seconds)
     channel = grpc.aio.insecure_channel(settings.knowledge_target)
-    server = build_server(stores, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
-                          channel, settings.grpc_port)
+    parta = PartA(settings.parta_url, timeout=settings.parta_timeout_seconds)
+    async with checkpointer(settings.database_url) as saver:
+        model = chat_model(settings.llm_mode, provider=settings.llm_provider,
+                           model=settings.llm_model, api_key=settings.llm_api_key)
+        logger.info("assistant model: %s", settings.llm_mode if model else "off (offline brain)")
+        server = build_server(stores, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
+                              channel, settings.grpc_port, agent=Agent(saver), parta=parta,
+                              model=model, timezone=ZoneInfo(settings.display_timezone))
+        await serve(settings, server, stores, redis)
+    await parta.aclose()
+    await channel.close()
+    await redis.aclose()
+    if tracing:
+        tracing.shutdown()
+
+
+@asynccontextmanager
+async def checkpointer(database_url: str):
+    """LangGraph checkpoints in the service's own Postgres, or in memory when none is set."""
+    if not database_url:
+        yield MemorySaver()
+        return
+    async with AsyncPostgresSaver.from_conn_string(database_url) as saver:
+        await saver.setup()  # idempotent: creates or migrates its tables
+        yield saver
+
+
+async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redis) -> None:
     await server.start()
     await redis.ping()
     await server.health.set("", SERVING)
@@ -81,10 +114,6 @@ async def main() -> None:
     await stop.wait()
     await server.stop(5)
     await revocations
-    await channel.close()
-    await redis.aclose()
-    if tracing:
-        tracing.shutdown()
 
 
 if __name__ == "__main__":

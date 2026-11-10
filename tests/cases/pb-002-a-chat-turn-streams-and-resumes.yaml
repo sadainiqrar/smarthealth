@@ -6,6 +6,6 @@ priority: P1
 status: ready
 # The assistant skeleton (spec D-30): server-streaming gRPC, every event appended to the
 # turn's stream before it is sent, so resume replays instead of generating twice; Cancel is
-# a separate call because a browser cannot send on an open stream. The answer is an echo
-# until Week 5 (no LLM key before then, spec O-9); the transport, auth and resume are real.
-impl: "tests/tiers/t1_contract/test_partb_services.py::test_a_chat_turn_streams_tokens_then_citations_then_done"
+# a separate call because a browser cannot send on an open stream. The answer was an echo
+# in Week 3; since Week 5 the agent answers (here: offline, from knowledge, with sources).
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_a_resumed_turn_replays_instead_of_running_again"

@@ -15,11 +15,15 @@ import grpc
 import pytest
 
 import tests.harness.partb  # noqa: F401 - the services' import paths
+from langgraph.checkpoint.memory import MemorySaver
 from app.modules.identity.models import UserRole
 from app.modules.identity.security import create_access_token, generate_signing_key, public_jwk
 from app.settings import Settings
+from tests.harness.fake_part_a import FakePartA
 
+from assistant_service.agent import Agent  # noqa: E402
 from assistant_service.auth import TokenVerifier as AssistantVerifier  # noqa: E402
+from assistant_service.parta import PartA  # noqa: E402
 from assistant_service.server import build_server as build_assistant  # noqa: E402
 from assistant_service.stores import InMemoryStores  # noqa: E402
 from knowledge_service.auth import TokenVerifier as KnowledgeVerifier  # noqa: E402
@@ -69,13 +73,16 @@ async def knowledge():
 async def assistant(knowledge):
     _, _, knowledge_channel = knowledge
     stores = InMemoryStores()
+    parta = PartA("http://part-a", transport=FakePartA.seeded().transport())
     server = build_assistant(stores, AssistantVerifier("jwks", ISSUER, fetch=_jwks),
-                             knowledge_channel, 0, token_delay=0)
+                             knowledge_channel, 0, agent=Agent(MemorySaver()), parta=parta,
+                             model=None, token_delay=0)
     await server.start()
     channel = grpc.aio.insecure_channel(f"localhost:{server.port}")
     yield stores, assistant_pb2_grpc.AssistantStub(channel)
     await channel.close()
     await server.stop(None)
+    await parta.aclose()
 
 
 async def test_knowledge_answers_from_its_own_copy_built_from_provider_state(knowledge):
@@ -108,41 +115,13 @@ async def test_knowledge_refuses_a_token_part_a_did_not_sign(knowledge):
     assert raised.value.code() is grpc.StatusCode.UNAUTHENTICATED
 
 
-async def _chat(stub, token, *, turn="t1", message="chest pain cardio", resume=0):
-    request = assistant_pb2.ChatRequest(conversation_id="c1", turn_id=turn, message=message,
-                                        resume_from=resume)
+async def _chat(stub, token, *, turn="t1", message="late cancellation fee"):
+    request = assistant_pb2.ChatRequest(conversation_id="c1", turn_id=turn, message=message)
     return [event async for event in stub.Chat(request, metadata=_auth(token))]
 
 
-async def test_a_chat_turn_streams_tokens_then_citations_then_done(knowledge, assistant):
-    """Referenced by tests/cases/pb-002-a-chat-turn-streams-and-resumes.yaml."""
-    directory, _, _ = knowledge
-    provider = str(uuid.uuid4())
-    await apply(directory, provider, _state(provider))
-    _, stub = assistant
-    events = await _chat(stub, _token(), message="cardio")
-    kinds = [event.WhichOneof("kind") for event in events]
-    assert kinds == ["token", "token", "token", "citation", "done"]
-    text = "".join(e.token for e in events if e.WhichOneof("kind") == "token")
-    assert text.strip() == "You said: cardio"
-    assert events[3].citation.source_id == f"provider:{provider}"
-    assert [e.seq for e in events] == [1, 2, 3, 4, 5]
-
-
-async def test_a_reconnect_resumes_after_the_last_seq_it_saw(knowledge, assistant):
-    _, stub = assistant
-    first = await _chat(stub, _token(), turn="t-resume", message="one two three")
-    resumed = await _chat(stub, _token(), turn="t-resume", message="ignored", resume=3)
-    assert [e.seq for e in resumed] == [e.seq for e in first if e.seq > 3]
-    assert resumed[-1].done.reason == "complete"
-
-
-async def test_a_cancelled_turn_ends_with_done_cancelled(knowledge, assistant):
-    stores, stub = assistant
-    await stub.Cancel(assistant_pb2.CancelRequest(turn_id="t-cancel"), metadata=_auth(_token()))
-    events = await _chat(stub, _token(), turn="t-cancel")
-    assert [e.WhichOneof("kind") for e in events] == ["done"]
-    assert events[0].done.reason == "cancelled"
+# Streaming, resume, cancel, degradation and the agent itself:
+# tests/tiers/t1_contract/test_assistant_agent.py.
 
 
 async def test_a_token_issued_before_a_revocation_is_refused(knowledge, assistant):
@@ -159,20 +138,3 @@ async def test_a_token_issued_before_a_revocation_is_refused(knowledge, assistan
     assert raised.value.code() is grpc.StatusCode.UNAUTHENTICATED
     fresh = _token(user="u-revoked")
     assert (await _chat(stub, fresh, turn="t-fresh"))[-1].done.reason == "complete"
-
-
-async def test_the_assistant_degrades_when_knowledge_is_down():
-    """Spec section 9.2: no knowledge means an answer without citations, not a failure."""
-    dead = grpc.aio.insecure_channel("localhost:1")  # nothing listens there
-    server = build_assistant(InMemoryStores(), AssistantVerifier("jwks", ISSUER, fetch=_jwks),
-                             dead, 0, token_delay=0)
-    await server.start()
-    channel = grpc.aio.insecure_channel(f"localhost:{server.port}")
-    try:
-        events = await _chat(assistant_pb2_grpc.AssistantStub(channel), _token(), turn="t-dead")
-    finally:
-        await channel.close()
-        await server.stop(None)
-        await dead.close()
-    assert events[-1].done.reason == "complete"
-    assert "citation" not in [e.WhichOneof("kind") for e in events]

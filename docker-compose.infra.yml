@@ -294,9 +294,37 @@ services:
       ASSISTANT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       ASSISTANT_JWKS_URL: http://app:8000/.well-known/jwks.json
       ASSISTANT_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+      # Part A's HTTP API, called with each user's own token (parta.py).
+      ASSISTANT_PARTA_URL: http://app:8000
+      ASSISTANT_DATABASE_URL: postgresql://assistant:assistant@assistant-db:5432/assistant
+      ASSISTANT_DISPLAY_TIMEZONE: ${ASSISTANT_DISPLAY_TIMEZONE:-UTC}
+      # The model (assistant_service/llm.py). Set these in an untracked .env beside this
+      # file; with no key the assistant still runs every guided flow and answers questions
+      # from the documents (fixture mode falls back to the offline brain).
+      ASSISTANT_LLM_MODE: ${ASSISTANT_LLM_MODE:-auto}
+      ASSISTANT_LLM_PROVIDER: ${ASSISTANT_LLM_PROVIDER:-groq}
+      ASSISTANT_LLM_MODEL: ${ASSISTANT_LLM_MODEL:-}
+      ASSISTANT_LLM_API_KEY: ${ASSISTANT_LLM_API_KEY:-}
     depends_on:
       assistant-redis: { condition: service_healthy }
+      assistant-db: { condition: service_healthy }
       knowledge: { condition: service_healthy }
+
+  assistant-db:
+    # The assistant's own database: LangGraph conversation checkpoints, so a paused flow
+    # survives a restart (spec 9.2). Never Part A's or knowledge's (D-19).
+    profiles: ["partb"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: assistant
+      POSTGRES_DB: assistant
+    volumes: ["assistant-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
 
   assistant-redis:
     # The assistant's own Redis: turn streams, the revoked-session deny-list (spec 4.4).
@@ -541,6 +569,7 @@ services:
 
 volumes:
   postgres-data:
+  assistant-data:
   part-a-documents:
   knowledge-data:
   qdrant-data:

@@ -1,0 +1,475 @@
+"""The assistant agent over gRPC: guided flows, confirmations, chat, degradation (spec 9).
+
+The real servicer and LangGraph graph, an in-memory checkpointer, a fake Part A
+(tests/harness/fake_part_a.py) and a fake knowledge service with canned passages. No model
+unless a test brings a scripted one: with `model=None` typed messages take the offline path,
+which is what compose runs until there is a key.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+
+import grpc
+import pytest
+from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langgraph.checkpoint.memory import MemorySaver
+
+import tests.harness.partb  # noqa: F401 - the services' import paths
+from app.modules.identity.models import UserRole
+from app.modules.identity.security import create_access_token, generate_signing_key, public_jwk
+from app.settings import Settings
+from tests.harness.fake_part_a import FakePartA
+
+from assistant_service.agent import Agent  # noqa: E402
+from assistant_service.auth import TokenVerifier  # noqa: E402
+from assistant_service.llm import LLMUnavailable  # noqa: E402
+from assistant_service.parta import Breaker, PartA  # noqa: E402
+from assistant_service.server import build_server  # noqa: E402
+from assistant_service.stores import InMemoryStores  # noqa: E402
+from smarthealth.assistant.v1 import assistant_pb2, assistant_pb2_grpc  # noqa: E402
+from smarthealth.knowledge.v1 import knowledge_pb2, knowledge_pb2_grpc  # noqa: E402
+
+pytestmark = pytest.mark.contract
+
+PART_A = Settings(jwt_private_key=generate_signing_key())
+PASSAGES = [
+    knowledge_pb2.Hit(
+        source_id="doc:prep-blood-tests#fasting-blood-test",
+        kind="document",
+        title="Fasting blood test",
+        snippet="Do not eat or drink anything except water for 8 to 12 hours.",
+        score=0.9,
+    ),
+    knowledge_pb2.Hit(
+        source_id="doc:policies#late-cancellation",
+        kind="document",
+        title="Late cancellation",
+        snippet="Cancelling less than 24 hours before costs a fee of 20.",
+        score=0.8,
+    ),
+]
+
+
+def _jwks(_url):
+    return {"keys": [public_jwk(PART_A)]}
+
+
+def _token(role=UserRole.PATIENT, *, user="u-patient") -> str:
+    return create_access_token(
+        subject=user, role=role, session_id="s1", settings=PART_A, now=datetime.now(UTC)
+    )
+
+
+def _auth(token):
+    return (("authorization", f"Bearer {token}"),)
+
+
+class FakeKnowledge(knowledge_pb2_grpc.KnowledgeServicer):
+    def __init__(self) -> None:
+        self.queries: list[tuple[str, str]] = []
+
+    async def Search(self, request, context):  # noqa: N802
+        self.queries.append((request.query, dict(context.invocation_metadata())["authorization"]))
+        words = set(request.query.lower().split())
+        hits = [h for h in PASSAGES if words & set((h.title + " " + h.snippet).lower().split())]
+        return knowledge_pb2.SearchReply(hits=hits)
+
+
+class Scripted(BaseChatModel):
+    """A model test double: returns the next scripted message, whatever it is asked."""
+
+    script: list[Any]
+    calls: list[Any] = []
+
+    @property
+    def _llm_type(self) -> str:
+        return "scripted"
+
+    def bind_tools(self, tools, **_):  # noqa: ANN001
+        return self
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: ANN001
+        raise NotImplementedError
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):  # noqa: ANN001
+        self.calls.append(messages)
+        step = self.script.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return ChatResult(generations=[ChatGeneration(message=step)])
+
+
+class Harness:
+    def __init__(
+        self, fake: FakePartA, model: BaseChatModel | None = None, knowledge_up: bool = True
+    ) -> None:
+        self.fake, self.model, self.knowledge_up = fake, model, knowledge_up
+        self.stores = InMemoryStores()
+        self.knowledge = FakeKnowledge()
+
+    async def __aenter__(self) -> Harness:
+        self._ks = grpc.aio.server()
+        knowledge_pb2_grpc.add_KnowledgeServicer_to_server(self.knowledge, self._ks)
+        port = self._ks.add_insecure_port("[::]:0")
+        if self.knowledge_up:
+            await self._ks.start()
+        self._kc = grpc.aio.insecure_channel(f"localhost:{port if self.knowledge_up else 1}")
+        self.parta = PartA(
+            "http://part-a",
+            transport=self.fake.transport(),
+            breaker=Breaker(failure_threshold=2, reset_seconds=60),
+        )
+        self._server = build_server(
+            self.stores,
+            TokenVerifier("jwks", PART_A.jwt_issuer, fetch=_jwks),
+            self._kc,
+            0,
+            agent=Agent(MemorySaver()),
+            parta=self.parta,
+            model=self.model,
+            token_delay=0,
+        )
+        await self._server.start()
+        self._channel = grpc.aio.insecure_channel(f"localhost:{self._server.port}")
+        self.stub = assistant_pb2_grpc.AssistantStub(self._channel)
+        self._turn = 0
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self._channel.close()
+        await self._server.stop(None)
+        await self._kc.close()
+        await self._ks.stop(None)
+        await self.parta.aclose()
+
+    def next_turn(self) -> str:
+        self._turn += 1
+        return f"turn-{self._turn}"
+
+    async def chat(
+        self,
+        token: str,
+        *,
+        conversation="c1",
+        message="",
+        starter="",
+        choice: tuple[str, str] | None = None,
+        turn: str | None = None,
+        resume=0,
+    ):
+        request = assistant_pb2.ChatRequest(
+            conversation_id=conversation,
+            turn_id=turn or self.next_turn(),
+            message=message,
+            starter_id=starter,
+            resume_from=resume,
+        )
+        if choice:
+            request.choice.CopyFrom(
+                assistant_pb2.OptionChoice(options_id=choice[0], option_id=choice[1])
+            )
+        return [e async for e in self.stub.Chat(request, metadata=_auth(token))]
+
+    async def confirm(
+        self,
+        token: str,
+        confirmation_id: str,
+        approved: bool,
+        *,
+        conversation="c1",
+        turn: str | None = None,
+    ):
+        request = assistant_pb2.ConfirmRequest(
+            conversation_id=conversation,
+            turn_id=turn or self.next_turn(),
+            confirmation_id=confirmation_id,
+            approved=approved,
+        )
+        return [e async for e in self.stub.Confirm(request, metadata=_auth(token))]
+
+
+def kinds(events) -> list[str]:
+    return [e.WhichOneof("kind") for e in events]
+
+
+def text(events) -> str:
+    return "".join(e.token for e in events if e.WhichOneof("kind") == "token")
+
+
+def last(events, kind: str):
+    return [getattr(e, kind) for e in events if e.WhichOneof("kind") == kind][-1]
+
+
+def option(options, label_prefix: str) -> str:
+    return next(o.id for o in options.options if o.label.startswith(label_prefix))
+
+
+async def _book_until_confirmation(h: Harness, token: str, conversation="c1"):
+    events = await h.chat(token, conversation=conversation, starter="book")
+    specialties = last(events, "options")
+    assert events[-1].done.reason == "awaiting_input"
+    assert specialties.style == "chips"
+    events = await h.chat(
+        token, conversation=conversation, choice=(specialties.options_id, "Cardiology")
+    )
+    doctors = last(events, "options")
+    assert doctors.options[0].label == "First available"
+    events = await h.chat(token, conversation=conversation, choice=(doctors.options_id, "any"))
+    times = last(events, "options")
+    assert times.options[0].badge == "Earliest"
+    events = await h.chat(
+        token, conversation=conversation, choice=(times.options_id, times.options[0].id)
+    )
+    return last(events, "confirmation"), times.options[0].id
+
+
+async def test_a_patient_books_by_clicking_and_nothing_happens_before_the_yes():
+    """Referenced by tests/cases/pb-005-assistant-books-only-after-confirmation.yaml."""
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token()
+        confirmation, slot_id = await _book_until_confirmation(h, token)
+        assert confirmation.action == "book_appointment"
+        assert {d.label for d in confirmation.details} >= {"Patient", "Doctor", "When"}
+        assert fake.bookings == []  # asked, not done
+        events = await h.confirm(token, confirmation.confirmation_id, True)
+    card = last(events, "card")
+    assert card.title == "Appointment confirmed" and card.link.startswith("/bookings/")
+    [(_, _, body, headers)] = fake.bookings
+    assert body["slot_id"] == slot_id and body["patient_id"] == fake.patient["id"]
+    assert headers["idempotency-key"].startswith("assistant-")
+    assert headers["x-conversation-ref"] == "c1"
+    assert headers["authorization"] == f"Bearer {token}"  # the user's own token
+    assert events[-1].done.reason == "complete"
+
+
+async def test_a_declined_confirmation_writes_nothing():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        confirmation, _ = await _book_until_confirmation(h, _token())
+        events = await h.confirm(_token(), confirmation.confirmation_id, False)
+    assert fake.bookings == []
+    assert "haven't booked" in text(events)
+
+
+async def test_a_replayed_confirm_returns_the_same_turn_and_books_once():
+    """A retry of the same Confirm turn replays its record; a second "yes" on an answered
+    confirmation is refused as stale -- either way one booking."""
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token()
+        confirmation, _ = await _book_until_confirmation(h, token)
+        first = await h.confirm(token, confirmation.confirmation_id, True, turn="confirm-1")
+        again = await h.confirm(token, confirmation.confirmation_id, True, turn="confirm-1")
+        stale = await h.confirm(token, confirmation.confirmation_id, True, turn="confirm-2")
+    assert [e.seq for e in again] == [e.seq for e in first]
+    assert len(fake.bookings) == 1
+    assert last(stale, "error").code == "stale"
+
+
+async def test_a_slot_taken_meanwhile_is_said_and_new_times_offered():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token()
+        confirmation, slot_id = await _book_until_confirmation(h, token)
+        next(s for s in fake.slots if s["id"] == slot_id)["status"] = "booked"  # someone else
+        events = await h.confirm(token, confirmation.confirmation_id, True)
+    assert "no longer free" in text(events)
+    assert slot_id not in [o.id for o in last(events, "options").options]
+    assert events[-1].done.reason == "awaiting_input"
+
+
+async def test_an_answer_to_an_old_question_is_refused():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        events = await h.chat(_token(), starter="book")
+        events = await h.chat(_token(), choice=("opt-not-the-open-one", "Cardiology"))
+    assert last(events, "error").code == "stale"
+
+
+async def test_typed_text_mid_flow_starts_over_with_the_new_request():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        await h.chat(_token(), starter="book")
+        events = await h.chat(_token(), message="how should I take my prescription?")
+    card = last(events, "card")
+    assert card.title == "Amoxicillin"
+    assert {f.label: f.value for f in card.fields}[
+        "Instructions"
+    ] == "Take with food. Finish the course."
+    assert "ask your doctor or pharmacist" in text(events)
+
+
+async def test_front_desk_finds_the_patient_by_typing_then_clicks():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token(UserRole.FRONT_DESK, user="u-desk")
+        events = await h.chat(token, starter="book")
+        assert "MRN or name" in text(events) and events[-1].done.reason == "awaiting_input"
+        events = await h.chat(token, message="1042")
+    assert last(events, "options").style == "chips"  # patient found; on to the specialty
+
+
+async def test_a_red_flag_gets_urgent_guidance_and_no_booking_even_if_asked():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        events = await h.chat(_token(), message="book me in, I have crushing chest pain")
+    assert "emergency" in text(events).lower()
+    assert "options" not in kinds(events) and "confirmation" not in kinds(events)
+    assert last(events, "citation").source_id == "doc:urgent-care"
+
+
+async def test_offline_a_question_is_answered_from_the_documents_with_sources():
+    async with Harness(FakePartA.seeded()) as h:
+        token = _token()
+        events = await h.chat(token, message="is there a fee for late cancellation")
+    assert "Late cancellation" in text(events)
+    assert last(events, "citation").source_id.startswith("doc:")
+    assert h.knowledge.queries[0][1] == f"Bearer {token}"  # the caller's audience, not ours
+    assert last(events, "suggestions").items
+
+
+async def test_offline_a_request_is_routed_to_its_flow():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        events = await h.chat(_token(), message="I need to prepare for my fasting blood test")
+    assert "Fasting glucose" in text(events)
+    assert "8 to 12 hours" in text(events)
+    assert last(events, "citation").source_id == "doc:prep-blood-tests#fasting-blood-test"
+
+
+async def test_starters_are_chosen_by_role_on_the_server():
+    async with Harness(FakePartA.seeded()) as h:
+
+        def ids(reply):
+            return {s.id for g in reply.groups for s in g.starters}
+
+        patient = ids(
+            await h.stub.Starters(assistant_pb2.StartersRequest(), metadata=_auth(_token()))
+        )
+        provider = ids(
+            await h.stub.Starters(
+                assistant_pb2.StartersRequest(),
+                metadata=_auth(_token(UserRole.PROVIDER, user="u-ada")),
+            )
+        )
+    assert {"book", "cancel", "prescriptions"} <= patient
+    assert not {"brief", "capacity", "snapshot"} & patient
+    assert {"brief", "my_day"} <= provider and "book" not in provider
+
+
+async def test_a_patient_cannot_start_a_staff_flow_by_naming_it():
+    async with Harness(FakePartA.seeded()) as h:
+        events = await h.chat(_token(), starter="brief")
+    assert "isn't something I can help you with" in text(events)
+
+
+async def test_part_a_down_is_said_plainly_and_knowledge_still_answers():
+    fake = FakePartA.seeded()
+    fake.down = True
+    async with Harness(fake) as h:
+        booking = await h.chat(_token(), starter="book")
+        question = await h.chat(_token(), message="late cancellation fee", conversation="c2")
+    assert "can't reach the booking system" in text(booking)
+    assert last(booking, "tool").status == "failed"
+    assert "Late cancellation" in text(question)
+
+
+async def test_knowledge_down_still_answers_and_flows_still_work():
+    fake = FakePartA.seeded()
+    async with Harness(fake, knowledge_up=False) as h:
+        question = await h.chat(_token(), message="late cancellation fee")
+        flow = await h.chat(_token(), message="show my appointments", conversation="c2")
+    assert "can't reach the clinic's guides" in text(question)
+    assert question[-1].done.reason == "complete"
+    assert "no upcoming appointments" in text(flow)
+
+
+async def test_the_model_hands_actions_to_a_flow_and_never_writes():
+    fake = FakePartA.seeded()
+    model = Scripted(
+        script=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "start_flow",
+                        "args": {"flow_id": "book", "specialty": "cardiology"},
+                        "id": "call-1",
+                    }
+                ],
+            )
+        ]
+    )
+    async with Harness(fake, model=model) as h:
+        events = await h.chat(_token(), message="get me in with a heart doctor")
+    doctors = last(events, "options")
+    assert doctors.options[0].label == "First available"  # specialty prefilled, chips skipped
+    assert fake.writes == []
+
+
+async def test_the_model_answers_from_search_results_with_citations():
+    model = Scripted(
+        script=[
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "search_knowledge",
+                        "args": {"query": "fasting blood test"},
+                        "id": "c1",
+                    }
+                ],
+            ),
+            AIMessage(content="Only water for 8 to 12 hours before."),
+        ]
+    )
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        events = await h.chat(_token(), message="can I eat before a fasting blood test?")
+    assert "8 to 12 hours" in text(events)
+    assert last(events, "citation").source_id == "doc:prep-blood-tests#fasting-blood-test"
+    tool_message = model.calls[1][-1]
+    assert "Do not eat or drink" in tool_message.content
+
+
+async def test_a_model_failure_degrades_to_the_offline_answer():
+    model = Scripted(script=[LLMUnavailable("no recording")])
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        events = await h.chat(_token(), message="is there a late cancellation fee")
+    assert "Late cancellation" in text(events)
+    assert events[-1].done.reason == "complete"
+
+
+async def test_a_resumed_turn_replays_instead_of_running_again():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        first = await h.chat(_token(), message="late cancellation fee", turn="t-r")
+        resumed = await h.chat(_token(), message="ignored", turn="t-r", resume=2)
+    assert [e.seq for e in resumed] == [e.seq for e in first if e.seq > 2]
+    assert len(h.knowledge.queries) == 1
+
+
+async def test_one_user_cannot_answer_another_users_conversation():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        events = await h.chat(_token(), starter="book", conversation="shared")
+        specialties = last(events, "options")
+        intruder = await h.chat(
+            _token(user="u-other"),
+            conversation="shared",
+            choice=(specialties.options_id, "Cardiology"),
+        )
+    assert last(intruder, "error").code == "stale"  # their thread has no such question
+
+
+async def test_a_cancelled_turn_ends_with_done_cancelled():
+    async with Harness(FakePartA.seeded()) as h:
+        await h.stub.Cancel(
+            assistant_pb2.CancelRequest(turn_id="t-cancel"), metadata=_auth(_token())
+        )
+        events = await h.chat(_token(), message="late cancellation fee", turn="t-cancel")
+    assert kinds(events) == ["done"] and events[0].done.reason == "cancelled"

@@ -24,8 +24,22 @@ class AssistantSettings(BaseSettings):
     grpc_port: int = 50051
     #: Turn streams are kept this long for a client to resume.
     turn_ttl_seconds: int = 3600
-    #: Fixture until Week 5 brings a key (spec O-9): nothing here may need a live LLM.
-    llm_mode: str = "fixture"
+    #: auto | off | fixture | record | live (llm.py). `auto` is live when a key is set and
+    #: fixture otherwise; a request with no recording falls back to the offline brain.
+    llm_mode: str = "auto"
+    #: groq | anthropic | openai -- used by record and live only. Switching provider is
+    #: these three settings; empty model means the provider's default (llm.DEFAULT_MODELS).
+    llm_provider: str = "groq"
+    llm_model: str = ""
+    llm_api_key: str = ""
+    #: Part A's HTTP API, called with the user's own token (parta.py).
+    parta_url: str = "http://localhost:8000"
+    parta_timeout_seconds: float = 5.0
+    #: Conversation checkpoints (LangGraph): the service's own Postgres (compose:
+    #: assistant-db). Empty keeps them in memory -- tests, and a single dev process.
+    database_url: str = ""
+    #: Times are said to users in the clinic's zone.
+    display_timezone: str = "UTC"
     otel_endpoint_http: str = ""
 
     def topic(self, name: str) -> str:

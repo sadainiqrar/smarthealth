@@ -1,0 +1,10 @@
+id: pb-006-assistant-degrades-without-model-or-services
+title: "With no model, a failed model, Part A down or knowledge down, the assistant still answers what it can and says plainly what it cannot"
+requirement: [PART-B-FR-2, PART-B-NFR-1]
+tier: contract
+priority: P1
+status: ready
+# Spec 9.2 degradation: a model failure falls back to the offline brain (route to a flow, or
+# quote the clinic's documents with sources); Part A down still answers knowledge questions;
+# knowledge down still runs flows. Siblings in the same file cover each case.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_a_model_failure_degrades_to_the_offline_answer"
