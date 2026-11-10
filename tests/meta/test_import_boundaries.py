@@ -67,6 +67,7 @@ FRAMEWORK_BOUND: frozenset[str] = frozenset(
         "app.api.health",
         "app.api.error_handlers",
         "app.modules.identity.deps",
+        "app.modules.analytics.router",
         "app.modules.identity.router",
         "app.modules.patients.router",
         "app.modules.providers.router",
@@ -257,6 +258,15 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # Notifications reaches a patient's name and contact details through patients'
         # published interface, never the table.
         ("app.modules.notifications.public", "app.modules.patients.public"),
+        # Slice 6: the analytics endpoints are role-gated, and Total Patients is the
+        # register's size, read through patients' published interface.
+        ("app.modules.analytics.router", "app.modules.identity.deps"),
+        ("app.modules.analytics.router", "app.modules.identity.models"),
+        ("app.modules.analytics.router", "app.modules.identity.security"),
+        ("app.modules.analytics.router", "app.modules.patients.public"),
+        # The nightly reconcile compares the rollup with scheduling's own counts, through
+        # its published interface.
+        ("app.modules.analytics.tasks", "app.modules.scheduling.public"),
         ("app.modules.scheduling.router", "app.modules.identity.deps"),
         ("app.modules.scheduling.router", "app.modules.identity.models"),
         ("app.modules.scheduling.router", "app.modules.identity.security"),

@@ -22,6 +22,7 @@ from app.core.clock import Clock
 from app.core.temporal import ACTIVITIES, WORKFLOWS, bind_activities
 from app.core.temporal_canary import CanaryWorkflow
 from app.events.consumer import CONSUMERS
+from app.modules.analytics.consumers import ANALYTICS_CONSUMERS
 from app.modules.billing.public import PaymentGateway
 from app.modules.notifications.consumers import NOTIFICATION_CONSUMERS
 from app.modules.scheduling.consumers import SCHEDULING_CONSUMERS
@@ -83,7 +84,7 @@ def register_all() -> None:
     WORKFLOWS.register(ProviderDeactivationWorkflow.__name__, ProviderDeactivationWorkflow)
     for function in _SCHEDULING_ACTIVITIES:
         ACTIVITIES.register(_activity_name(function), function)
-    for spec in (*SCHEDULING_CONSUMERS, *NOTIFICATION_CONSUMERS):
+    for spec in (*SCHEDULING_CONSUMERS, *NOTIFICATION_CONSUMERS, *ANALYTICS_CONSUMERS):
         CONSUMERS.register(spec.name, spec)
     _registered = True
 

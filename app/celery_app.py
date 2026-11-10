@@ -44,6 +44,7 @@ TASK_MODULES = (
     "app.modules.notifications.tasks",
     "app.modules.scheduling.tasks",
     "app.events.maintenance",
+    "app.modules.analytics.tasks",
 )
 
 
@@ -90,6 +91,7 @@ def configure(settings: Settings) -> Celery:
             "notifications.requeue_stuck": {"queue": named["maintenance"].name},
             "scheduling.reconcile_stale_pending": {"queue": named["maintenance"].name},
             "events.purge_published": {"queue": named["maintenance"].name},
+            "analytics.reconcile": {"queue": named["maintenance"].name},
         },
         task_acks_late=True,
         task_reject_on_worker_lost=True,
@@ -106,6 +108,9 @@ def configure(settings: Settings) -> Celery:
             },
             "purge-published-outbox": {
                 "task": "events.purge_published", "schedule": timedelta(hours=24),
+            },
+            "reconcile-analytics": {
+                "task": "analytics.reconcile", "schedule": timedelta(hours=24),
             },
         },
         include=list(TASK_MODULES),
