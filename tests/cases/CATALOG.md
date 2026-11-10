@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 67 |
+| Total cases | 72 |
 | contract | 10 |
-| integration | 40 |
-| unit | 6 |
-| workflow | 11 |
-| P0 | 40 |
-| P1 | 27 |
+| integration | 43 |
+| unit | 7 |
+| workflow | 12 |
+| P0 | 42 |
+| P1 | 30 |
 | declarative | 1 |
-| impl-backed | 66 |
+| impl-backed | 71 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -41,6 +41,7 @@
 | bkg-008-a-patient-cannot-hold-two-overlapping-appointments | integration | P0 | impl | PART-A-FR-2, PART-A-NFR-1 | Two concurrent claims for one patient at overlapping slots of different providers admit exactly one |
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
 | bkg-010-booking-is-rate-limited-per-user | contract | P1 | impl | PART-A-NFR-5 | A user over the booking rate limit gets 429 with Retry-After, before any workflow starts |
+| bkg-011-an-orphaned-pending-booking-is-reconciled | integration | P1 | impl | PART-A-NFR-2 | A pending booking left by a terminated workflow is failed, its slot freed and its money released by the beat sweep |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
 | cnl-002-a-cancel-follow-up-cannot-be-lost | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | A cancel's follow-up (visit timer, refund, waitlist) is started from its event, so a Temporal outage at cancel time cannot lose it |
 | evt-001-an-event-commits-with-its-change | integration | P0 | impl | PART-A-FR-4 | A domain event is written in the same transaction as its change: a rollback leaves neither |
@@ -50,6 +51,9 @@
 | evt-005-a-poison-event-is-dead-lettered | integration | P0 | impl | PART-A-FR-4, PART-A-OBS-2 | An event whose handler keeps failing goes to the dead-letter topic with its error, and the partition moves on |
 | evt-006-a-provider-write-publishes-its-state | integration | P1 | impl | PART-A-FR-4, PART-A-FR-1.2 | Registering and deactivating a provider each queue its whole state for the compacted providers.state topic |
 | evt-007-every-consumer-is-idempotent | unit | P0 | impl | PART-A-NFR-3 | Every registered Kafka consumer, given its event twice, starts its workflow once and does not fail |
+| ntf-001-a-message-is-delivered-once | integration | P0 | impl | PART-A-FR-4, PART-A-NFR-3 | A notification is sent once: a redelivered event queues nothing new, and a redelivered task sends nothing |
+| ntf-002-the-reminder-is-timed-by-the-visit-workflow | workflow | P1 | impl | PART-A-FR-2, PART-A-FR-4 | The appointment reminder is timed by the visit workflow and dies with a cancel |
+| ntf-003-a-booking-email-end-to-end | integration | P0 | impl | PART-A-FR-4, PART-A-FR-2 | A confirmed booking becomes an email: outbox, Kafka, the notifications consumer, RabbitMQ, a Celery worker, SMTP |
 | obs-001-every-request-is-traced-and-measured | contract | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither |
 | obs-002-a-workflow-run-joins-the-trace-that-started-it | workflow | P0 | impl | PART-A-OBS-2 | A workflow's run span belongs to the same trace as the client span that started it |
 | obs-003-telemetry-reaches-jaeger-and-prometheus | integration | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | A span sent to the collector is queryable in Jaeger, and a metric in Prometheus under its process's job |
@@ -79,6 +83,7 @@
 | sys-008-every-workflow-is-registered-and-sandbox-safe | unit | P0 | impl | PART-A-NFR-2 | Every Temporal workflow and activity in app/ is registered, and every registered workflow passes the sandbox |
 | sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |
 | sys-010-swagger-can-authorise-every-gated-route | contract | P1 | impl | PART-A-NFR-8 | Every role-gated route declares the bearer scheme in OpenAPI; login and health declare none |
+| sys-011-every-celery-task-is-registered-and-acks-late | unit | P1 | impl | PART-A-NFR-3 | Every Celery task is in the task registry, acknowledges late, and is routed to a named queue |
 | vst-001-a-second-check-in-is-a-conflict | integration | P0 | impl | PART-A-FR-3 | A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted |
 | vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes, and the database's answer is the workflow's result |
 | vst-003-pre-visit-bookings-still-replay | workflow | P0 | impl | PART-A-NFR-2 | A booking that was in flight before the visit slice deployed still replays against the new workflow code |

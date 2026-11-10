@@ -428,6 +428,16 @@ docker compose -f docker-compose.infra.yml exec temporal \
   temporal workflow show -w booking-$APPOINTMENT --address temporal:7233
 ```
 
+**Seeing events and messages.** Every domain change writes an event to the outbox in its
+own transaction; the `relay` service publishes it to Kafka (Avro, Schema Registry), and
+`consumers` acts on it: a cancel's follow-up, a deactivated provider's cancellations, the
+post-visit charge, and patient messages. Messages are sent by `celery-worker` over
+RabbitMQ; email lands in **Mailpit** at <http://localhost:8025> (patients need an email on
+their record), SMS is a logging fake. Billing goes to `payments-mock` on :8090 —
+`curl -X POST localhost:8090/_chaos -H 'Content-Type: application/json' -d '{"decline_customers": ["<patient id>"]}'`
+makes the next pre-check for that patient decline, and the booking compensate.
+RabbitMQ's management UI is <http://localhost:15672> (vhost `part-a`).
+
 **Seeing a trace, a metric, a dashboard.** Every process exports traces and metrics to an
 OpenTelemetry Collector (`otel-collector`), which sends traces to Jaeger and metrics to
 Prometheus. These run in the plain infrastructure stack — no profile needed:

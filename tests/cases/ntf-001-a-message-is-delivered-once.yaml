@@ -1,0 +1,13 @@
+id: ntf-001-a-message-is-delivered-once
+title: "A notification is sent once: a redelivered event queues nothing new, and a redelivered task sends nothing"
+requirement: [PART-A-FR-4, PART-A-NFR-3]
+tier: integration
+priority: P0
+status: ready
+# Two guards, both in Postgres: the row's unique idempotency key (the triggering event and
+# the channel), and the send task's claim (queued -> sending in one UPDATE), so Celery's
+# at-least-once delivery cannot email a patient twice. The email really arrives in
+# Mailpit. Siblings: a channel failure is retried with backoff then fails for good (and
+# is dead-lettered), a patient over the hourly limit waits, and the sweep re-sends a
+# message whose enqueue was lost.
+impl: "tests/tiers/t3_integration/test_notifications.py::test_the_send_task_delivers_once"

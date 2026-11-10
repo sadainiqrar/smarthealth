@@ -1,0 +1,12 @@
+id: bkg-011-an-orphaned-pending-booking-is-reconciled
+title: "A pending booking left by a terminated workflow is failed, its slot freed and its money released by the beat sweep"
+requirement: [PART-A-NFR-2]
+tier: integration
+priority: P1
+status: ready
+# Closes PRD R-9. Terminating a booking workflow runs no compensation, stranding a held
+# slot and a pending row. Every five minutes scheduling.reconcile_stale_pending finds
+# pending rows older than 15 minutes whose booking workflow is not running and does what
+# the compensation would have; a running workflow is never second-guessed, and a young
+# pending row is left alone.
+impl: "tests/tiers/t3_integration/test_maintenance_tasks.py::test_an_orphaned_pending_booking_is_compensated"

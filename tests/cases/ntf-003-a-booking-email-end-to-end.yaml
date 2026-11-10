@@ -1,0 +1,11 @@
+id: ntf-003-a-booking-email-end-to-end
+title: "A confirmed booking becomes an email: outbox, Kafka, the notifications consumer, RabbitMQ, a Celery worker, SMTP"
+requirement: [PART-A-FR-4, PART-A-FR-2]
+tier: integration
+priority: P0
+status: ready
+# The three-way split end to end (PRD D-7): Kafka says what happened, the consumer decides
+# who is told (queueing in its own transaction and enqueueing only after the commit),
+# Celery does it. A real worker runs in process against the test RabbitMQ; the proof is
+# the message in Mailpit's inbox.
+impl: "tests/tiers/t3_integration/test_notifications.py::test_a_booking_becomes_an_email_through_kafka_and_celery"

@@ -81,8 +81,15 @@ is one state-machine row per appointment over `services/payments_mock` (compose
 `payments-mock`, test port 18090; `POST /_chaos` makes it misbehave) behind a circuit
 breaker; the pre-check authorises (a decline compensates), compensation/cancel/reschedule
 release, post-visit captures. T3 round trips run the relay and consumers in process
-(`scheduling_helpers.event_pipeline`), so they wait for workflows that Kafka starts. Next is
-slice 5 (Celery notifications). Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
+(`scheduling_helpers.event_pipeline`), so they wait for workflows that Kafka starts. **Slice 5, Celery notifications, is built:** `app/celery_app.py` (RabbitMQ vhost `part-a`,
+queues `notifications` with a dead-letter queue and `maintenance`, `acks_late`, every task in
+`TASKS`); `app/modules/notifications/` — the `notifications.patient-messages` consumer queues one
+row per event (unique key) and enqueues the send **after commit**; the send task claims the row
+first, throttles per patient, retries with backoff, dead-letters; email via SMTP to **Mailpit**
+(compose `mailpit`, inbox :8025, test 18025/11025), SMS a logging fake. The reminder is timed by
+`VisitWorkflow` (behind `workflow.patched("visit-reminder")`, D-26). Beat: requeue stuck
+notifications, the stale-pending reconciler (**PRD R-9 closed**), outbox purge. Compose
+`celery-worker`, `celery-beat` (profile app). Next is slice 6 (analytics). Analytics does not exist yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -119,6 +126,7 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
+| `celery -A app.celery_app worker -Q notifications,maintenance` / `celery -A app.celery_app beat` | the Celery worker and schedule |
 | `python -m app.consumers` | run every registered Kafka consumer (the workflows that follow events) |
 | `python -m app.relay [--setup]` | publish outbox rows to Kafka until stopped; `--setup` creates topics and registers schemas, then exits |
 | `python -m app.cli republish` | queue a state event for every clinic, department and provider (backfill a downstream copy) |
@@ -266,7 +274,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1046 fast tests (plus 1 skip) in ~49s (48.63s on a run of `python -m pytest -m "not docker" -q`) and 234 docker-lane tests (`-m docker`, 131s), measured 2026-11-10; 60 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1160 fast tests (plus 1 skip) in ~62s (61.63s on a run of `python -m pytest -m "not docker" -q`) and ~250 docker-lane tests (`-m docker`, ~4 min), measured 2026-11-10; 72 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -288,15 +296,17 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-**5**, **6** and **7** are satisfied today, **1** for Temporal and Kafka, **3** for Temporal and Kafka consumers
-(`app/events/consumer.py:CONSUMERS`, enumerated by `tests/meta/test_consumers_idempotent.py`), and **4** in the
+**5**, **6** and **7** are satisfied today, **1** for Temporal, Kafka and RabbitMQ, **3** for Temporal Kafka consumers
+(`app/events/consumer.py:CONSUMERS`, enumerated by `tests/meta/test_consumers_idempotent.py`)
+and Celery tasks (`app/celery_app.py:TASKS`, `tests/meta/test_celery_tasks.py`), and **4** in the
 consumer runtime (`processed_events`, keyed on `event_id`); the rest await the code they
 constrain.
 
 - **1** — for Temporal only: the worker and the booking router take the queue from
   `Settings.task_queue()` (`app/worker.py`, `app/modules/scheduling/router.py`, with
   `app/core/temporal.py:TASK_QUEUE`); and Kafka: every topic and subject goes through
-  `Settings.topic()` (`app/events/kafka.py:broker_topic`). `queue()` has no callers yet.
+  `Settings.topic()` (`app/events/kafka.py:broker_topic`); and RabbitMQ: every queue through
+  `Settings.queue()` (`app/celery_app.py:queues`).
 - **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:

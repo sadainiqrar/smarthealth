@@ -1,0 +1,10 @@
+id: sys-011-every-celery-task-is-registered-and-acks-late
+title: "Every Celery task is in the task registry, acknowledges late, and is routed to a named queue"
+requirement: [PART-A-NFR-3]
+tier: unit
+priority: P1
+status: ready
+# Harness requirement 3 for Celery. A task acknowledged on receipt is lost when its worker
+# dies mid-run; acks_late plus task_reject_on_worker_lost make the broker redeliver it,
+# which is safe because every task here is idempotent.
+impl: "tests/meta/test_celery_tasks.py::test_every_task_acknowledges_late"

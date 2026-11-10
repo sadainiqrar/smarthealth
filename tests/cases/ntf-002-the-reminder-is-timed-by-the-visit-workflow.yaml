@@ -1,0 +1,12 @@
+id: ntf-002-the-reminder-is-timed-by-the-visit-workflow
+title: "The appointment reminder is timed by the visit workflow and dies with a cancel"
+requirement: [PART-A-FR-2, PART-A-FR-4]
+tier: workflow
+priority: P1
+status: ready
+# Spec D-26: Temporal owns when, Celery only delivers. The VisitWorkflow that already owns
+# the appointment's time waits until 24 h before the slot, then its activity queues the
+# message; a cancel ends the workflow and so the reminder, with no cancel path of its own.
+# Behind workflow.patched("visit-reminder"), so visit workflows started earlier replay.
+# The sibling test_a_cancel_before_the_reminder_means_no_reminder proves the second half.
+impl: "tests/tiers/t2_workflow/test_visit_workflow.py::test_the_reminder_goes_out_before_the_deadline"
