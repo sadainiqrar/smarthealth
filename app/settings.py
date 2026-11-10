@@ -98,6 +98,16 @@ class Settings(BaseSettings):
     #: on one broker never steal each other's partitions.
     kafka_group: str = "smarthealth"
 
+    # --- Billing (Week 3 slice 4, spec D-27) ---
+    #: The payment gateway: the payments-mock service, standing in for a real provider.
+    payments_url: str = "http://localhost:8090"
+    #: Short: an activity waiting on a dead gateway holds a worker slot. Temporal retries.
+    payments_timeout_seconds: float = Field(default=2.0, gt=0)
+    #: What a visit costs, in minor units. A per-department price table is not built; one
+    #: amount shows every path the billing workflow has.
+    billing_amount_minor: int = Field(default=5000, gt=0)
+    billing_currency: str = "USD"
+
     # --- Temporal: durable workflows (PRD D-7) ---
     temporal_host: str = "localhost"
     temporal_port: int = 7233

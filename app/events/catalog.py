@@ -45,6 +45,7 @@ TOPICS: dict[str, Topic] = {
         Topic("appointments.no_show", TopicKind.EVENT),
         Topic("visits.completed", TopicKind.EVENT),
         Topic("identity.sessions_revoked", TopicKind.EVENT),
+        Topic("billing.status_updated", TopicKind.EVENT),
         Topic("providers.state", TopicKind.STATE),
         Topic("clinics.state", TopicKind.STATE),
         Topic("departments.state", TopicKind.STATE),

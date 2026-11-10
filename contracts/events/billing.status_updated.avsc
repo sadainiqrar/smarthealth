@@ -1,0 +1,88 @@
+{
+  "type": "record",
+  "name": "BillingStatusUpdated",
+  "namespace": "smarthealth.events.v1",
+  "doc": "An appointment's billing record changed state: authorized, declined, captured, voided or refunded.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "uuid7; the idempotency key every consumer dedupes on"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the topic's logical name, e.g. appointments.cancelled"
+    },
+    {
+      "name": "schema_version",
+      "type": "int"
+    },
+    {
+      "name": "occurred_at",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "when the change committed (the outbox row's insert time)"
+    },
+    {
+      "name": "producer",
+      "type": {
+        "type": "string"
+      },
+      "doc": "part-a, knowledge or assistant"
+    },
+    {
+      "name": "subject_id",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the entity the event is about; also the Kafka message key"
+    },
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "BillingStatusUpdatedPayload",
+        "fields": [
+          {
+            "name": "appointment_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "patient_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "billing_status",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "amount_minor",
+            "type": "long"
+          },
+          {
+            "name": "currency",
+            "type": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
