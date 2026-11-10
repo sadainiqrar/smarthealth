@@ -1,0 +1,62 @@
+// The assistant service (Part B, Week 5): conversations, streamed to the browser over
+// gRPC-Web through Envoy (spec D-30). Server-streaming only -- the shape gRPC-Web supports,
+// and the shape of a chat turn.
+//
+// Week 3 slice 7 ships the skeleton: Chat echoes the message, word by word, with
+// citations from knowledge.Search. Week 5 puts the LangGraph agent behind the same call.
+syntax = "proto3";
+
+package smarthealth.assistant.v1;
+
+service Assistant {
+  // One turn: the user's message in, a stream of events out. A reconnect sends the same
+  // turn_id with resume_from = the last seq it saw, and the stream replays after it.
+  rpc Chat(ChatRequest) returns (stream ChatEvent);
+  // "Stop generating": the browser cannot send on an open server stream, so this is a
+  // separate call. The turn's stream ends with Done.
+  rpc Cancel(CancelRequest) returns (CancelReply);
+}
+
+message ChatRequest {
+  string conversation_id = 1;
+  // Chosen by the client, so a retry and a resume name the same turn.
+  string turn_id = 2;
+  string message = 3;
+  // Replay only events with seq greater than this (0: from the start).
+  int64 resume_from = 4;
+}
+
+message ChatEvent {
+  string turn_id = 1;
+  // Strictly increasing within a turn, from 1.
+  int64 seq = 2;
+  oneof kind {
+    string token = 3;
+    Citation citation = 4;
+    Done done = 5;
+    Error error = 6;
+  }
+}
+
+message Citation {
+  string source_id = 1;
+  string title = 2;
+}
+
+message Done {
+  // "complete" or "cancelled".
+  string reason = 1;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+message CancelRequest {
+  string turn_id = 1;
+}
+
+message CancelReply {
+  bool cancelled = 1;
+}

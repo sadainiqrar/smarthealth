@@ -1,0 +1,9 @@
+# buf lint and buf breaking (spec D-30): the gRPC contracts get the same compatibility
+# discipline Schema Registry gives the Kafka contracts.
+#   buf lint contracts/proto
+#   buf breaking contracts/proto --against '.git#branch=main,subdir=contracts/proto'
+version: v2
+lint:
+  use: [STANDARD]
+breaking:
+  use: [FILE]

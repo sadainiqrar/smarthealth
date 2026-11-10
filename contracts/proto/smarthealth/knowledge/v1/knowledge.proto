@@ -1,0 +1,34 @@
+// The knowledge service (Part B, Week 4): searchable healthcare knowledge.
+//
+// Week 3 slice 7 ships the skeleton: Search answers from the service's own copy of the
+// provider directory, built from the compacted providers.state topic. Week 4 puts hybrid
+// vector retrieval behind the same call; the contract does not change.
+syntax = "proto3";
+
+package smarthealth.knowledge.v1;
+
+service Knowledge {
+  // Search the corpus. The caller's audience (patient or staff) comes from its access
+  // token, never from the request (spec section 8.4).
+  rpc Search(SearchRequest) returns (SearchReply);
+}
+
+message SearchRequest {
+  string query = 1;
+  // At most this many hits; 0 means the service default.
+  int32 limit = 2;
+}
+
+message Hit {
+  // What the hit is about, e.g. "provider:<uuid>" or "doc:<id>#<section>".
+  string source_id = 1;
+  // "provider", "document".
+  string kind = 2;
+  string title = 3;
+  string snippet = 4;
+  float score = 5;
+}
+
+message SearchReply {
+  repeated Hit hits = 1;
+}
