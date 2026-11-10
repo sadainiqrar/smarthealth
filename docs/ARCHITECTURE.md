@@ -37,7 +37,7 @@ What is *not* built, stated plainly so a reviewer does not have to discover it:
 | MongoDB | yes | yes (`pymongo`) | **yes** — audit trail only |
 | Redis | yes — the *state* instance, `noeviction` + AOF | yes (`redis`) | **yes** — sessions and refresh-token rotation (`app/modules/identity/sessions.py`), login throttling and the booking rate limit (`app/core/ratelimit.py`); no cache yet (PRD R-7, slice 5) |
 | Temporal | yes (`temporal`), plus a `worker` service under `--profile app` | yes (`temporalio`) | **yes** — client, worker process, registries, a canary workflow, and four business workflows: booking (§3.2), the visit no-show timer (§3.2a), the cancel follow-up and reschedule (§3.3) |
-| Kafka + Schema Registry | yes (`kafka`, `schema-registry`) | **no** | **no** |
+| Kafka + Schema Registry | yes (`kafka` with topic auto-creation off, `schema-registry`), plus `relay` under `--profile app` | yes (`confluent-kafka[avro,schemaregistry]`, `fastavro`) | **yes** — `app/events/`: the outbox and its producers, the relay, the consumer runtime with dead letters; **no consumer registered yet** (slice 4) |
 | Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
 | OpenTelemetry Collector, Jaeger, Prometheus, Grafana | yes (`otel-collector`, `jaeger`, `prometheus`, `grafana`; config under `ops/`) | yes (`opentelemetry-sdk`, OTLP/HTTP exporter, FastAPI and SQLAlchemy instrumentation; Temporal's `contrib.opentelemetry`) | **yes** — `app/core/telemetry.py` (providers, first install wins), trace ids in `app/core/logging.py`, FastAPI instrumentation in `app/main.py`, `tracing_interceptors()` / `telemetry_runtime()` in `app/core/temporal.py`; Redis, Mongo, Kafka and Celery are not instrumented yet |
 
@@ -1665,7 +1665,12 @@ reschedule refused inside the workflow, visible only by polling the new id (R-22
 
 ### 3.4 Domain event catalogue
 
-> **Design. No topic exists and no producer or consumer is written.**
+> **Built in Week 3 slice 3** except where marked: the topics below exist (`app/events/catalog.py`,
+> schemas in `contracts/events/`), every producer writes through the outbox, and the relay
+> publishes. `billing.status_updated` and `notifications.reminder_due` are not built (slices 4
+> and 5). **No consumer is registered yet** — the consumers listed are slice 4 onwards. The
+> as-built catalogue and payloads are in the Weeks 3–5 spec §3.2, which supersedes the sketch
+> below; `providers.schedule_changed` became the compacted `providers.state`.
 
 `docs/requirements/part-a-core-platform.md` §4 names seven event categories. The table below
 maps each to a producer, consumers, and a payload sketch.
@@ -1717,7 +1722,10 @@ D-3); Cancellation Rate from `appointments.cancelled` against `appointments.book
 
 ### 3.5 Idempotency
 
-> **Design. No consumer exists to be idempotent.**
+> **The runtime is built (Week 3 slice 3)**: `app/events/consumer.py` inserts the
+> `(consumer, event_id)` mark into `processed_events` in the handler's own transaction, retries,
+> and dead-letters. No consumer is registered yet, so `test_consumers_idempotent.py` arrives with
+> the first one (slice 4).
 
 **Every consumer assumes at-least-once delivery and takes an explicit idempotency key.**
 This is harness requirement 4 (`CLAUDE.md`; `2026-09-01-testing-harness-design.md` §6.4):

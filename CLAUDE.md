@@ -66,8 +66,15 @@ login throttling (`app/core/ratelimit.py`) locks an address after five failures 
 answering exactly like a wrong password; booking and reschedule share a per-user limit
 (429). **Every test token needs a session**: mint with `tests/harness/auth.py:issue_token`
 (contract tier, in-memory store) or the T3 `token_for` fixture (real Redis) — never bare
-`create_access_token`. Next is slice 3, the event backbone (outbox, Kafka, Schema
-Registry). Kafka, Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
+`create_access_token`. **Slice 3, the event backbone, is built:** every domain change writes its event through
+`app/events/outbox.py:emit` **in its own transaction** (the outbox, D-21); `python -m
+app.relay` (compose `relay`) publishes as Avro under Schema Registry, per-key in order, at
+least once; `app/events/consumer.py` is the consumer runtime (dedupe in `processed_events`,
+retry, `<topic>.dlt`); topics in `app/events/catalog.py`, schemas in `contracts/events/`
+(a meta-test keeps them in step; no clinical field names). Broker topic auto-creation is
+**off** — `python -m app.relay --setup` creates topics and registers schemas. No consumer
+is registered yet. Next is slice 4 (Kafka → Temporal: the cancel follow-up, provider
+deactivation, post-visit, billing with `payments-mock`). Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -104,6 +111,9 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
+| `python -m app.relay [--setup]` | publish outbox rows to Kafka until stopped; `--setup` creates topics and registers schemas, then exits |
+| `python -m app.cli republish` | queue a state event for every clinic, department and provider (backfill a downstream copy) |
+| `python -m app.cli dlt-replay --topic … [--limit N]` | re-publish a topic's dead letters once their cause is fixed |
 | `python -m app.cli deactivate-user --email …` | stop a login authenticating and end every live session it has |
 | `python -m app.cli generate-signing-key` | print a fresh Ed25519 key for `SMARTHEALTH_JWT_PRIVATE_KEY` (the committed default is a development key, refused when `SMARTHEALTH_ENVIRONMENT=production`) |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
@@ -247,7 +257,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 992 fast tests (plus 1 skip) in ~37s (36.84s on a run of `python -m pytest -m "not docker" -q`) and 223 docker-lane tests (`-m docker`, 98s), measured 2026-11-10; 54 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1046 fast tests (plus 1 skip) in ~49s (48.63s on a run of `python -m pytest -m "not docker" -q`) and 234 docker-lane tests (`-m docker`, 131s), measured 2026-11-10; 60 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -269,13 +279,15 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-**5**, **6** and **7** are satisfied today, and **1** and **3** for Temporal only; the rest await the code they
+**5**, **6** and **7** are satisfied today, **1** for Temporal and Kafka, **3** for Temporal (the
+consumer registry `app/events/consumer.py:CONSUMERS` exists but is empty), and **4** in the
+consumer runtime (`processed_events`, keyed on `event_id`); the rest await the code they
 constrain.
 
 - **1** — for Temporal only: the worker and the booking router take the queue from
   `Settings.task_queue()` (`app/worker.py`, `app/modules/scheduling/router.py`, with
-  `app/core/temporal.py:TASK_QUEUE`). `topic()` and `queue()` have no callers, because no
-  Kafka or RabbitMQ code exists yet.
+  `app/core/temporal.py:TASK_QUEUE`); and Kafka: every topic and subject goes through
+  `Settings.topic()` (`app/events/kafka.py:broker_topic`). `queue()` has no callers yet.
 - **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:

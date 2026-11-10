@@ -865,7 +865,7 @@ New core paths (`tests/core-paths.txt`) for the `Stop` hook: `services/*/src/**`
 | --- | --- | --- |
 | 1 | **Observability base** — **built** — Collector, Jaeger, Prometheus, Grafana (provisioned); OTel in API and Temporal worker; trace ids in logs | PART-A-OBS-2/3 (base) |
 | 2 | **Sessions** — EdDSA + JWKS, Redis sessions, refresh rotation, logout, revoke-on-deactivate, login throttling, rate limits; `redis` configured as the state instance (`redis-cache` moved to slice 5) | Week 1 §11 deferral (PRD R-26), R-7 (part) — **built** |
-| 3 | **Event backbone** — outbox, relay, Schema Registry, `contracts/events/`, topic creation, consumer runtime with dedupe and DLT, all producers, `republish` | PART-A-FR-4, NFR-3 |
+| 3 | **Event backbone** — outbox, relay, Schema Registry, `contracts/events/`, topic creation, consumer runtime with dedupe and DLT, all producers, `republish` | PART-A-FR-4, NFR-3 — **built**; as built, the outbox stores JSON validated against the Avro schema at write time (not Avro bytes), `occurred_at` is the row's insert time, and `identity.sessions_revoked` is emitted on deactivation only (a single logout stays bounded by the 10-minute token in Part B) |
 | 4 | **Kafka → Temporal** — cancel follow-up via event, `ProviderDeactivationWorkflow`, `PostVisitWorkflow`; `billing` module and `payments-mock` | R-17, R-25, FR-3 |
 | 5 | **Notifications** — Celery app on RabbitMQ, `notifications` module, Mailpit, reminder timer in `VisitWorkflow`, beat jobs (incl. stale-pending reconciler), `/slots` cache | R-9, R-7, the reminder stand-in |
 | 6 | **Analytics** — rollup consumer, `/analytics`, Platform analytics dashboard, the full dashboard and alert set | PART-A-FR-5, OBS-3 |
