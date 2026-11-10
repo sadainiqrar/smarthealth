@@ -26,6 +26,7 @@ from app.components import build_activities, register_all
 from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.logging import configure_logging
+from app.core.telemetry import instrument_engine, setup_telemetry
 from app.core.temporal import (
     ACTIVITIES,
     TASK_QUEUE,
@@ -33,6 +34,7 @@ from app.core.temporal import (
     build_worker,
     check_worker,
     connect_client,
+    telemetry_runtime,
 )
 from app.db import all_models  # noqa: F401  - registers every table; see below
 from app.db.engine import create_engine
@@ -58,7 +60,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
 
 async def _run(settings: Settings) -> None:
     register_all()
-    client = await connect_client(settings, lazy=False)
+    telemetry = setup_telemetry(settings, "part-a-worker")
+    client = await connect_client(settings, lazy=False, runtime=telemetry_runtime(settings))
     queue = settings.task_queue(TASK_QUEUE)
     logger.info(
         "worker starting",
@@ -74,6 +77,7 @@ async def _run(settings: Settings) -> None:
     # Activities hold real resources: a session factory for Postgres and the audit log's
     # Mongo collection. Built here, disposed in the finally below.
     engine = create_engine(settings)
+    instrument_engine(engine)
     mongo = create_mongo_client(settings)
     try:
         audit = AuditLog(get_audit_collection(mongo, settings), Clock())
@@ -84,6 +88,7 @@ async def _run(settings: Settings) -> None:
         worker = build_worker(client, queue, workflows=list(WORKFLOWS), activities=activities)
         await _serve(worker, queue)
     finally:
+        telemetry.flush()
         await engine.dispose()
         await mongo.close()
 

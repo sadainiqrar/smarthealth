@@ -16,7 +16,9 @@ from collections.abc import Callable, Sequence
 from datetime import timedelta
 from typing import Any
 
-from temporalio.client import Client, WorkflowFailureError
+from temporalio.client import Client, Interceptor, WorkflowFailureError
+from temporalio.contrib.opentelemetry import TracingInterceptor
+from temporalio.runtime import OpenTelemetryConfig, Runtime, TelemetryConfig
 from temporalio.service import RPCError
 from temporalio.worker import Worker
 
@@ -44,11 +46,52 @@ WORKFLOWS: Registry[type] = Registry("workflow")
 ACTIVITIES: Registry[Callable[..., Any]] = Registry("activity")
 
 
-async def connect_client(settings: Settings, *, lazy: bool = True) -> Client:
-    """A Temporal client. Lazy by default so the API boots with no Temporal running,
-    exactly as every other client in app.main does."""
+#: How often Temporal core pushes its SDK metrics; matches the application's interval.
+TEMPORAL_METRIC_PERIOD = timedelta(seconds=10)
+
+
+def tracing_interceptors() -> list[Interceptor]:
+    """The interceptors every client gets: OpenTelemetry tracing.
+
+    One interceptor serves both sides. On a client it opens `StartWorkflow:<type>` spans
+    and puts the trace context in the workflow's headers; a Worker built from that client
+    inherits it and opens `RunWorkflow:<type>` / `RunActivity:<type>` spans from those
+    headers -- so a booking's activities join the trace of the request that started it.
+    It uses the global tracer provider (app/core/telemetry.py).
+    """
+    return [TracingInterceptor()]
+
+
+def telemetry_runtime(settings: Settings) -> Runtime | None:
+    """A Temporal runtime exporting the SDK's own metrics over OTLP/gRPC, or None.
+
+    These come from the SDK's Rust core, not from Python, which is why they need their
+    own exporter: workflow and activity outcomes, schedule-to-start latency, task-queue
+    polling. None (no endpoint configured) keeps the SDK's default runtime.
+    """
+    if not settings.otel_endpoint_grpc:
+        return None
+    return Runtime(
+        telemetry=TelemetryConfig(
+            metrics=OpenTelemetryConfig(
+                url=settings.otel_endpoint_grpc, metric_periodicity=TEMPORAL_METRIC_PERIOD
+            )
+        )
+    )
+
+
+async def connect_client(
+    settings: Settings, *, lazy: bool = True, runtime: Runtime | None = None
+) -> Client:
+    """A Temporal client, traced. Lazy by default so the API boots with no Temporal
+    running, exactly as every other client in app.main does."""
+    extra: dict[str, Any] = {"runtime": runtime} if runtime is not None else {}
     return await Client.connect(
-        settings.temporal_address, namespace=settings.temporal_namespace, lazy=lazy
+        settings.temporal_address,
+        namespace=settings.temporal_namespace,
+        lazy=lazy,
+        interceptors=tracing_interceptors(),
+        **extra,
     )
 
 
