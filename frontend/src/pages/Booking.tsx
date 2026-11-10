@@ -63,6 +63,44 @@ function VisitButton({ appointmentId, action }: { appointmentId: string; action:
   );
 }
 
+// A visit completes with its signed note (server rule, spec 9.6). The demo client's note is
+// the minimum the server signs -- a diagnosis and a summary for the patient; clinical editing
+// proper is not this client's job.
+function NoteForm({ appointmentId }: { appointmentId: string }) {
+  const queryClient = useQueryClient();
+  const [diagnosis, setDiagnosis] = useState("");
+  const [summary, setSummary] = useState("");
+  const mutation = useMutation({
+    mutationFn: async () => {
+      await api(`/appointments/${appointmentId}/note`, {
+        method: "PUT",
+        json: { patient_summary: summary, diagnoses: [{ description: diagnosis }] },
+      });
+      await api(`/appointments/${appointmentId}/note/sign`, { method: "POST" });
+      return api<Visit>(`/appointments/${appointmentId}/complete`, { method: "POST" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["visit", appointmentId] });
+      queryClient.invalidateQueries({ queryKey: ["appointment", appointmentId] });
+      queryClient.invalidateQueries({ queryKey: ["appointments"] });
+    },
+  });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    mutation.mutate();
+  };
+  return (
+    <form onSubmit={submit} className="stack">
+      <label>Diagnosis <input value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)} required /></label>
+      <label>Summary for the patient
+        <textarea value={summary} onChange={(e) => setSummary(e.target.value)} required />
+      </label>
+      <button type="submit" className="primary" disabled={mutation.isPending}>Sign note and complete visit</button>
+      <ErrorText error={mutation.error} />
+    </form>
+  );
+}
+
 // Book the new slot first, release the old one after (the server's order): the answer is
 // a 202 with the NEW appointment's id, which is what to watch.
 function RescheduleForm({ appointment, onDone }: { appointment: Appointment; onDone: () => void }) {
@@ -163,7 +201,10 @@ export default function Booking() {
             <div className="card">
               <ErrorText error={visitQuery.error} />
               {visitKnown && <VisitCard visit={visit} status={appt.status} />}
-              {action && <div className="actions"><VisitButton appointmentId={appt.id} action={action} /></div>}
+              {action === "complete" && <NoteForm appointmentId={appt.id} />}
+              {action && action !== "complete" && (
+                <div className="actions"><VisitButton appointmentId={appt.id} action={action} /></div>
+              )}
             </div>
           )}
 

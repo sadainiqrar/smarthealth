@@ -55,3 +55,44 @@ async def daily_counts(
     )
     completed = Counter({(d, c, p): n for d, c, p, n in rows})
     return {"booked": booked, "cancelled": cancelled, "completed": completed}
+
+
+async def visit_facts(
+    session: AsyncSession, appointment_id: uuid.UUID
+) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID] | None:
+    """(visit id, patient id, provider id) for an appointment that has a visit, else None.
+    What the clinical record needs to attach a note to a visit (spec 9.6)."""
+    row = (await session.execute(
+        select(Visit.id, Appointment.patient_id, Appointment.provider_id)
+        .join(Appointment, Appointment.id == Visit.appointment_id)
+        .where(Visit.appointment_id == appointment_id)
+    )).one_or_none()
+    return (row[0], row[1], row[2]) if row else None
+
+
+async def appointment_parties(
+    session: AsyncSession, appointment_id: uuid.UUID
+) -> tuple[uuid.UUID, uuid.UUID] | None:
+    """(patient id, provider id) of an appointment, or None if there is no such one."""
+    row = (await session.execute(
+        select(Appointment.patient_id, Appointment.provider_id)
+        .where(Appointment.id == appointment_id)
+    )).one_or_none()
+    return (row[0], row[1]) if row else None
+
+
+async def has_care_relationship(
+    session: AsyncSession, provider_id: uuid.UUID, patient_id: uuid.UUID
+) -> bool:
+    """Whether this provider treats this patient (spec 9.6, closing PRD R-14): a completed
+    visit between them, or a live (pending or confirmed) appointment. The test for a
+    provider reading a patient's clinical record."""
+    found = await session.scalar(
+        select(func.count()).select_from(Appointment).where(
+            Appointment.provider_id == provider_id,
+            Appointment.patient_id == patient_id,
+            Appointment.status.in_((AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED,
+                                    AppointmentStatus.COMPLETED)),
+        )
+    )
+    return bool(found)

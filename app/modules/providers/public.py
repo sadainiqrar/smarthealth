@@ -44,3 +44,9 @@ async def is_active_provider(session: AsyncSession, provider_id: uuid.UUID) -> b
     """True only for an existing, active provider -- for reads that filter rather than
     refuse (`GET /slots` lists nothing for an inactive or unknown provider)."""
     return bool(await _active_flag(session, provider_id))
+
+
+async def provider_id_for_user(session: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+    """The provider record linked to a login, or None. How a provider's token becomes "which
+    clinician is this" for per-object checks (PRD R-14)."""
+    return await session.scalar(select(Provider.id).where(Provider.user_id == user_id))

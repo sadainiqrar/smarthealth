@@ -68,6 +68,7 @@ FRAMEWORK_BOUND: frozenset[str] = frozenset(
         "app.api.error_handlers",
         "app.modules.identity.deps",
         "app.modules.analytics.router",
+        "app.modules.clinical.router",
         "app.modules.identity.router",
         "app.modules.patients.router",
         "app.modules.providers.router",
@@ -267,12 +268,24 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # The nightly reconcile compares the rollup with scheduling's own counts, through
         # its published interface.
         ("app.modules.analytics.tasks", "app.modules.scheduling.public"),
+        # Week 4 slice 2 (spec 9.6): the clinical record's routes are role-gated, and decide
+        # who may read a record from the patient's identity, the provider's identity and the
+        # care relationship -- each through its owner's published interface.
+        ("app.modules.clinical.router", "app.modules.identity.deps"),
+        ("app.modules.clinical.router", "app.modules.identity.models"),
+        ("app.modules.clinical.router", "app.modules.identity.security"),
+        ("app.modules.clinical.router", "app.modules.patients.public"),
+        ("app.modules.clinical.router", "app.modules.providers.public"),
+        ("app.modules.clinical.router", "app.modules.scheduling.public"),
+        # R-14: a visit's seen/complete are its own provider's, and complete needs a signed
+        # note (the pair itself is declared with scheduling.router's others above).
         ("app.modules.scheduling.router", "app.modules.identity.deps"),
         ("app.modules.scheduling.router", "app.modules.identity.models"),
         ("app.modules.scheduling.router", "app.modules.identity.security"),
         ("app.modules.scheduling.router", "app.modules.patients.public"),
         # R-24: GET /slots lists nothing for an inactive provider.
         ("app.modules.scheduling.router", "app.modules.providers.public"),
+        ("app.modules.scheduling.router", "app.modules.clinical.public"),
     }
 )
 

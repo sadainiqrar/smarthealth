@@ -32,7 +32,8 @@ from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
 from app.modules.identity.security import TokenClaims
 from app.modules.patients.public import patient_id_for_user
-from app.modules.providers.public import is_active_provider
+from app.modules.clinical.public import has_signed_note
+from app.modules.providers.public import is_active_provider, provider_id_for_user
 from app.modules.scheduling import service
 from app.modules.scheduling.booking import (
     appointment_id_for,
@@ -238,6 +239,17 @@ async def check_in(
     return VisitRead.model_validate(visit)
 
 
+async def _treating(session: AsyncSession, claims: TokenClaims, appointment_id: uuid.UUID) -> None:
+    """PRD R-14, closed: a provider acts only on their own appointments' visits -- 404 for
+    anyone else's, so ids cannot be probed. Admin keeps the override it always had."""
+    if claims.role is not UserRole.PROVIDER:
+        return
+    appointment = await service.get_appointment(session, appointment_id)
+    mine = await provider_id_for_user(session, uuid.UUID(claims.subject))
+    if appointment is None or mine is None or appointment.provider_id != mine:
+        raise NotFound(f"appointment {appointment_id} does not exist")
+
+
 @router.post("/{appointment_id}/seen", response_model=VisitRead)
 async def mark_seen(
     appointment_id: uuid.UUID,
@@ -246,6 +258,7 @@ async def mark_seen(
     clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CLINICIANS)),
 ) -> VisitRead:
+    await _treating(session, claims, appointment_id)
     visit = await service.mark_seen(
         session, audit, appointment_id=appointment_id, now=clock.now(),
         actor_user_id=claims.subject,
@@ -262,6 +275,11 @@ async def complete_visit(
     clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CLINICIANS)),
 ) -> VisitRead:
+    await _treating(session, claims, appointment_id)
+    # Spec 9.6: a visit completes with its record. The note is checked here, not inside
+    # complete_visit, because the service crosses no module boundary.
+    if not await has_signed_note(session, appointment_id):
+        raise Conflict("sign the visit's clinical note before completing the visit")
     visit = await service.complete_visit(
         session, audit, appointment_id=appointment_id, now=clock.now(),
         actor_user_id=claims.subject,
