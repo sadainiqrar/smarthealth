@@ -42,7 +42,9 @@ services:
       SMARTHEALTH_TEMPORAL_PORT: 7233
       SMARTHEALTH_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
       SMARTHEALTH_OTEL_ENDPOINT_GRPC: http://otel-collector:4317
-      SMARTHEALTH_JWT_SECRET: ${SMARTHEALTH_JWT_SECRET:-dev-secret-change-me-before-deploying-anywhere}
+      # Unset, the development signing key is used -- fine for this compose stack, and
+      # refused by the app when SMARTHEALTH_ENVIRONMENT=production.
+      SMARTHEALTH_JWT_PRIVATE_KEY: ${SMARTHEALTH_JWT_PRIVATE_KEY:-}
     ports: ["${APP_PORT:-8000}:8000"]
     depends_on:
       postgres:
@@ -156,7 +158,13 @@ services:
       retries: 12
 
   redis:
+    # The STATE instance (Weeks 3-5 spec D-24): sessions, rate-limit counters, locks.
+    # noeviction, because evicting a session under memory pressure logs a user out at
+    # random and evicting a throttle counter unlocks a guesser; full memory should fail
+    # writes loudly instead. AOF so a restart does not log everyone out. Caches get their
+    # own instance (allkeys-lru) when the first cache lands (slice 5).
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     ports: ["${REDIS_PORT:-6379}:6379"]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
