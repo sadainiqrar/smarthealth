@@ -23,7 +23,8 @@ from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound
 from app.core.pagination import PageParams
 from app.db.constraints import violated_constraint
-from app.modules.providers.models import Provider
+from app.events.outbox import emit
+from app.modules.providers.models import Clinic, Department, Provider, provider_departments
 from app.modules.providers.schemas import ProviderCreate, ProviderUpdate
 
 ENTITY = "provider"
@@ -51,6 +52,67 @@ def _snapshot(provider: Provider) -> dict[str, object]:
     }
 
 
+# --- state events (Week 3 slice 3; Weeks 3-5 spec section 3.2) ---------------------------
+#
+# Every provider, clinic and department write publishes the entity's whole current state
+# to a compacted `*.state` topic, in the same transaction (the outbox). A consumer -- the
+# Part B knowledge service first -- builds its own copy by reading from offset 0 and never
+# queries these tables. `republish_all` covers rows written before the producer existed.
+
+
+async def emit_provider_state(session: AsyncSession, provider: Provider) -> None:
+    department_ids = (
+        await session.scalars(
+            select(provider_departments.c.department_id)
+            .where(provider_departments.c.provider_id == provider.id)
+            .order_by(provider_departments.c.department_id)
+        )
+    ).all()
+    emit(session, "providers.state", key=str(provider.id), payload={
+        "provider_id": str(provider.id),
+        "first_name": provider.first_name,
+        "last_name": provider.last_name,
+        "specialty": provider.specialty,
+        "license_number": provider.license_number,
+        "is_active": provider.is_active,
+        "department_ids": [str(value) for value in department_ids],
+    })
+
+
+def emit_clinic_state(session: AsyncSession, clinic: Clinic) -> None:
+    emit(session, "clinics.state", key=str(clinic.id), payload={
+        "clinic_id": str(clinic.id),
+        "name": clinic.name,
+        "timezone": clinic.timezone,
+        "address": clinic.address,
+        "is_active": clinic.is_active,
+    })
+
+
+def emit_department_state(session: AsyncSession, department: Department) -> None:
+    emit(session, "departments.state", key=str(department.id), payload={
+        "department_id": str(department.id),
+        "clinic_id": str(department.clinic_id),
+        "name": department.name,
+    })
+
+
+async def republish_all(session: AsyncSession) -> dict[str, int]:
+    """One state event per clinic, department and provider. Harmless to repeat:
+    compaction keeps the latest per key, and consumers dedupe on event id."""
+    counts = {"clinics": 0, "departments": 0, "providers": 0}
+    for clinic in (await session.scalars(select(Clinic).order_by(Clinic.id))).all():
+        emit_clinic_state(session, clinic)
+        counts["clinics"] += 1
+    for department in (await session.scalars(select(Department).order_by(Department.id))).all():
+        emit_department_state(session, department)
+        counts["departments"] += 1
+    for provider in (await session.scalars(select(Provider).order_by(Provider.id))).all():
+        await emit_provider_state(session, provider)
+        counts["providers"] += 1
+    return counts
+
+
 async def register_provider(
     session: AsyncSession,
     audit: AuditLog,
@@ -72,6 +134,7 @@ async def register_provider(
         # as a 500 that gets investigated rather than a misleading 409.
         raise
 
+    await emit_provider_state(session, provider)
     await audit.record(
         AuditEvent(
             entity_type=ENTITY,
@@ -173,6 +236,10 @@ async def update_provider(
     # the `BEFORE UPDATE` trigger wrote (`clock_timestamp()`).
     await session.flush()
 
+    # Deactivation is this event with is_active false: there is no separate
+    # providers.deactivated topic (spec section 3.2), and a consumer that cares about the
+    # transition compares old and new.
+    await emit_provider_state(session, provider)
     await audit.record(
         AuditEvent(
             entity_type=ENTITY,

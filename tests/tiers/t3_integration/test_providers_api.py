@@ -124,3 +124,28 @@ async def test_deactivating_a_provider_is_audited(api, token_for, audit_document
     assert len(events) == 1
     assert events[0]["before"]["is_active"] is True
     assert events[0]["after"]["is_active"] is False
+
+
+async def test_every_provider_write_publishes_its_state(api, token_for, db_session):
+    """Referenced by tests/cases/evt-006-a-provider-write-publishes-its-state.yaml.
+
+    Registration and deactivation each queue the provider's whole state for the
+    compacted providers.state topic, in the write's own transaction. Deactivation is that
+    event with is_active false -- the trigger PRD R-25's consumer will act on."""
+    from sqlalchemy import select
+
+    from app.events.models import OutboxEvent
+
+    headers = token_for(UserRole.ADMIN)
+    created = (await api.post("/providers", json=_body(), headers=headers)).json()
+    await api.patch(f"/providers/{created['id']}", json={"is_active": False}, headers=headers)
+
+    rows = (
+        await db_session.scalars(
+            select(OutboxEvent)
+            .where(OutboxEvent.topic == "providers.state", OutboxEvent.key == created["id"])
+            .order_by(OutboxEvent.seq)
+        )
+    ).all()
+    assert [row.payload["is_active"] for row in rows] == [True, False]
+    assert rows[-1].payload["license_number"] == created["license_number"]

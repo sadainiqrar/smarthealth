@@ -1,6 +1,7 @@
 """Login, refresh, logout and deactivation against real Postgres and Redis."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -74,13 +75,29 @@ async def test_deactivating_a_login_ends_its_live_sessions(api, db_session, db_s
 
     redis = create_redis_client(db_settings)
     try:
-        _, revoked = await deactivate_user(
-            db_session, email=email, sessions=RedisSessionStore(redis, db_settings)
+        user, revoked = await deactivate_user(
+            db_session, email=email, sessions=RedisSessionStore(redis, db_settings),
+            now=datetime.now(UTC),
         )
     finally:
         await redis.aclose()
     assert revoked == 1
     assert (await api.get("/providers", headers=headers)).status_code == 401
+    # Announced, in the deactivation's own transaction, for the Part B services -- which
+    # verify tokens by signature alone and learn of a revocation only this way.
+    from sqlalchemy import select
+
+    from app.events.models import OutboxEvent
+
+    (event,) = (
+        await db_session.scalars(
+            select(OutboxEvent).where(
+                OutboxEvent.topic == "identity.sessions_revoked",
+                OutboxEvent.key == str(user.id),
+            )
+        )
+    ).all()
+    assert event.payload["reason"] == "deactivated" and event.payload["session_id"] is None
     assert (await _login(api, email)).status_code == 401
 
 

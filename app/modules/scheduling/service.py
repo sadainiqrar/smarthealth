@@ -35,6 +35,7 @@ from app.core.audit import AuditEvent, AuditLog
 from app.core.errors import Conflict, NotFound, Unprocessable
 from app.core.pagination import PageParams
 from app.db.constraints import violated_constraint
+from app.events.outbox import emit
 from app.modules.scheduling.models import (
     Appointment,
     AppointmentStatus,
@@ -114,6 +115,30 @@ async def slot_starts_at(session: AsyncSession, slot_id: uuid.UUID | None) -> da
     if slot_id is None:
         return None
     return await session.scalar(select(ProviderSlot.starts_at).where(ProviderSlot.id == slot_id))
+
+
+async def _slot_times(
+    session: AsyncSession, slot_id: uuid.UUID | None
+) -> tuple[datetime | None, datetime | None]:
+    if slot_id is None:
+        return None, None
+    row = (
+        await session.execute(
+            select(ProviderSlot.starts_at, ProviderSlot.ends_at).where(ProviderSlot.id == slot_id)
+        )
+    ).one_or_none()
+    return (row.starts_at, row.ends_at) if row else (None, None)
+
+
+# --- domain events (Week 3 slice 3; Weeks 3-5 spec section 3.2) ---------------------------
+#
+# Each is written through the outbox in the same transaction as the change it describes
+# (D-21), and only on the write that makes the change -- never on an idempotent repeat, so
+# a retried activity does not announce the same thing twice. Consumers dedupe anyway.
+
+
+def _str(value: uuid.UUID | None) -> str | None:
+    return str(value) if value is not None else None
 
 
 async def list_appointments(
@@ -224,10 +249,26 @@ async def require_reschedule_settled(
     raise Conflict("the reschedule that created this appointment is still completing")
 
 
+#: The actor a waitlist promotion books as (`_promote_waitlist`, workflows.py).
+WAITLIST_ACTOR = "system:waitlist"
+
+
+def _derived_origin(actor_user_id: str | None, rescheduled_from_id: uuid.UUID | None) -> str | None:
+    """The origin of a booking a workflow made, not a person: workflows build those
+    requests themselves, so the origin is named here rather than threaded through
+    workflow code (which would change what in-flight histories replay)."""
+    if actor_user_id == WAITLIST_ACTOR:
+        return "waitlist"
+    if rescheduled_from_id is not None:
+        return "reschedule"
+    return None
+
+
 async def create_pending(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     patient_id: uuid.UUID, slot_id: uuid.UUID, reason: str | None,
     actor_user_id: str | None, rescheduled_from_id: uuid.UUID | None = None,
+    origin: str | None = None, conversation_ref: str | None = None,
 ) -> None:
     """Insert the `pending` row, copying provider/clinic/department from the slot.
     `rescheduled_from_id` is set only for the new appointment of a reschedule; while
@@ -256,6 +297,8 @@ async def create_pending(
                 id=appointment_id, patient_id=patient_id, provider_id=slot.provider_id,
                 clinic_id=slot.clinic_id, department_id=slot.department_id, reason=reason,
                 rescheduled_from_id=rescheduled_from_id,
+                origin=origin or _derived_origin(actor_user_id, rescheduled_from_id),
+                conversation_ref=conversation_ref,
             )
             .on_conflict_do_nothing(index_elements=[Appointment.id])
         )
@@ -469,6 +512,20 @@ async def confirm_booking(
     appointment.status = AppointmentStatus.CONFIRMED
     appointment.confirmed_at = now
     await session.flush()
+    starts_at, ends_at = await _slot_times(session, appointment.slot_id)
+    emit(session, "appointments.booked", key=str(appointment.id), payload={
+        "appointment_id": str(appointment.id),
+        "patient_id": str(appointment.patient_id),
+        "provider_id": str(appointment.provider_id),
+        "clinic_id": str(appointment.clinic_id),
+        "department_id": _str(appointment.department_id),
+        "slot_id": str(appointment.slot_id),
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "rescheduled_from_id": _str(appointment.rescheduled_from_id),
+        "origin": appointment.origin,
+        "conversation_ref": appointment.conversation_ref,
+    })
     await _audit(audit, appointment, "confirmed", actor_user_id, before)
 
 
@@ -638,6 +695,17 @@ async def complete_visit(
     visit.status = VISIT_RESULT[VisitAction.COMPLETE]
     appointment.status = AppointmentStatus.COMPLETED
     await session.flush()
+    emit(session, "visits.completed", key=str(appointment.id), payload={
+        "visit_id": str(visit.id),
+        "appointment_id": str(appointment.id),
+        "patient_id": str(appointment.patient_id),
+        "provider_id": str(appointment.provider_id),
+        "clinic_id": str(appointment.clinic_id),
+        "department_id": _str(appointment.department_id),
+        "checked_in_at": visit.checked_in_at,
+        "seen_at": visit.seen_at,
+        "completed_at": visit.completed_at,
+    })
     await _audit_visit(audit, visit, "completed", actor_user_id, visit_before)
     await _audit(audit, appointment, "completed", actor_user_id, appointment_before)
     return visit
@@ -671,6 +739,13 @@ async def mark_no_show(
     before = _snapshot(appointment)
     appointment.status = AppointmentStatus.NO_SHOW
     await session.flush()
+    starts_at, _ = await _slot_times(session, appointment.slot_id)
+    emit(session, "appointments.no_show", key=str(appointment.id), payload={
+        "appointment_id": str(appointment.id),
+        "patient_id": str(appointment.patient_id),
+        "provider_id": str(appointment.provider_id),
+        "starts_at": starts_at,
+    })
     await _audit(audit, appointment, "no_show", actor_user_id, before)
     return NoShowOutcome.NO_SHOW
 
@@ -734,6 +809,16 @@ async def cancel_appointment(
     appointment.cancelled_at = now
     appointment.cancellation_reason = reason
     await session.flush()
+    starts_at, _ = await _slot_times(session, appointment.slot_id)
+    emit(session, "appointments.cancelled", key=str(appointment.id), payload={
+        "appointment_id": str(appointment.id),
+        "patient_id": str(appointment.patient_id),
+        "provider_id": str(appointment.provider_id),
+        "slot_id": _str(appointment.slot_id),
+        "starts_at": starts_at,
+        "reason": reason,
+        "initiated_by": actor_user_id,
+    })
     await _audit(audit, appointment, "cancelled", actor_user_id, before)
     return appointment
 
@@ -787,6 +872,18 @@ async def complete_reschedule(
         await _release_slot(session, appointment.slot_id)
     appointment.status = AppointmentStatus.RESCHEDULED
     await session.flush()
+    new_starts_at, _ = await _slot_times(session, replacement.slot_id)
+    # Keyed by the OLD appointment: it is the entity whose story this ends, and its
+    # cancel-or-reschedule events must stay in order on one partition.
+    emit(session, "appointments.rescheduled", key=str(appointment.id), payload={
+        "old_appointment_id": str(appointment.id),
+        "new_appointment_id": str(replacement.id),
+        "patient_id": str(appointment.patient_id),
+        "provider_id": str(replacement.provider_id),
+        "old_slot_id": _str(appointment.slot_id),
+        "new_slot_id": _str(replacement.slot_id),
+        "new_starts_at": new_starts_at,
+    })
     await _audit(audit, appointment, "rescheduled", actor_user_id, before)
     return RescheduleResult("rescheduled", appointment.slot_id)
 

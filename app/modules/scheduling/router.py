@@ -115,6 +115,11 @@ async def book_appointment(
     temporal: Client = Depends(get_temporal),
     claims: TokenClaims = Depends(require_role(*BOOKERS)),
     limiter: RateLimiter = Depends(get_rate_limiter),
+    # Set by the assistant (Week 5) when it books on a user's behalf: an opaque reference
+    # to its conversation, carried on `appointments.booked` for conversion analytics.
+    conversation_ref: str | None = Header(
+        default=None, alias="X-Conversation-Ref", min_length=1, max_length=200
+    ),
 ) -> BookingAccepted:
     await _limit_bookings(request, limiter, claims)
     if claims.role is UserRole.PATIENT:
@@ -130,10 +135,18 @@ async def book_appointment(
             slot_id=str(body.slot_id),
             actor_user_id=claims.subject,
             reason=body.reason,
+            origin=_origin(claims, conversation_ref),
+            conversation_ref=conversation_ref,
         ),
         task_queue=request.app.state.settings.task_queue(TASK_QUEUE),
     )
     return BookingAccepted(appointment_id=appointment_id)
+
+
+def _origin(claims: TokenClaims, conversation_ref: str | None) -> str:
+    if conversation_ref is not None:
+        return "assistant"
+    return "web" if claims.role is UserRole.PATIENT else "front_desk"
 
 
 @router.get("", response_model=Page[AppointmentRead])

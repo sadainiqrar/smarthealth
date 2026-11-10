@@ -20,6 +20,12 @@ class BookingRequest:
     #: Set only for the new appointment of a reschedule. Last and defaulted, so a request
     #: recorded in a workflow history before it existed still decodes.
     rescheduled_from_id: str | None = None
+    #: Where the booking came from (`web`, `front_desk`, `assistant`) and, for the
+    #: assistant, its conversation reference (spec section 3.2). Defaulted, so histories
+    #: recorded before they existed still decode; waitlist and reschedule bookings leave
+    #: them unset and `create_pending` names their origin from the request itself.
+    origin: str | None = None
+    conversation_ref: str | None = None
 
 
 @dataclass(frozen=True)

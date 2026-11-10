@@ -34,6 +34,7 @@ from datetime import datetime, time, timedelta
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.providers import service as providers_service
 from app.core.clock import Clock
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import hash_password
@@ -327,6 +328,11 @@ async def seed(
             )
             counts["slots"] += 1
     await session.flush()
+
+    # Seeded clinics, departments and providers are announced like any other write, so
+    # the Part B services see the demo network (spec section 3.2). Every run republishes
+    # them all: compaction keeps the latest per key, and consumers dedupe.
+    await providers_service.republish_all(session)
 
     return SeedSummary(**counts)
 

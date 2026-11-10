@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import InvalidCredentials, NotFound
 from app.core.ratelimit import RateLimiter
+from app.events.outbox import emit
 from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import (
     create_access_token,
@@ -160,7 +161,7 @@ async def logout_everywhere(user_id: str, *, sessions: SessionStore) -> int:
 
 
 async def deactivate_user(
-    session: AsyncSession, *, email: str, sessions: SessionStore
+    session: AsyncSession, *, email: str, sessions: SessionStore, now: datetime
 ) -> tuple[User, int]:
     """Stop a login from logging in, and end every session it has.
 
@@ -172,6 +173,13 @@ async def deactivate_user(
     if user is None:
         raise NotFound(f"no login with email {email}")
     user.is_active = False
+    # Part B services verify tokens by signature alone; this event is how they learn to
+    # refuse this login's tokens before they expire (spec D-25). In the row's own
+    # transaction, so a deactivation that committed is always announced.
+    emit(session, "identity.sessions_revoked", key=str(user.id), payload={
+        "user_id": str(user.id), "session_id": None, "reason": "deactivated",
+        "revoked_at": now,
+    })
     await session.commit()
     revoked = await sessions.revoke_user(str(user.id))
     return user, revoked

@@ -109,6 +109,7 @@ class SchedulingActivities:
                 patient_id=patient_id, slot_id=slot_id,
                 reason=request.reason, actor_user_id=request.actor_user_id,
                 rescheduled_from_id=rescheduled_from_id,
+                origin=request.origin, conversation_ref=request.conversation_ref,
             )
 
     @activity.defn(name="booking.validate_booking")
