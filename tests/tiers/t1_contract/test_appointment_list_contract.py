@@ -12,7 +12,7 @@ import pytest
 from app.api.deps import get_session
 from app.main import app
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import create_access_token
+from tests.harness.auth import issue_token
 from app.modules.scheduling import router as scheduling_router
 from app.modules.scheduling import service
 from app.modules.scheduling.models import AppointmentStatus
@@ -28,7 +28,7 @@ STAFF = (UserRole.PROVIDER, UserRole.FRONT_DESK, UserRole.ADMIN)
 
 
 def auth(role: UserRole) -> dict[str, str]:
-    token = create_access_token(
+    token = issue_token(
         subject=CALLER, role=role, settings=SETTINGS, now=datetime.now(UTC)
     )
     return {"Authorization": f"Bearer {token}"}

@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import create_access_token
+from tests.harness.auth import issue_token
 from app.settings import Settings
 
 pytestmark = pytest.mark.contract
@@ -23,7 +23,7 @@ SOME_ID = "11111111-1111-1111-1111-111111111111"
 
 
 def auth(role: UserRole) -> dict[str, str]:
-    token = create_access_token(
+    token = issue_token(
         subject=SOME_ID, role=role, settings=SETTINGS, now=NOW
     )
     return {"Authorization": f"Bearer {token}"}

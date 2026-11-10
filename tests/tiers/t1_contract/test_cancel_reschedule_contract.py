@@ -21,7 +21,7 @@ from app.api.deps import get_audit_log, get_session, get_temporal
 from app.core.errors import Conflict, NotFound
 from app.main import app
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import create_access_token
+from tests.harness.auth import issue_token
 from app.modules.scheduling import router as scheduling_router
 from app.modules.scheduling import service
 from app.modules.scheduling.booking import (
@@ -46,7 +46,7 @@ RESCHEDULE_BODY = {"new_slot_id": str(NEW_SLOT), "reason": "clash"}
 
 
 def auth(role: UserRole, subject: str = CALLER) -> dict[str, str]:
-    token = create_access_token(
+    token = issue_token(
         subject=subject, role=role, settings=SETTINGS, now=datetime.now(UTC)
     )
     return {"Authorization": f"Bearer {token}"}

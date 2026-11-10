@@ -10,8 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from app.core.errors import InvalidCredentials
+from app.core.ratelimit import InMemoryRateLimiter
 from app.modules.identity import service
 from app.modules.identity.models import UserRole
+from app.modules.identity.security import decode_access_token
+from app.modules.identity.sessions import InMemorySessionStore
 from app.settings import Settings
 
 pytestmark = pytest.mark.unit
@@ -40,13 +43,24 @@ class _FakeSession:
         return self._user
 
 
-async def _login(user: _StubUser | None, *, password: str = "whatever"):
+SETTINGS = Settings(login_max_failures=3, login_ip_max_failures=10)
+
+
+async def _login(
+    user: _StubUser | None, *, password: str = "whatever",
+    sessions: InMemorySessionStore | None = None,
+    limiter: InMemoryRateLimiter | None = None,
+    email: str = "someone@example.test", client_ip: str = "10.0.0.1",
+):
     return await service.authenticate(
         _FakeSession(user),
-        email="someone@example.test",
+        email=email,
         password=password,
-        settings=Settings(),
-        now=NOW,
+        client_ip=client_ip,
+        sessions=sessions or InMemorySessionStore(),
+        limiter=limiter or InMemoryRateLimiter(),
+        settings=SETTINGS,
+        now=datetime.now(UTC),
     )
 
 
@@ -77,12 +91,86 @@ async def test_verify_password_runs_even_when_the_account_is_inactive():
 
 async def test_verify_password_is_called_exactly_once_on_success():
     """Guards the other direction: the dummy hash must not add a second argon2 pass."""
+    sessions = InMemorySessionStore()
     with patch.object(service, "verify_password", return_value=True) as verify:
-        token, expires_in = await _login(_StubUser())
+        tokens = await _login(_StubUser(), sessions=sessions)
 
     verify.assert_called_once()
-    assert token
-    assert expires_in == Settings().jwt_expiry_minutes * 60
+    assert tokens.refresh_token
+    assert tokens.expires_in == SETTINGS.access_token_minutes * 60
+    claims = decode_access_token(tokens.access_token, settings=SETTINGS)
+    assert await sessions.is_active(claims.session_id)
+
+
+async def test_an_address_is_locked_after_too_many_failures_even_with_the_right_password():
+    limiter = InMemoryRateLimiter()
+    with patch.object(service, "verify_password", return_value=False):
+        for _ in range(SETTINGS.login_max_failures):
+            with pytest.raises(InvalidCredentials):
+                await _login(_StubUser(), limiter=limiter)
+    with patch.object(service, "verify_password", return_value=True) as verify:
+        with pytest.raises(InvalidCredentials) as raised:
+            await _login(_StubUser(), limiter=limiter)
+    assert str(raised.value) == MESSAGE
+    # Still pays the argon2 work: a fast refusal would reveal the lock by timing.
+    verify.assert_called_once()
+
+
+async def test_a_locked_unknown_address_looks_exactly_like_a_locked_real_one():
+    """Locking only real accounts would itself enumerate them; both lock, identically."""
+    limiter = InMemoryRateLimiter()
+    with patch.object(service, "verify_password", return_value=False):
+        for _ in range(SETTINGS.login_max_failures + 1):
+            with pytest.raises(InvalidCredentials) as unknown:
+                await _login(None, limiter=limiter, email="nobody@example.test")
+            with pytest.raises(InvalidCredentials) as known:
+                await _login(_StubUser(), limiter=limiter)
+    assert str(unknown.value) == str(known.value) == MESSAGE
+
+
+async def test_a_success_clears_the_address_counter():
+    limiter = InMemoryRateLimiter()
+    with patch.object(service, "verify_password", return_value=False):
+        for _ in range(SETTINGS.login_max_failures - 1):
+            with pytest.raises(InvalidCredentials):
+                await _login(_StubUser(), limiter=limiter)
+    with patch.object(service, "verify_password", return_value=True):
+        await _login(_StubUser(), limiter=limiter)
+    with patch.object(service, "verify_password", return_value=False):
+        for _ in range(SETTINGS.login_max_failures - 1):
+            with pytest.raises(InvalidCredentials):
+                await _login(_StubUser(), limiter=limiter)
+    with patch.object(service, "verify_password", return_value=True):
+        await _login(_StubUser(), limiter=limiter)  # not locked: the window restarted
+
+
+async def test_one_ip_guessing_many_addresses_is_locked_out_by_the_ip_limit():
+    limiter = InMemoryRateLimiter()
+    with patch.object(service, "verify_password", return_value=False):
+        for attempt in range(SETTINGS.login_ip_max_failures):
+            with pytest.raises(InvalidCredentials):
+                await _login(None, limiter=limiter, email=f"guess{attempt}@example.test")
+    with patch.object(service, "verify_password", return_value=True):
+        with pytest.raises(InvalidCredentials):
+            await _login(_StubUser(), limiter=limiter, email="fresh@example.test")
+        await _login(_StubUser(), limiter=limiter, client_ip="10.0.0.2")
+
+
+async def test_a_refresh_returns_a_new_pair_and_spends_the_old_refresh_token():
+    sessions = InMemorySessionStore()
+    with patch.object(service, "verify_password", return_value=True):
+        first = await _login(_StubUser(), sessions=sessions)
+    second = await service.refresh(
+        first.refresh_token, sessions=sessions, settings=SETTINGS, now=datetime.now(UTC)
+    )
+    assert second.refresh_token != first.refresh_token
+    first_sid = decode_access_token(first.access_token, settings=SETTINGS).session_id
+    assert decode_access_token(second.access_token, settings=SETTINGS).session_id == first_sid
+    with pytest.raises(InvalidCredentials):
+        await service.refresh(
+            first.refresh_token, sessions=sessions, settings=SETTINGS, now=datetime.now(UTC)
+        )
+    assert not await sessions.is_active(first_sid), "a replayed refresh token ends the session"
 
 
 @pytest.mark.parametrize(

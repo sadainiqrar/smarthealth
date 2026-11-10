@@ -22,6 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.core.errors import InvalidCredentials, PermissionDenied
 from app.modules.identity.models import UserRole
 from app.modules.identity.security import InvalidToken, TokenClaims, decode_access_token
+from app.modules.identity.sessions import SessionStore
 from app.settings import Settings, get_settings
 
 #: Built fresh per raise rather than shared as a module-level singleton: an exception
@@ -45,18 +46,28 @@ def get_token_settings() -> Settings:
     return get_settings()
 
 
+def get_session_store(request: Request) -> SessionStore:
+    """The app's session store (Redis). Overridden in the contract tier, which has none."""
+    return request.app.state.sessions
+
+
 def require_role(*allowed: UserRole) -> Callable[..., TokenClaims]:
     """Build a dependency that admits only the listed roles.
 
     401 when identity cannot be established; 403 when it can but the role is wrong —
     the distinction matters to a client deciding whether to re-authenticate.
+
+    Identity needs two things since Week 3: a valid signature, and a session that still
+    exists. The second is what makes logout and revocation immediate rather than "when
+    the token expires" -- one Redis lookup per request, which is the cost of that.
     """
     if not allowed:
         raise ValueError("require_role needs at least one role")
     permitted = frozenset(allowed)
 
-    def dependency(
+    async def dependency(
         request: Request, settings: Settings = Depends(get_token_settings),
+        sessions: SessionStore = Depends(get_session_store),
         _schema: HTTPAuthorizationCredentials | None = Depends(BEARER),
     ) -> TokenClaims:
         header = request.headers.get("Authorization", "")
@@ -67,6 +78,8 @@ def require_role(*allowed: UserRole) -> Callable[..., TokenClaims]:
             claims = decode_access_token(token, settings=settings)
         except InvalidToken as exc:
             raise InvalidCredentials(_UNAUTHORISED_DETAIL) from exc
+        if not await sessions.is_active(claims.session_id):
+            raise InvalidCredentials(_UNAUTHORISED_DETAIL)
         if claims.role not in permitted:
             raise PermissionDenied(
                 f"role '{claims.role.value}' may not perform this action; "

@@ -13,6 +13,7 @@ from app.modules.scheduling import router as scheduling_router
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(identity_router.router)
+api_router.include_router(identity_router.jwks_router)
 api_router.include_router(patients_router.router)
 api_router.include_router(providers_router.router)
 api_router.include_router(scheduling_router.router)

@@ -10,7 +10,32 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1)
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=1)
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    #: Seconds until `access_token` expires; refresh before then.
     expires_in: int
+    #: Single use: `POST /auth/refresh` spends it and returns a new one. Presenting a
+    #: spent one ends the session.
+    refresh_token: str
+
+
+class LogoutResponse(BaseModel):
+    sessions_ended: int
+
+
+class Jwk(BaseModel):
+    kty: str
+    crv: str
+    x: str
+    kid: str
+    alg: str
+    use: str
+
+
+class JwksResponse(BaseModel):
+    keys: list[Jwk]

@@ -14,7 +14,7 @@ from temporalio.service import RPCError, RPCStatusCode
 from app.api.deps import get_session, get_temporal
 from app.main import app
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import create_access_token
+from tests.harness.auth import issue_token
 from app.settings import Settings
 
 pytestmark = pytest.mark.contract
@@ -25,7 +25,7 @@ BODY = {"patient_id": str(uuid.uuid4()), "slot_id": str(uuid.uuid4())}
 
 
 def auth(role: UserRole) -> dict[str, str]:
-    token = create_access_token(
+    token = issue_token(
         subject=CALLER, role=role, settings=SETTINGS, now=datetime.now(UTC)
     )
     return {"Authorization": f"Bearer {token}"}

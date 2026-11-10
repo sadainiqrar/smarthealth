@@ -5,14 +5,15 @@ import pytest
 from fastapi import Depends, FastAPI
 
 from app.api.error_handlers import register_error_handlers
-from app.modules.identity.deps import get_token_settings, require_role
+from app.modules.identity.deps import get_session_store, get_token_settings, require_role
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import TokenClaims, create_access_token
+from app.modules.identity.security import TokenClaims, generate_signing_key
+from tests.harness.auth import TEST_SESSIONS, issue_token
 from app.settings import Settings
 
 pytestmark = pytest.mark.contract
 
-SETTINGS = Settings(jwt_secret="authz-test-secret-at-least-32-bytes-long", jwt_expiry_minutes=30)
+SETTINGS = Settings(jwt_private_key=generate_signing_key(), access_token_minutes=30)
 #: Anchored to the real clock: `decode_access_token` validates `exp` against wall time,
 #: so a hardcoded date makes these tests fail forever once that hour passes.
 NOW = datetime.now(UTC)
@@ -41,11 +42,12 @@ def build_app() -> FastAPI:
     # which is exactly how R-6 survived — the 401/403 bodies were never looked at.
     register_error_handlers(app)
     app.dependency_overrides[get_token_settings] = lambda: SETTINGS
+    app.dependency_overrides[get_session_store] = lambda: TEST_SESSIONS
     return app
 
 
 def token_for(role: UserRole) -> str:
-    return create_access_token(subject="user-1", role=role, settings=SETTINGS, now=NOW)
+    return issue_token(subject="user-1", role=role, settings=SETTINGS, now=NOW)
 
 
 async def call(path: str, headers: dict[str, str] | None = None) -> httpx.Response:

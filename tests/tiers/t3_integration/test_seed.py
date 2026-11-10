@@ -17,7 +17,9 @@ from sqlalchemy import func, select, text
 
 from app.core.clock import Clock
 from app.modules.identity.models import User
+from app.core.ratelimit import InMemoryRateLimiter
 from app.modules.identity.service import authenticate
+from app.modules.identity.sessions import InMemorySessionStore
 from app.modules.patients.models import Patient
 from app.modules.providers.models import Clinic, Provider
 from app.modules.scheduling.models import ProviderSlot, SlotStatus
@@ -150,11 +152,12 @@ async def test_a_seeded_login_actually_authenticates(db_session, db_settings):
     await db_session.flush()
 
     email, _role = USERS[0]
-    token, expires_in = await authenticate(
-        db_session, email=email, password=PASSWORD,
+    tokens = await authenticate(
+        db_session, email=email, password=PASSWORD, client_ip="127.0.0.1",
+        sessions=InMemorySessionStore(), limiter=InMemoryRateLimiter(),
         settings=db_settings, now=Clock().now(),
     )
-    assert token and expires_in > 0
+    assert tokens.access_token and tokens.expires_in > 0
 
 
 async def test_every_seeded_id_is_a_v7_uuid(db_session):

@@ -25,6 +25,7 @@ from temporalio.client import Client
 from app.core.audit import AuditLog
 from app.core.clock import Clock, get_clock
 from app.core.pagination import DEFAULT_LIMIT, MAX_LIMIT, PageParams
+from app.core.ratelimit import RateLimiter
 from app.db.mongo import get_audit_collection
 
 
@@ -78,3 +79,9 @@ def get_temporal(request: Request) -> Client:
     """FastAPI dependency: the app's lazy Temporal client. Overridden in contract tests,
     which must never reach a real server."""
     return request.app.state.temporal
+
+
+def get_rate_limiter(request: Request) -> RateLimiter:
+    """FastAPI dependency: the app's rate limiter (Redis). Overridden in contract tests,
+    which have no Redis."""
+    return request.app.state.rate_limiter

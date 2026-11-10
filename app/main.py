@@ -17,18 +17,31 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from app.api.error_handlers import register_error_handlers
 from app.api.router import api_router
 from app.core.logging import configure_logging
+from app.core.ratelimit import RedisRateLimiter
 from app.core.telemetry import instrument_engine, setup_telemetry
 from app.core.temporal import connect_client
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client
 from app.db.redis import create_redis_client
 from app.db.session import create_session_factory
-from app.settings import get_settings
+from app.modules.identity.sessions import RedisSessionStore
+from app.settings import DEV_SIGNING_KEY, Settings, get_settings
+
+
+def _refuse_the_development_key_in_production(settings: Settings) -> None:
+    """The development signing key is in the repository; in production anyone could
+    mint an admin token with it. Failing to start is the only safe answer."""
+    if settings.environment == "production" and settings.jwt_private_key == DEV_SIGNING_KEY:
+        raise RuntimeError(
+            "SMARTHEALTH_JWT_PRIVATE_KEY is the development key; set a real one "
+            "(python -m app.cli generate-signing-key)"
+        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
+    _refuse_the_development_key_in_production(settings)
     configure_logging(settings.log_level)
     app.state.telemetry = setup_telemetry(settings, "part-a-api")
 
@@ -38,6 +51,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.mongo = create_mongo_client(settings)
     app.state.redis = create_redis_client(settings)
+    app.state.sessions = RedisSessionStore(app.state.redis, settings)
+    app.state.rate_limiter = RedisRateLimiter(app.state.redis, settings)
     # Lazy: the API boots with Temporal down, like every client above. Nothing to
     # close on shutdown -- the SDK client exposes no close(); once /ready has used it,
     # its gRPC channel lives as long as the process.

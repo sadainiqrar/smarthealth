@@ -8,10 +8,11 @@ isolation exactly where this tier depends on it.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from collections.abc import AsyncIterator, Iterator
-from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -20,12 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
+from app.db.redis import create_redis_client
 from app.db.session import create_session_factory
 from app.main import create_app
 from app.modules.identity.models import UserRole
-from app.modules.identity.security import create_access_token
+from app.modules.identity.sessions import RedisSessionStore
 from app.settings import Settings
 from tests.harness.db import create_database_sync, drop_database_sync, run_migrations
+from tests.harness.auth import open_session_token
 from tests.harness.isolation import RunIsolation
 
 
@@ -107,6 +110,9 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
         "SMARTHEALTH_REDIS_HOST": db_settings.redis_host,
         "SMARTHEALTH_REDIS_PORT": str(db_settings.redis_port),
         "SMARTHEALTH_REDIS_DB": str(db_settings.redis_db),
+        # Sessions and rate limits (Week 3) are the first Redis keys a feature writes;
+        # without the prefix the app and this run's fixtures would read different keys.
+        "SMARTHEALTH_REDIS_PREFIX": db_settings.redis_prefix,
         "SMARTHEALTH_TEMPORAL_HOST": db_settings.temporal_host,
         "SMARTHEALTH_TEMPORAL_PORT": str(db_settings.temporal_port),
         "SMARTHEALTH_RESOURCE_PREFIX": db_settings.resource_prefix,
@@ -127,6 +133,7 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
         assert live.mongo_db == db_settings.mongo_db
         assert live.mongo_port == db_settings.mongo_port
         assert live.redis_db == db_settings.redis_db
+        assert live.redis_prefix == db_settings.redis_prefix
         assert live.task_queue("x") == db_settings.task_queue("x")
 
         transport = httpx.ASGITransport(app=manager.app)
@@ -136,17 +143,34 @@ async def api(db_settings: Settings, monkeypatch) -> AsyncIterator[httpx.AsyncCl
             yield client
 
 
+def _open_redis_session_token(settings: Settings, role: UserRole, subject: str) -> str:
+    """Open a real session in this run's Redis and sign a token for it.
+
+    Runs on its own event loop in a worker thread, so the fixture stays synchronous for
+    its many call sites (`headers=token_for(role)`) whichever loop the test is on.
+    """
+
+    async def _open() -> str:
+        redis = create_redis_client(settings)
+        try:
+            return await open_session_token(
+                RedisSessionStore(redis, settings), subject=subject, role=role,
+                settings=settings,
+            )
+        finally:
+            await redis.aclose()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, _open()).result()
+
+
 @pytest.fixture
 def token_for(db_settings: Settings):
-    """Mint a token the running app will accept, for any role."""
+    """Mint a token the running app will accept, for any role: a signed token whose
+    session really exists in Redis, as one from POST /auth/login would."""
 
     def _mint(role: UserRole, subject: str | None = None) -> dict[str, str]:
-        token = create_access_token(
-            subject=subject or str(uuid.uuid4()),
-            role=role,
-            settings=db_settings,
-            now=datetime.now(UTC),
-        )
+        token = _open_redis_session_token(db_settings, role, subject or str(uuid.uuid4()))
         return {"Authorization": f"Bearer {token}"}
 
     return _mint

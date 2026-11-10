@@ -18,9 +18,18 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 # Must precede the application import: the first telemetry install wins.
 from tests.harness import telemetry as test_telemetry  # isort: skip
 from app.main import app
+from app.api.deps import get_rate_limiter
+from app.modules.identity.deps import get_session_store
+from tests.harness.auth import TEST_LIMITER, TEST_SESSIONS
 from app.settings import get_settings
 from tests.harness.isolation import RunIsolation, make_isolation
 from tests.harness.stack import TestStack
+
+# The contract tier has no Redis: the shared app's session store and rate limiter are the
+# in-memory implementations (tests/harness/auth.py). Tests that pop their own overrides
+# pop only their own keys, so these stay for the session.
+app.dependency_overrides[get_session_store] = lambda: TEST_SESSIONS
+app.dependency_overrides[get_rate_limiter] = lambda: TEST_LIMITER
 
 
 @pytest.fixture
@@ -35,6 +44,13 @@ def metric_reader() -> InMemoryMetricReader:
     """The suite's metric reader. Metrics are cumulative across the session, so assert
     on presence, not on counts."""
     return test_telemetry.METRIC_READER
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """Counters are per test: one test's failed logins must not lock out the next."""
+    TEST_LIMITER.clear()
+    yield
 
 
 @pytest.fixture(autouse=True)

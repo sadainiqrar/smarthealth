@@ -19,11 +19,14 @@ from pydantic import AwareDatetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from temporalio.client import Client
 
-from app.api.deps import get_audit_log, get_session, get_temporal, page_params
+from datetime import timedelta
+
+from app.api.deps import get_audit_log, get_rate_limiter, get_session, get_temporal, page_params
 from app.core.audit import AuditLog
 from app.core.clock import Clock, get_clock
 from app.core.errors import Conflict, NotFound, PermissionDenied
 from app.core.pagination import Page, PageParams
+from app.core.ratelimit import RateLimiter, enforce
 from app.core.temporal import TASK_QUEUE
 from app.modules.identity.deps import require_role
 from app.modules.identity.models import UserRole
@@ -70,6 +73,23 @@ READERS = (UserRole.PATIENT, UserRole.PROVIDER, UserRole.FRONT_DESK, UserRole.AD
 #: it (spec 4.5). Not providers -- the list names every patient waiting, for any provider.
 WAITLIST_READERS = BOOKERS
 
+_RATE_WINDOW = timedelta(minutes=1)
+
+
+async def _limit_bookings(request: Request, limiter: RateLimiter, claims: TokenClaims) -> None:
+    """Per-user limit on starting booking workflows (PART-A-NFR-5, peak windows).
+
+    Shared by booking and reschedule: both start a workflow and claim a slot, and a
+    caller alternating between them must not get twice the budget. A repeat under the
+    same Idempotency-Key counts too -- it is cheap to answer, but a client retrying in a
+    tight loop is exactly what the limit is for.
+    """
+    await enforce(
+        limiter, f"booking:{claims.subject}",
+        limit=request.app.state.settings.booking_rate_limit_per_minute,
+        window=_RATE_WINDOW, what="booking requests",
+    )
+
 
 async def _own_patient_id(session: AsyncSession, claims: TokenClaims) -> uuid.UUID | None:
     return await patient_id_for_user(session, uuid.UUID(claims.subject))
@@ -94,7 +114,9 @@ async def book_appointment(
     session: AsyncSession = Depends(get_session),
     temporal: Client = Depends(get_temporal),
     claims: TokenClaims = Depends(require_role(*BOOKERS)),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> BookingAccepted:
+    await _limit_bookings(request, limiter, claims)
     if claims.role is UserRole.PATIENT:
         if await _own_patient_id(session, claims) != body.patient_id:
             raise PermissionDenied("a patient may only book for themselves")
@@ -298,7 +320,9 @@ async def reschedule_appointment(
     session: AsyncSession = Depends(get_session),
     temporal: Client = Depends(get_temporal),
     claims: TokenClaims = Depends(require_role(*CANCELLERS)),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ) -> RescheduleAccepted:
+    await _limit_bookings(request, limiter, claims)
     old = await _owned_or_404(session, claims, appointment_id)
     new_appointment_id = reschedule_appointment_id_for(claims.subject, idempotency_key)
     # A precheck, so the common refusals are answered now rather than as a workflow that
