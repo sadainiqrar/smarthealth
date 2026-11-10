@@ -227,6 +227,84 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  # --- Part B (Week 3 slice 7: skeletons; spec section 1) -------------------------------
+  # Two services, each with its own stores and nothing of Part A's: they share Kafka,
+  # Schema Registry, Envoy and the observability stack, and reach Part A only through its
+  # public HTTP API (JWKS) and its events (spec D-19).
+  #
+  #   docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --wait
+
+  knowledge:
+    profiles: ["partb"]
+    build: { context: ., dockerfile: services/knowledge/Dockerfile }
+    environment:
+      KNOWLEDGE_ENVIRONMENT: docker
+      KNOWLEDGE_DATABASE_URL: postgresql+asyncpg://knowledge:knowledge@knowledge-db:5432/knowledge
+      KNOWLEDGE_QDRANT_URL: http://qdrant:6333
+      KNOWLEDGE_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KNOWLEDGE_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KNOWLEDGE_JWKS_URL: http://app:8000/.well-known/jwks.json
+      KNOWLEDGE_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    depends_on:
+      knowledge-db: { condition: service_healthy }
+      qdrant: { condition: service_started }
+      kafka: { condition: service_healthy }
+
+  knowledge-db:
+    # The knowledge service's own database -- never Part A's (spec D-19).
+    profiles: ["partb"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: knowledge
+      POSTGRES_PASSWORD: knowledge
+      POSTGRES_DB: knowledge
+    volumes: ["knowledge-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U knowledge -d knowledge"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  qdrant:
+    # The vector database (Week 4): up, and part of the knowledge service's readiness, now.
+    profiles: ["partb"]
+    image: qdrant/qdrant:v1.12.4
+    ports: ["${QDRANT_PORT:-6333}:6333"]
+    volumes: ["qdrant-data:/qdrant/storage"]
+
+  assistant:
+    profiles: ["partb"]
+    build: { context: ., dockerfile: services/assistant/Dockerfile }
+    environment:
+      ASSISTANT_ENVIRONMENT: docker
+      ASSISTANT_REDIS_URL: redis://assistant-redis:6379/0
+      ASSISTANT_KNOWLEDGE_TARGET: knowledge:50052
+      ASSISTANT_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ASSISTANT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      ASSISTANT_JWKS_URL: http://app:8000/.well-known/jwks.json
+      ASSISTANT_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    depends_on:
+      assistant-redis: { condition: service_healthy }
+      knowledge: { condition: service_healthy }
+
+  assistant-redis:
+    # The assistant's own Redis: turn streams, the revoked-session deny-list (spec 4.4).
+    profiles: ["partb"]
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  envoy:
+    # The single front door (spec D-30): gRPC-Web for the browser, /api/* to Part A.
+    profiles: ["partb"]
+    image: envoyproxy/envoy:v1.31.2
+    volumes: ["./ops/envoy/envoy.yaml:/etc/envoy/envoy.yaml:ro"]
+    ports: ["${ENVOY_PORT:-8088}:8088"]
+    depends_on: [assistant, knowledge]
+
   temporal-ui:
     # Temporal's web UI: every workflow's history and state (booking-<id>, visit-<id>,
     # cancel-<id>, reschedule-<id>) at http://localhost:8080. Read-only use; nothing in the
@@ -452,5 +530,7 @@ services:
 
 volumes:
   postgres-data:
+  knowledge-data:
+  qdrant-data:
   mongo-data:
   kafka-data:
