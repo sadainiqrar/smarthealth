@@ -95,7 +95,17 @@ notifications, the stale-pending reconciler (**PRD R-9 closed**), outbox purge. 
 *Service overview*, *Async backbone* and *Platform analytics* (Postgres datasource as the
 read-only `analytics_reader`, migration 0008) and six provisioned alert rules; Prometheus also
 scrapes RabbitMQ and `kafka-exporter`. Schema evolution happened once: cancelled and no-show
-are v2 (optional `clinic_id`). Next is slice 7 (the Part B skeletons). Week 3's Part A scope is complete: every Week 2 stand-in
+are v2 (optional `clinic_id`). **Slice 7, the Part B skeletons, is built — Week 3 is complete.** `services/knowledge`
+(`knowledge_service`: gRPC `Search` on :50052, its own Postgres `knowledge-db` and `qdrant`, a
+provider directory built from `providers.state`) and `services/assistant` (`assistant_service`:
+server-streaming `Chat` on :50051 echoing with citations from knowledge, resumable turns and a
+revoked-session deny-list in its own `assistant-redis`). Contracts in `contracts/proto/`;
+`python scripts/gen_proto.py` generates each service's own bindings into `services/<name>/gen`
+(namespace packages, no `__init__.py`; lint excludes them). Both verify Part A's tokens against
+`/.well-known/jwks.json`. `envoy` (:8088) is the front door: gRPC-Web to Part B, `/api/*` to Part
+A; `scripts/grpcweb_smoke.py` speaks gRPC-Web through it. Compose profile `partb`. Part B tests
+import `tests.harness.partb` for the services' paths; `tests/meta/test_service_independence.py`
+fails on any import, setting or compose variable that crosses services. Week 3's Part A scope is complete: every Week 2 stand-in
 (billing pre-check, reminder scheduling, refund) is now real, and cancel/reschedule have events.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -129,7 +139,9 @@ Commands that work today:
 | `cd frontend && npm run dev` | the demo client's Vite dev server on :5173, proxying `/api` to the backend on :8000 |
 | `cd frontend && npm test` | the demo client's Vitest suite |
 | `python -m tests.runner.route_check` | validate and route the case catalog |
-| `python -m ruff check app tests` | lint |
+| `python -m ruff check app tests services` | lint (generated bindings excluded) |
+| `python scripts/gen_proto.py` | regenerate each Part B service's gRPC bindings from `contracts/proto/` |
+| `docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait` | Part A and the Part B skeletons together |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
 | `celery -A app.celery_app worker -Q notifications,maintenance` / `celery -A app.celery_app beat` | the Celery worker and schedule |
@@ -280,7 +292,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1160 fast tests (plus 1 skip) in ~62s (61.63s on a run of `python -m pytest -m "not docker" -q`) and ~250 docker-lane tests (`-m docker`, ~4 min), measured 2026-11-10; 72 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1220 fast tests (plus 1 skip) in ~78s (78.16s on a run of `python -m pytest -m "not docker" -q`) and 255 docker-lane tests (`-m docker`, ~7 min with the full dev stack also running), measured 2026-11-10; 80 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist

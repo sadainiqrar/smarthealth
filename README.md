@@ -428,6 +428,27 @@ docker compose -f docker-compose.infra.yml exec temporal \
   temporal workflow show -w booking-$APPOINTMENT --address temporal:7233
 ```
 
+**Part B, the skeletons.** `--profile partb` adds the two Part B services, each with its
+own stores: `knowledge` (gRPC `Search`; its own Postgres and Qdrant; a provider directory it
+builds from Part A's `providers.state` topic) and `assistant` (server-streaming gRPC `Chat`;
+its own Redis for resumable turns and a revoked-session deny-list). **Envoy** on
+<http://localhost:8088> is the front door: gRPC-Web to Part B, `/api/*` to Part A. Neither
+Part B service holds anything of Part A's but its public key, fetched from
+`/.well-known/jwks.json`.
+
+```bash
+docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait
+docker compose -f docker-compose.infra.yml exec app python -m app.cli seed --password "..."
+docker compose -f docker-compose.infra.yml exec app   python -m app.cli create-user --email you@example.com --password "..." --role patient
+python scripts/grpcweb_smoke.py --email you@example.com --password "..." --message cardiology
+```
+
+The smoke script speaks gRPC-Web exactly as a browser would and prints the streamed turn:
+the echoed message, then citations from `knowledge`'s directory of the seeded providers.
+The answer is an echo until Week 5 brings the LLM; the transport, the auth, the resume and
+the trace (`assistant` -> `knowledge`, in Jaeger) are real. After editing a `.proto` in
+`contracts/proto/`, run `python scripts/gen_proto.py`.
+
 **Seeing events and messages.** Every domain change writes an event to the outbox in its
 own transaction; the `relay` service publishes it to Kafka (Avro, Schema Registry), and
 `consumers` acts on it: a cancel's follow-up, a deactivated provider's cancellations, the
