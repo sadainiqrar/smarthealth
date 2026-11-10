@@ -1,0 +1,105 @@
+{
+  "type": "record",
+  "name": "ProviderState",
+  "namespace": "smarthealth.events.v1",
+  "doc": "The current state of a provider. Compacted: the latest value per provider is kept forever.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "uuid7; the idempotency key every consumer dedupes on"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the topic's logical name, e.g. appointments.cancelled"
+    },
+    {
+      "name": "schema_version",
+      "type": "int"
+    },
+    {
+      "name": "occurred_at",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "when the change committed (the outbox row's insert time)"
+    },
+    {
+      "name": "producer",
+      "type": {
+        "type": "string"
+      },
+      "doc": "part-a, knowledge or assistant"
+    },
+    {
+      "name": "subject_id",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the entity the event is about; also the Kafka message key"
+    },
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "ProviderStatePayload",
+        "fields": [
+          {
+            "name": "provider_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "first_name",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "last_name",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "specialty",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "license_number",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "is_active",
+            "type": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "department_ids",
+            "type": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "logicalType": "uuid"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

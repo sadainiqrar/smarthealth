@@ -178,6 +178,12 @@ class Appointment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=True,
     )
     cancellation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    #: Where the booking came from -- `web`, `front_desk`, `assistant`, `waitlist` -- and,
+    #: for the assistant, an opaque reference to its conversation. Carried on
+    #: `appointments.booked` so the assistant can measure booking conversion after an AI
+    #: interaction without Part A knowing anything about conversations (spec section 3.2).
+    origin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    conversation_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

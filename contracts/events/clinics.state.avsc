@@ -1,0 +1,93 @@
+{
+  "type": "record",
+  "name": "ClinicState",
+  "namespace": "smarthealth.events.v1",
+  "doc": "The current state of a clinic. Compacted.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "uuid7; the idempotency key every consumer dedupes on"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the topic's logical name, e.g. appointments.cancelled"
+    },
+    {
+      "name": "schema_version",
+      "type": "int"
+    },
+    {
+      "name": "occurred_at",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "when the change committed (the outbox row's insert time)"
+    },
+    {
+      "name": "producer",
+      "type": {
+        "type": "string"
+      },
+      "doc": "part-a, knowledge or assistant"
+    },
+    {
+      "name": "subject_id",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the entity the event is about; also the Kafka message key"
+    },
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "ClinicStatePayload",
+        "fields": [
+          {
+            "name": "clinic_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "name",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timezone",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "address",
+            "type": [
+              "null",
+              {
+                "type": "string"
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "is_active",
+            "type": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

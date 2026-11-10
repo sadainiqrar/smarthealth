@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     redis_db: int = 0
     redis_prefix: str = ""
 
+    # --- Kafka + Schema Registry: domain events (Week 3 slice 3, spec section 3) ---
+    kafka_bootstrap_servers: str = "localhost:9092"
+    schema_registry_url: str = "http://localhost:8081"
+    #: Consumer-group prefix. The isolation layer gives each test run its own, so two runs
+    #: on one broker never steal each other's partitions.
+    kafka_group: str = "smarthealth"
+
     # --- Temporal: durable workflows (PRD D-7) ---
     temporal_host: str = "localhost"
     temporal_port: int = 7233

@@ -1,0 +1,117 @@
+{
+  "type": "record",
+  "name": "AppointmentCancelled",
+  "namespace": "smarthealth.events.v1",
+  "doc": "An appointment was cancelled and its slot released, in one transaction.",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": {
+        "type": "string",
+        "logicalType": "uuid"
+      },
+      "doc": "uuid7; the idempotency key every consumer dedupes on"
+    },
+    {
+      "name": "event_type",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the topic's logical name, e.g. appointments.cancelled"
+    },
+    {
+      "name": "schema_version",
+      "type": "int"
+    },
+    {
+      "name": "occurred_at",
+      "type": {
+        "type": "long",
+        "logicalType": "timestamp-millis"
+      },
+      "doc": "when the change committed (the outbox row's insert time)"
+    },
+    {
+      "name": "producer",
+      "type": {
+        "type": "string"
+      },
+      "doc": "part-a, knowledge or assistant"
+    },
+    {
+      "name": "subject_id",
+      "type": {
+        "type": "string"
+      },
+      "doc": "the entity the event is about; also the Kafka message key"
+    },
+    {
+      "name": "payload",
+      "type": {
+        "type": "record",
+        "name": "AppointmentCancelledPayload",
+        "fields": [
+          {
+            "name": "appointment_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "patient_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "provider_id",
+            "type": {
+              "type": "string",
+              "logicalType": "uuid"
+            }
+          },
+          {
+            "name": "slot_id",
+            "type": [
+              "null",
+              {
+                "type": "string",
+                "logicalType": "uuid"
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "starts_at",
+            "type": [
+              "null",
+              {
+                "type": "long",
+                "logicalType": "timestamp-millis"
+              }
+            ],
+            "default": null
+          },
+          {
+            "name": "reason",
+            "type": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "initiated_by",
+            "type": [
+              "null",
+              {
+                "type": "string"
+              }
+            ],
+            "default": null
+          }
+        ]
+      }
+    }
+  ]
+}

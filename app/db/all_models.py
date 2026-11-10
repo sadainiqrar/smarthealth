@@ -11,6 +11,7 @@ modules — from `migrations/env.py`.
 from __future__ import annotations
 
 from app.db.base import Base
+from app.events import models as event_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.patients import models as patient_models  # noqa: F401
 from app.modules.providers import models as provider_models  # noqa: F401

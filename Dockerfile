@@ -19,6 +19,8 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip && pip install .
 
 COPY app ./app
+# The event schemas: the relay registers and serialises with them.
+COPY contracts ./contracts
 COPY migrations ./migrations
 COPY alembic.ini ./
 COPY docker-entrypoint.sh ./
