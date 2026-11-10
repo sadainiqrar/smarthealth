@@ -55,6 +55,7 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
             "SMARTHEALTH_TEST_SCHEMA_REGISTRY", "http://localhost:18081"
         ),
         kafka_group=isolation.kafka_group,
+        payments_url=os.environ.get("SMARTHEALTH_TEST_PAYMENTS", "http://localhost:18090"),
     )
 
 

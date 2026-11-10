@@ -11,6 +11,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy import delete, update
 from temporalio.client import WorkflowFailureError
 
@@ -47,7 +48,9 @@ async def booking_stack(db_settings):
     client = await connect_client(db_settings, lazy=False)
     worker = build_worker(
         client, db_settings.task_queue(TASK_QUEUE), workflows=list(WORKFLOWS),
-        activities=build_activities(factory, audit, Clock(), timedelta(minutes=15)),
+        activities=build_activities(
+            factory, audit, Clock(), timedelta(minutes=15), settings=db_settings
+        ),
     )
     try:
         async with worker:
@@ -123,6 +126,46 @@ async def test_a_past_slot_fails_and_leaves_the_slot_free(api, token_for, bookin
     assert read.json()["status"] == "failed"
     async with factory() as session:
         assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.FREE
+
+
+async def test_a_declined_payment_fails_the_booking_and_frees_its_slot(
+    api, token_for, booking_stack, db_settings
+):
+    """Referenced by tests/cases/bil-002-a-declined-payment-compensates-the-booking.yaml.
+
+    The pre-check is a real authorisation since Week 3 slice 4. The gateway declines this
+    patient; the decline is recorded, the activity fails permanently, and the booking
+    compensates: failed, slot free, nothing held."""
+    import httpx
+
+    from app.modules.billing.models import BillingRecord, BillingStatus
+
+    factory, client = booking_stack
+    async with factory() as session:
+        b = await seed_bookable(session)
+    headers = token_for(UserRole.FRONT_DESK)
+    async with httpx.AsyncClient(base_url=db_settings.payments_url) as gateway:
+        await gateway.post("/_chaos", json={"decline_customers": [str(b.patient_id)]})
+        try:
+            accepted = await api.post(
+                "/appointments",
+                json={"patient_id": str(b.patient_id), "slot_id": str(b.slot_id)},
+                headers=headers,
+            )
+            appointment_id = accepted.json()["appointment_id"]
+            with pytest.raises(WorkflowFailureError):
+                await _finish(client, appointment_id)
+        finally:
+            await gateway.post("/_chaos", json={})
+
+    read = await api.get(f"/appointments/{appointment_id}", headers=headers)
+    assert read.json()["status"] == "failed"
+    async with factory() as session:
+        assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.FREE
+        record = await session.scalar(
+            select(BillingRecord).where(BillingRecord.appointment_id == uuid.UUID(appointment_id))
+        )
+    assert record.status is BillingStatus.DECLINED
 
 
 async def test_two_bookings_for_one_slot_confirm_exactly_one(api, token_for, booking_stack):

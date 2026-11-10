@@ -52,6 +52,31 @@ class VisitRequest:
     appointment_id: str
 
 
+@dataclass(frozen=True)
+class PostVisitRequest:
+    """What follows a completed visit (Week 3 slice 4): the charge, later the follow-up."""
+
+    visit_id: str
+    appointment_id: str
+
+
+@dataclass(frozen=True)
+class ProviderDeactivationRequest:
+    """A provider went inactive: cancel their future appointments (PRD R-25, spec D-23)."""
+
+    provider_id: str
+
+
+def post_visit_workflow_id(visit_id: object) -> str:
+    return f"post-visit-{visit_id}"
+
+
+def provider_deactivation_workflow_id(provider_id: object, event_id: object) -> str:
+    """Per deactivation *event*: a provider deactivated, reactivated and deactivated again
+    gets a run each time, and a redelivery of one event is refused as a duplicate."""
+    return f"provider-deactivation-{provider_id}-{event_id}"
+
+
 def visit_workflow_id(appointment_id: object) -> str:
     """Pure, so the workflow module can name the visit it starts without importing the
     Temporal client."""

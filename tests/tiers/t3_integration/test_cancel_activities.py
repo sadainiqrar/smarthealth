@@ -51,8 +51,15 @@ def audit() -> RecordingAudit:
 
 
 @pytest.fixture
-def activities(factory, audit) -> SchedulingActivities:
-    return SchedulingActivities(factory, audit, Clock(), timedelta(minutes=15))
+def activities(factory, audit, db_settings) -> SchedulingActivities:
+    from app.modules.billing.public import PaymentGateway
+
+    return SchedulingActivities(
+        factory, audit, Clock(), timedelta(minutes=15),
+        gateway=PaymentGateway(db_settings.payments_url),
+        amount_minor=db_settings.billing_amount_minor,
+        currency=db_settings.billing_currency,
+    )
 
 
 async def test_create_pending_carries_the_reschedule_link_into_the_row(

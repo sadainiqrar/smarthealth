@@ -141,6 +141,25 @@ def _str(value: uuid.UUID | None) -> str | None:
     return str(value) if value is not None else None
 
 
+async def future_live_appointments(
+    session: AsyncSession, *, provider_id: uuid.UUID, now: datetime
+) -> list[uuid.UUID]:
+    """The provider's pending or confirmed appointments whose slot has not started yet --
+    what a deactivation must cancel. Past ones are left to their own lifecycle (a visit, or
+    the no-show timer)."""
+    rows = await session.scalars(
+        select(Appointment.id)
+        .join(ProviderSlot, ProviderSlot.id == Appointment.slot_id)
+        .where(
+            Appointment.provider_id == provider_id,
+            Appointment.status.in_((AppointmentStatus.PENDING, AppointmentStatus.CONFIRMED)),
+            ProviderSlot.starts_at > now,
+        )
+        .order_by(ProviderSlot.starts_at)
+    )
+    return list(rows)
+
+
 async def list_appointments(
     session: AsyncSession,
     *,

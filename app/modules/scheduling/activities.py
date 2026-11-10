@@ -28,13 +28,16 @@ from temporalio.exceptions import ApplicationError
 
 from app.core.audit import AuditLog
 from app.core.clock import Clock
-from app.core.errors import DomainError
+from app.core.errors import Conflict, DomainError, NotFound, ServiceUnavailable
+import app.modules.billing.public as billing
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.providers.public import ensure_bookable_provider
 from app.modules.scheduling import service
 from app.modules.scheduling.contracts import (
     BookingRequest,
     FollowUpRequest,
+    PostVisitRequest,
+    ProviderDeactivationRequest,
     RescheduleRequest,
     VisitRequest,
 )
@@ -61,7 +64,8 @@ def parse_id(value: str, field: str) -> uuid.UUID:
 class SchedulingActivities:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], audit: AuditLog,
-        clock: Clock, no_show_grace: timedelta,
+        clock: Clock, no_show_grace: timedelta, *, gateway: billing.PaymentGateway,
+        amount_minor: int, currency: str,
     ) -> None:
         # `no_show_grace` has no default: the one default is `Settings`, and a second
         # here could silently disagree with it at any construction site that forgot it.
@@ -69,6 +73,9 @@ class SchedulingActivities:
         self._audit = audit
         self._clock = clock
         self._no_show_grace = no_show_grace
+        self._gateway = gateway
+        self._amount_minor = amount_minor
+        self._currency = currency
 
     @asynccontextmanager
     async def _unit_of_work(self) -> AsyncIterator[AsyncSession]:
@@ -76,6 +83,14 @@ class SchedulingActivities:
             try:
                 yield session
                 await session.commit()
+            except ServiceUnavailable as exc:
+                # A dependency is down (the payment gateway, its circuit open): retryable,
+                # unlike every other DomainError. Temporal retries with backoff; failing the
+                # booking permanently over an outage would be the wrong answer.
+                await session.rollback()
+                raise ApplicationError(
+                    exc.detail, type=type(exc).__name__, non_retryable=False
+                ) from exc
             except DomainError as exc:
                 await session.rollback()
                 raise ApplicationError(
@@ -141,12 +156,21 @@ class SchedulingActivities:
 
     @activity.defn(name="booking.billing_precheck")
     async def billing_precheck(self, request: BookingRequest) -> None:
-        """Stand-in: approves. Week 3 replaces the body; a decline must raise
-        `ApplicationError(non_retryable=True)` so the workflow compensates."""
-        logger.info(
-            "billing pre-check approved (stand-in)",
-            extra={"appointment_id": request.appointment_id},
-        )
+        """Authorise the visit's price with the payment gateway (a hold, captured after the
+        visit). A decline is recorded, then raised as non-retryable, so the booking
+        compensates -- and compensation releases nothing, because nothing was held."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        patient_id = parse_id(request.patient_id, "patient_id")
+        async with self._unit_of_work() as session:
+            record = await billing.authorize(
+                session, self._gateway, appointment_id=appointment_id, patient_id=patient_id,
+                amount_minor=self._amount_minor, currency=self._currency,
+            )
+        if record.status is billing.BillingStatus.DECLINED:
+            raise ApplicationError(
+                f"payment declined: {record.decline_reason or 'no reason given'}",
+                type="PaymentDeclined", non_retryable=True,
+            )
 
     @activity.defn(name="booking.schedule_reminders")
     async def schedule_reminders(self, request: BookingRequest) -> None:
@@ -167,12 +191,17 @@ class SchedulingActivities:
 
     @activity.defn(name="booking.fail_booking")
     async def fail_booking(self, request: BookingRequest) -> None:
+        """Compensation: the appointment and its slot first, then the money. Separate
+        transactions on purpose -- a gateway outage must not keep the slot held; the slot
+        is released and committed, and only the billing half retries."""
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
             await service.fail_booking(
                 session, self._audit, appointment_id=appointment_id,
                 actor_user_id=request.actor_user_id,
             )
+        async with self._unit_of_work() as session:
+            await billing.release(session, self._gateway, appointment_id=appointment_id)
 
     @activity.defn(name="visit.deadline")
     async def deadline(self, request: VisitRequest) -> str:
@@ -199,11 +228,12 @@ class SchedulingActivities:
 
     @activity.defn(name="cancel.refund")
     async def refund(self, request: FollowUpRequest) -> None:
-        """Stand-in: logs. Week 3 issues the refund; a decline there must not be retried
-        blindly, and a second call must not refund twice (key it on the appointment)."""
-        logger.info(
-            "refund issued (stand-in)", extra={"appointment_id": request.appointment_id}
-        )
+        """Give the money back for a cancelled appointment: void the hold, or refund the
+        charge if it was captured. Idempotent by the billing record's state and by the
+        gateway key, so a retried follow-up never refunds twice."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            await billing.release(session, self._gateway, appointment_id=appointment_id)
 
     @activity.defn(name="reschedule.complete")
     async def reschedule_complete(self, request: RescheduleRequest) -> dict[str, str | None]:
@@ -218,12 +248,54 @@ class SchedulingActivities:
                 session, self._audit, old_appointment_id=old_appointment_id,
                 new_appointment_id=new_appointment_id, actor_user_id=request.actor_user_id,
             )
+        if result.outcome == "rescheduled":
+            # The replacement holds its own authorisation (its booking's pre-check); the old
+            # appointment's is released, after the reschedule committed.
+            async with self._unit_of_work() as session:
+                await billing.release(session, self._gateway, appointment_id=old_appointment_id)
         return {
             "outcome": result.outcome,
             "released_slot_id": (
                 str(result.released_slot_id) if result.released_slot_id else None
             ),
         }
+
+    @activity.defn(name="post_visit.charge")
+    async def post_visit_charge(self, request: PostVisitRequest) -> str | None:
+        """Capture the booking's authorisation now the visit happened. Returns the billing
+        status, or None when there was nothing to charge."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            record = await billing.capture(session, self._gateway, appointment_id=appointment_id)
+        return record.status.value if record else None
+
+    @activity.defn(name="provider.future_appointments")
+    async def provider_future_appointments(self, request: ProviderDeactivationRequest) -> list[str]:
+        provider_id = parse_id(request.provider_id, "provider_id")
+        async with self._unit_of_work() as session:
+            ids = await service.future_live_appointments(
+                session, provider_id=provider_id, now=self._clock.now()
+            )
+        return [str(appointment_id) for appointment_id in ids]
+
+    @activity.defn(name="provider.cancel_appointment")
+    async def provider_cancel_appointment(self, appointment_id: str) -> str:
+        """Cancel one of a deactivated provider's appointments (spec D-23). "cancelled", or
+        "skipped" when it is no longer cancellable -- the patient checked in, someone else
+        cancelled it -- which is the right end for it, not a failure. The cancel writes
+        `appointments.cancelled`, whose consumer refunds and offers the slot on."""
+        parsed = parse_id(appointment_id, "appointment_id")
+        try:
+            async with self._session_factory() as session:
+                await service.cancel_appointment(
+                    session, self._audit, appointment_id=parsed,
+                    reason="provider_unavailable", now=self._clock.now(),
+                    actor_user_id="system:provider-deactivation",
+                )
+                await session.commit()
+        except (Conflict, NotFound):
+            return "skipped"
+        return "cancelled"
 
     @activity.defn(name="waitlist.candidates")
     async def waitlist_candidates(self, slot_id: str) -> list[list[str]]:

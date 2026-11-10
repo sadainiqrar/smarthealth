@@ -246,6 +246,9 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # R-24: the same activity refuses a deactivated provider through providers'
         # published interface, given the provider id by scheduling.service.
         ("app.modules.scheduling.activities", "app.modules.providers.public"),
+        # Week 3 slice 4 (spec D-27): the booking, cancel, reschedule and post-visit
+        # activities authorise, release and capture through billing's published interface.
+        ("app.modules.scheduling.activities", "app.modules.billing.public"),
         ("app.modules.scheduling.router", "app.modules.identity.deps"),
         ("app.modules.scheduling.router", "app.modules.identity.models"),
         ("app.modules.scheduling.router", "app.modules.identity.security"),

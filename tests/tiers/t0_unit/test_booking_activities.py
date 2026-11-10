@@ -52,7 +52,9 @@ GOOD = str(uuid.uuid4())
 
 def _activities() -> SchedulingActivities:
     """No resources: a malformed id must fail before any is touched."""
-    return SchedulingActivities(None, None, None, timedelta(minutes=1))
+    return SchedulingActivities(
+        None, None, None, timedelta(minutes=1), gateway=None, amount_minor=1, currency="USD"
+    )
 
 
 @pytest.mark.parametrize(
@@ -78,8 +80,13 @@ async def test_the_new_activities_fail_a_malformed_id_once_and_permanently(call,
     assert caught.value.non_retryable and field in caught.value.message
 
 
-async def test_the_refund_stand_in_needs_no_database():
-    await _activities().refund(FollowUpRequest(GOOD, None, None))
+async def test_the_refund_fails_a_malformed_id_permanently_before_any_gateway_call():
+    """The refund is a real gateway call since Week 3 slice 4 (it was a stand-in that
+    needed no database); a malformed id must still fail once, permanently, with nothing
+    touched -- `_activities()` has no gateway at all."""
+    with pytest.raises(ApplicationError) as caught:
+        await _activities().refund(FollowUpRequest("not-an-id", None, None))
+    assert caught.value.non_retryable
 
 
 def test_a_booking_request_recorded_before_the_reschedule_field_still_decodes():

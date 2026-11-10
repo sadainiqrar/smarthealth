@@ -21,13 +21,19 @@ from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.temporal import ACTIVITIES, WORKFLOWS, bind_activities
 from app.core.temporal_canary import CanaryWorkflow
+from app.events.consumer import CONSUMERS
+from app.modules.billing.public import PaymentGateway
+from app.modules.scheduling.consumers import SCHEDULING_CONSUMERS
 from app.modules.scheduling.activities import SchedulingActivities
 from app.modules.scheduling.workflows import (
     BookAppointmentWorkflow,
     CancelFollowUpWorkflow,
+    PostVisitWorkflow,
+    ProviderDeactivationWorkflow,
     RescheduleWorkflow,
     VisitWorkflow,
 )
+from app.settings import Settings, get_settings
 
 _registered = False
 
@@ -45,6 +51,9 @@ _SCHEDULING_ACTIVITIES = (
     SchedulingActivities.reschedule_complete,
     SchedulingActivities.waitlist_candidates,
     SchedulingActivities.waitlist_fulfil,
+    SchedulingActivities.post_visit_charge,
+    SchedulingActivities.provider_future_appointments,
+    SchedulingActivities.provider_cancel_appointment,
 )
 
 
@@ -58,7 +67,7 @@ def _activity_name(function: Callable[..., Any]) -> str:
 
 
 def register_all() -> None:
-    """Populate the registries. Idempotent."""
+    """Populate the registries -- workflows, activities and Kafka consumers. Idempotent."""
     global _registered
     if _registered:
         return
@@ -67,16 +76,33 @@ def register_all() -> None:
     WORKFLOWS.register(VisitWorkflow.__name__, VisitWorkflow)
     WORKFLOWS.register(CancelFollowUpWorkflow.__name__, CancelFollowUpWorkflow)
     WORKFLOWS.register(RescheduleWorkflow.__name__, RescheduleWorkflow)
+    WORKFLOWS.register(PostVisitWorkflow.__name__, PostVisitWorkflow)
+    WORKFLOWS.register(ProviderDeactivationWorkflow.__name__, ProviderDeactivationWorkflow)
     for function in _SCHEDULING_ACTIVITIES:
         ACTIVITIES.register(_activity_name(function), function)
+    for spec in SCHEDULING_CONSUMERS:
+        CONSUMERS.register(spec.name, spec)
     _registered = True
 
 
 def build_activities(
     session_factory: async_sessionmaker[AsyncSession], audit: AuditLog, clock: Clock,
-    no_show_grace: timedelta,
+    no_show_grace: timedelta, *, settings: Settings | None = None,
+    gateway: PaymentGateway | None = None,
 ) -> list[Callable[..., Any]]:
-    """Every registered activity, bound to instances holding the worker's resources."""
+    """Every registered activity, bound to instances holding the worker's resources.
+
+    The payment gateway comes from `settings` unless one is passed (tests point it at
+    the test stack's payments-mock, or at a fake)."""
     register_all()
-    instances = [SchedulingActivities(session_factory, audit, clock, no_show_grace)]
+    settings = settings or get_settings()
+    gateway = gateway or PaymentGateway(
+        settings.payments_url, timeout_seconds=settings.payments_timeout_seconds
+    )
+    instances = [
+        SchedulingActivities(
+            session_factory, audit, clock, no_show_grace, gateway=gateway,
+            amount_minor=settings.billing_amount_minor, currency=settings.billing_currency,
+        )
+    ]
     return bind_activities(list(ACTIVITIES), instances)

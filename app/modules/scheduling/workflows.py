@@ -26,6 +26,8 @@ from temporalio.exceptions import (
 from app.modules.scheduling.contracts import (
     BookingRequest,
     FollowUpRequest,
+    PostVisitRequest,
+    ProviderDeactivationRequest,
     RescheduleRequest,
     VisitRequest,
     booking_workflow_id,
@@ -312,3 +314,45 @@ class RescheduleWorkflow:
         if result["released_slot_id"] is not None:
             await _promote_waitlist(result["released_slot_id"])
         return "rescheduled"
+
+
+@workflow.defn(name="PostVisit")
+class PostVisitWorkflow:
+    """What follows a completed visit (Week 3 slice 4; PART-A-FR-3): capture the
+    booking's authorisation. Started by the `visits.completed` consumer under
+    `post-visit-<visit_id>`, so a redelivered event cannot charge twice -- and the capture
+    is idempotent besides. The follow-up reminder joins this workflow in slice 5.
+
+    Returns the billing status after the charge, or "nothing-to-charge"."""
+
+    @workflow.run
+    async def run(self, request: PostVisitRequest) -> str:
+        status = await workflow.execute_activity_method(
+            SchedulingActivities.post_visit_charge, request, **FOLLOW_UP
+        )
+        return status or "nothing-to-charge"
+
+
+@workflow.defn(name="ProviderDeactivation")
+class ProviderDeactivationWorkflow:
+    """A provider went inactive: cancel each of their future appointments (PRD R-25, spec
+    D-23). Started by the `providers.state` consumer. Each cancel is the ordinary paired
+    write, so each one emits `appointments.cancelled`, and that event's consumer does the
+    rest -- the refund, the waitlist, and (slice 5) telling the patient.
+
+    One activity per appointment, so the history shows which were cancelled and which had
+    already ended some other way, and a crash resumes after the last one done.
+    Returns "cancelled:<n>,skipped:<m>"."""
+
+    @workflow.run
+    async def run(self, request: ProviderDeactivationRequest) -> str:
+        appointment_ids = await workflow.execute_activity_method(
+            SchedulingActivities.provider_future_appointments, request, **FOLLOW_UP
+        )
+        outcomes = {"cancelled": 0, "skipped": 0}
+        for appointment_id in appointment_ids:
+            outcome = await workflow.execute_activity_method(
+                SchedulingActivities.provider_cancel_appointment, appointment_id, **FOLLOW_UP
+            )
+            outcomes[outcome] += 1
+        return f"cancelled:{outcomes['cancelled']},skipped:{outcomes['skipped']}"
