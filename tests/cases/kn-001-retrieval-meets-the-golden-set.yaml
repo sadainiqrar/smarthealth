@@ -1,0 +1,13 @@
+id: kn-001-retrieval-meets-the-golden-set
+title: "Hybrid retrieval over the ingested corpus meets the golden set: recall@5 >= 0.9, MRR >= 0.8, nothing for off-topic questions"
+requirement: [PART-B-FR-1, PART-B-FR-2]
+tier: contract
+priority: P0
+status: ready
+# Week 4's deliverable, measured (spec section 8.5): 38 questions phrased as people ask them
+# -- symptoms rather than specialties, rarely in the corpus's words -- against nine
+# documents (Markdown and a PDF) split by heading, embedded dense + BM25 and fused by RRF.
+# In fixture mode the vectors are the real model's, recorded once
+# (KNOWLEDGE_EMBEDDING_MODE=record python -m knowledge_service.eval): no download, no
+# variance. Measured 0.97 / 0.94 / 1.00; the one miss is kept in the set, not tuned away.
+impl: "tests/tiers/t1_contract/test_knowledge_retrieval.py::test_the_golden_set_meets_its_bars"

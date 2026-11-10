@@ -1,0 +1,10 @@
+id: kn-003-ingestion-is-idempotent-and-versioned
+title: "Ingesting the corpus again embeds nothing and duplicates nothing; a new version leaves no stale chunk"
+requirement: [PART-B-FR-1]
+tier: contract
+priority: P1
+status: ready
+# Chunk ids are uuid5(document, version, position) and each carries its text's hash, so a
+# re-run overwrites and skips unchanged text; a new version is upserted before the old
+# version's points are deleted, so a search during re-ingestion never sees a gap.
+impl: "tests/tiers/t1_contract/test_knowledge_retrieval.py::test_ingesting_again_embeds_nothing_and_duplicates_nothing"

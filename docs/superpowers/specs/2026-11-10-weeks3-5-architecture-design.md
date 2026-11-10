@@ -872,7 +872,10 @@ New core paths (`tests/core-paths.txt`) for the `Stop` hook: `services/*/src/**`
 | 7 | **Part B skeletons** — `knowledge` and `assistant` running in compose with their own stores; `contracts/proto/`; Envoy; JWKS verification; `knowledge` consuming `providers.state` into Qdrant; `assistant` streaming an echo through Envoy to the frontend while calling `knowledge.Search`; one trace browser → Envoy → assistant → knowledge | Fixes the Weeks 4–5 architecture before they start — **built**; as built, the browser path is proven by `scripts/grpcweb_smoke.py` (raw gRPC-Web through Envoy) rather than a frontend page, which joins Week 5 with the agent; `knowledge` creates its skeleton table at start-up (migrations arrive with Week 4's schema); bindings are generated per service (`scripts/gen_proto.py`) as namespace packages |
 
 **Week 4** — `knowledge`: corpus, ingestion (upload + state topics), hybrid retrieval with
-audience filtering, golden-set evaluation, Knowledge dashboard. Part A, in parallel: the
+audience filtering, golden-set evaluation, Knowledge dashboard. *Slice 1 built:* ingestion
+from the committed corpus and from `providers.state`, hybrid retrieval, the golden set
+(recall@5 0.97, MRR 0.94); the upload RPC with its Celery worker and the Knowledge dashboard
+are deferred — nothing uploads documents yet, and the pipeline they would call is this one. Part A, in parallel: the
 `clinical` module (notes, diagnoses, prescriptions, test orders, uploads to MinIO, text
 extraction), the signed-note requirement on `/complete`, care-relationship authorisation
 (R-14), and the clinical screens in the demo client. The execution guidelines' Week 4

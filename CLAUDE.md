@@ -95,7 +95,17 @@ notifications, the stale-pending reconciler (**PRD R-9 closed**), outbox purge. 
 *Service overview*, *Async backbone* and *Platform analytics* (Postgres datasource as the
 read-only `analytics_reader`, migration 0008) and six provisioned alert rules; Prometheus also
 scrapes RabbitMQ and `kafka-exporter`. Schema evolution happened once: cancelled and no-show
-are v2 (optional `clinic_id`). **Slice 7, the Part B skeletons, is built — Week 3 is complete.** `services/knowledge`
+are v2 (optional `clinic_id`). **Week 4 slice 1, knowledge retrieval, is built:** `services/knowledge/corpus/` (fictional
+MediNova documents, Markdown + one PDF, each with an `audience`) is ingested by
+`knowledge_service.ingest` (heading-then-size chunks, fastembed BGE-small + BM25, Qdrant;
+idempotent and versioned) and searched hybrid with the caller's audience and a relevance floor.
+**Embedding modes:** tests replay `services/knowledge/eval/fixtures/embeddings.jsonl` (fixture);
+after changing the corpus, golden set or model run
+`cd services/knowledge && KNOWLEDGE_EMBEDDING_MODE=record python -m knowledge_service.eval`
+(it prints recall@5 and MRR) and commit the fixture file. Compose runs `live`. Next: Week 4
+slice 2, Part A clinical records (spec §9.6) and R-14.
+
+**Slice 7, the Part B skeletons, is built — Week 3 is complete.** `services/knowledge`
 (`knowledge_service`: gRPC `Search` on :50052, its own Postgres `knowledge-db` and `qdrant`, a
 provider directory built from `providers.state`) and `services/assistant` (`assistant_service`:
 server-streaming `Chat` on :50051 echoing with citations from knowledge, resumable turns and a
