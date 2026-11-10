@@ -69,7 +69,8 @@ def test_a_metric_reaches_prometheus_labelled_with_its_service(probe_service):
     ).add(1)
     telemetry.flush()
 
-    query = f'smarthealth_pipeline_probe_total{{service_name="{probe_service}"}}'
+    # The collector names a process by job = "<service.namespace>/<service.name>".
+    query = f'smarthealth_pipeline_probe_total{{job="smarthealth/{probe_service}"}}'
 
     def fetch():
         response = httpx.get(f"{PROMETHEUS}/api/v1/query", params={"query": query})

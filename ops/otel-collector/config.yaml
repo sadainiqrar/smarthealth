@@ -16,8 +16,11 @@ exporters:
     tls: { insecure: true }
   prometheus:
     endpoint: 0.0.0.0:8889
-    # service.name and friends become labels, so a query can say which process.
-    resource_to_telemetry_conversion: { enabled: true }
+    # The process is named by `job` = "<service.namespace>/<service.name>", e.g.
+    # "smarthealth/part-a-api"; other resource attributes stay on `target_info`.
+    # Not resource_to_telemetry_conversion: Temporal core's metrics carry a
+    # `service_name` attribute of their own, which collides with the converted resource
+    # label and makes the exporter drop every Temporal metric.
 
 extensions:
   health_check: { endpoint: 0.0.0.0:13133 }
