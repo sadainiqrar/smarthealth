@@ -1,0 +1,11 @@
+id: prv-002-provider-deactivation-end-to-end
+title: "Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold"
+requirement: [PART-A-FR-2, PART-A-FR-4]
+tier: integration
+priority: P0
+status: ready
+# Closes PRD R-25. PATCH is_active=false -> providers.state (outbox) -> relay -> the
+# scheduling consumer -> ProviderDeactivationWorkflow -> the ordinary cancel paired write
+# -> appointments.cancelled -> the cancel follow-up -> billing release. The providers
+# module never imports scheduling (D-8): the event is how it crosses.
+impl: "tests/tiers/t3_integration/test_cancel_reschedule_round_trip.py::test_deactivating_a_provider_cancels_their_future_appointments"

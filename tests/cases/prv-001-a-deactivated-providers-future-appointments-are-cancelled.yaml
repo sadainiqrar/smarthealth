@@ -1,0 +1,10 @@
+id: prv-001-a-deactivated-providers-future-appointments-are-cancelled
+title: "The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise"
+requirement: [PART-A-FR-2]
+tier: workflow
+priority: P1
+status: ready
+# PRD R-25, policy D-23: cancel and notify. One activity per appointment, so the history
+# shows what happened to each and a crash resumes after the last one done; an appointment
+# that is no longer cancellable (a check-in, another cancel) is "skipped", not a failure.
+impl: "tests/tiers/t2_workflow/test_post_visit_and_deactivation.py::test_deactivation_cancels_each_future_appointment_once"

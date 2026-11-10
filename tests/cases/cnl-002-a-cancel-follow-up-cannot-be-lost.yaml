@@ -1,0 +1,15 @@
+id: cnl-002-a-cancel-follow-up-cannot-be-lost
+title: "A cancel's follow-up (visit timer, refund, waitlist) is started from its event, so a Temporal outage at cancel time cannot lose it"
+requirement: [PART-A-FR-2, PART-A-FR-4]
+tier: integration
+priority: P0
+status: ready
+# Closes PRD R-17. Until Week 3 slice 4 the cancel request started CancelFollowUpWorkflow
+# best-effort after its commit and swallowed a failure, losing the refund and the waitlist
+# offer. Now the cancel's transaction writes appointments.cancelled (the outbox); the
+# relay publishes it and the scheduling consumer starts the follow-up under
+# cancel-<appointment>. The test runs the real relay and consumers in process
+# (scheduling_helpers.event_pipeline) and waits for the follow-up to finish -- and the
+# booking's hold to be voided. That the request no longer touches Temporal at all is T1
+# test_cancel_reschedule_contract.py::test_a_cancel_never_touches_temporal_even_when_it_is_down.
+impl: "tests/tiers/t3_integration/test_cancel_reschedule_round_trip.py::test_a_cancel_frees_the_slot_and_runs_its_follow_up"

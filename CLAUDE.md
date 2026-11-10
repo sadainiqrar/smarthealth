@@ -72,9 +72,17 @@ app.relay` (compose `relay`) publishes as Avro under Schema Registry, per-key in
 least once; `app/events/consumer.py` is the consumer runtime (dedupe in `processed_events`,
 retry, `<topic>.dlt`); topics in `app/events/catalog.py`, schemas in `contracts/events/`
 (a meta-test keeps them in step; no clinical field names). Broker topic auto-creation is
-**off** — `python -m app.relay --setup` creates topics and registers schemas. No consumer
-is registered yet. Next is slice 4 (Kafka → Temporal: the cancel follow-up, provider
-deactivation, post-visit, billing with `payments-mock`). Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
+**off** — `python -m app.relay --setup` creates topics and registers schemas. **Slice 4, Kafka → Temporal and billing, is built:** `python -m app.consumers` (compose
+`consumers`) runs `app/modules/scheduling/consumers.py` — `appointments.cancelled` starts the
+cancel follow-up (**PRD R-17 closed**: the cancel request no longer calls Temporal),
+`providers.state` with `is_active=false` starts `ProviderDeactivationWorkflow` (**R-25
+closed**), `visits.completed` starts `PostVisitWorkflow` (the charge). `app/modules/billing/`
+is one state-machine row per appointment over `services/payments_mock` (compose
+`payments-mock`, test port 18090; `POST /_chaos` makes it misbehave) behind a circuit
+breaker; the pre-check authorises (a decline compensates), compensation/cancel/reschedule
+release, post-visit captures. T3 round trips run the relay and consumers in process
+(`scheduling_helpers.event_pipeline`), so they wait for workflows that Kafka starts. Next is
+slice 5 (Celery notifications). Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -111,6 +119,7 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
+| `python -m app.consumers` | run every registered Kafka consumer (the workflows that follow events) |
 | `python -m app.relay [--setup]` | publish outbox rows to Kafka until stopped; `--setup` creates topics and registers schemas, then exits |
 | `python -m app.cli republish` | queue a state event for every clinic, department and provider (backfill a downstream copy) |
 | `python -m app.cli dlt-replay --topic … [--limit N]` | re-publish a topic's dead letters once their cause is fixed |
@@ -279,8 +288,8 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-**5**, **6** and **7** are satisfied today, **1** for Temporal and Kafka, **3** for Temporal (the
-consumer registry `app/events/consumer.py:CONSUMERS` exists but is empty), and **4** in the
+**5**, **6** and **7** are satisfied today, **1** for Temporal and Kafka, **3** for Temporal and Kafka consumers
+(`app/events/consumer.py:CONSUMERS`, enumerated by `tests/meta/test_consumers_idempotent.py`), and **4** in the
 consumer runtime (`processed_events`, keyed on `event_id`); the rest await the code they
 constrain.
 

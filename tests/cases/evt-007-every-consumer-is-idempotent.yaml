@@ -1,0 +1,10 @@
+id: evt-007-every-consumer-is-idempotent
+title: "Every registered Kafka consumer, given its event twice, starts its workflow once and does not fail"
+requirement: [PART-A-NFR-3]
+tier: unit
+priority: P0
+status: ready
+# Registry-driven (harness requirements 3 and 4): a consumer is covered the day it
+# registers. Each declares a fixture event per topic; the fake Temporal refuses a second
+# start under a seen id as the real server does, and the handler must treat that as done.
+impl: "tests/meta/test_consumers_idempotent.py::test_delivering_an_event_twice_has_one_effect"

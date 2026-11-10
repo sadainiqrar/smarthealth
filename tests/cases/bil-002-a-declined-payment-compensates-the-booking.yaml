@@ -1,0 +1,11 @@
+id: bil-002-a-declined-payment-compensates-the-booking
+title: "A declined pre-check is recorded, fails the booking permanently, and the compensation frees the slot"
+requirement: [PART-A-FR-2, PART-A-NFR-2]
+tier: integration
+priority: P0
+status: ready
+# The pre-check is a real authorisation since Week 3 slice 4 (spec D-27). The decline is
+# returned, not raised, so the billing row commits; the activity then raises a
+# non-retryable PaymentDeclined and the booking runs fail_booking: failed, slot free,
+# nothing held to release. A gateway *outage* is the opposite: retryable, the booking waits.
+impl: "tests/tiers/t3_integration/test_booking_round_trip.py::test_a_declined_payment_fails_the_booking_and_frees_its_slot"

@@ -1,0 +1,12 @@
+id: bil-001-a-retried-charge-is-one-charge
+title: "A billing call whose answer timed out after the gateway acted is retried with the same key and records one authorisation"
+requirement: [PART-A-NFR-3, PART-A-FR-2]
+tier: integration
+priority: P0
+status: ready
+# The hardest gateway failure: it took effect, then the response never arrived. Nothing is
+# recorded (the commit never happened); the retry sends the same Idempotency-Key
+# (authorize-<appointment>) and payments-mock returns the original authorisation. Siblings
+# prove a circuit breaker opens on an outage and fails fast, and that every operation is
+# idempotent by the record's state too, announcing only real changes.
+impl: "tests/tiers/t3_integration/test_billing_service.py::test_a_timeout_after_the_gateway_acted_is_answered_by_the_retry"

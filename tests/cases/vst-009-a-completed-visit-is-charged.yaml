@@ -1,0 +1,11 @@
+id: vst-009-a-completed-visit-is-charged
+title: "Completing a visit captures the booking's authorisation, through visits.completed and the post-visit workflow"
+requirement: [PART-A-FR-3]
+tier: integration
+priority: P1
+status: ready
+# FR-3's "billing workflows may be triggered" on completion. The consumer of
+# visits.completed starts post-visit-<visit>, whose activity captures through the payment
+# gateway; a redelivered event is refused by the workflow id and the capture is idempotent
+# besides. The follow-up reminder joins the same workflow in slice 5.
+impl: "tests/tiers/t3_integration/test_visit_round_trip.py::test_a_visit_runs_from_booking_to_completion"

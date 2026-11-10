@@ -978,7 +978,7 @@ INFO, an `RPCError`, a `RuntimeError` from a lazy client that cannot connect, an
 of `NOTIFY_TIMEOUT` (5 s, `visits.py:32`) at WARNING. The bound exists because connecting a
 lazy client to a blackholed host takes tens of seconds in the SDK. The contract tier proves a
 failing Temporal still answers 200 with one commit
-(`test_temporal_failing_after_the_commit_still_answers_200`); no test exercises the 5-second
+(`test_a_cancel_never_touches_temporal_even_when_it_is_down`, renamed in Week 3 slice 4: the request no longer calls Temporal at all); no test exercises the 5-second
 bound itself. The audit write precedes the commit, as everywhere (PRD R-1).
 
 ---
@@ -1431,6 +1431,13 @@ because it must book the new slot before it releases the old one (D-14).
 
 #### Cancel — the paired write, then a best-effort follow-up
 
+> **Changed in Week 3 slice 4.** The follow-up is no longer started by the request. The cancel's
+> transaction writes `appointments.cancelled` to the outbox; the relay publishes it and the
+> `scheduling.cancel-follow-up` consumer (`app/modules/scheduling/consumers.py`) starts
+> `CancelFollowUpWorkflow` under `cancel-<id>`. The step labelled "start the follow-up" below is
+> that consumer now, and it cannot be lost (PRD R-17, closed). The refund is a real void or
+> refund through `app/modules/billing` (D-27).
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -1647,7 +1654,7 @@ T0 `test_scheduling_state.py` enumerates the cancel preconditions
 reschedule id has its own name space; `test_booking_activities.py` that a booking request
 recorded before `rescheduled_from_id` existed still decodes. T1 `test_cancel_reschedule_contract.py`
 proves the role gates, ownership, the 200/202/404/409/422/503 answers, that a failing Temporal
-after the commit still answers 200 (`test_temporal_failing_after_the_commit_still_answers_200`)
+after the commit still answers 200 (`test_a_cancel_never_touches_temporal_even_when_it_is_down`, renamed in Week 3 slice 4: the request no longer calls Temporal at all)
 and the waitlist's patient scoping. T2 runs both workflows on the time-skipping server against
 fake activities: `test_cancel_follow_up.py` (the promotion loop: first candidate, a failing first
 candidate, every candidate failing, an entry already promoted, a failed attempt retried) and

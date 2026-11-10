@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 60 |
+| Total cases | 67 |
 | contract | 10 |
-| integration | 35 |
-| unit | 5 |
-| workflow | 10 |
-| P0 | 35 |
-| P1 | 25 |
+| integration | 40 |
+| unit | 6 |
+| workflow | 11 |
+| P0 | 40 |
+| P1 | 27 |
 | declarative | 1 |
-| impl-backed | 59 |
+| impl-backed | 66 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -29,6 +29,8 @@
 | aut-005-a-guessed-address-locks-without-revealing-it | integration | P0 | impl | PART-A-NFR-8 | After five failed logins an address is locked, and the lock answers exactly like a wrong password |
 | aut-006-a-replayed-refresh-token-ends-the-session | contract | P0 | impl | PART-A-NFR-8 | Presenting a spent refresh token is refused and ends the session, killing the newer token too |
 | aut-007-the-published-key-verifies-a-token | contract | P1 | impl | PART-A-NFR-8 | GET /.well-known/jwks.json publishes an Ed25519 key that verifies an issued token, and nothing that can sign one |
+| bil-001-a-retried-charge-is-one-charge | integration | P0 | impl | PART-A-NFR-3, PART-A-FR-2 | A billing call whose answer timed out after the gateway acted is retried with the same key and records one authorisation |
+| bil-002-a-declined-payment-compensates-the-booking | integration | P0 | impl | PART-A-FR-2, PART-A-NFR-2 | A declined pre-check is recorded, fails the booking permanently, and the compensation frees the slot |
 | bkg-001-confirmed-only-after-every-step | workflow | P0 | impl | PART-A-FR-2 | A booking is confirmed only after every workflow step has succeeded, in order |
 | bkg-002-a-failed-step-compensates | workflow | P0 | impl | PART-A-NFR-2 | Any failing booking step runs compensation, is not retried, and never confirms |
 | bkg-003-one-slot-one-winner | integration | P0 | impl | PART-A-NFR-1 | A claim blocked behind a winning claim on the same slot loses on the conditional UPDATE |
@@ -40,12 +42,14 @@
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
 | bkg-010-booking-is-rate-limited-per-user | contract | P1 | impl | PART-A-NFR-5 | A user over the booking rate limit gets 429 with Retry-After, before any workflow starts |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
+| cnl-002-a-cancel-follow-up-cannot-be-lost | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | A cancel's follow-up (visit timer, refund, waitlist) is started from its event, so a Temporal outage at cancel time cannot lose it |
 | evt-001-an-event-commits-with-its-change | integration | P0 | impl | PART-A-FR-4 | A domain event is written in the same transaction as its change: a rollback leaves neither |
 | evt-002-the-relay-publishes-in-order | integration | P0 | impl | PART-A-FR-4, PART-A-NFR-3 | The relay publishes outbox rows to Kafka as Avro under their registered schema, keyed by subject, and marks them |
 | evt-003-a-breaking-schema-change-is-refused | integration | P1 | impl | PART-A-FR-4 | Schema Registry refuses a schema change that old events could not be read under (BACKWARD_TRANSITIVE) |
 | evt-004-a-consumer-applies-an-event-once | integration | P0 | impl | PART-A-NFR-3 | A consumer given the same event twice applies it once, and does not even run its handler the second time |
 | evt-005-a-poison-event-is-dead-lettered | integration | P0 | impl | PART-A-FR-4, PART-A-OBS-2 | An event whose handler keeps failing goes to the dead-letter topic with its error, and the partition moves on |
 | evt-006-a-provider-write-publishes-its-state | integration | P1 | impl | PART-A-FR-4, PART-A-FR-1.2 | Registering and deactivating a provider each queue its whole state for the compacted providers.state topic |
+| evt-007-every-consumer-is-idempotent | unit | P0 | impl | PART-A-NFR-3 | Every registered Kafka consumer, given its event twice, starts its workflow once and does not fail |
 | obs-001-every-request-is-traced-and-measured | contract | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither |
 | obs-002-a-workflow-run-joins-the-trace-that-started-it | workflow | P0 | impl | PART-A-OBS-2 | A workflow's run span belongs to the same trace as the client span that started it |
 | obs-003-telemetry-reaches-jaeger-and-prometheus | integration | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | A span sent to the collector is queryable in Jaeger, and a metric in Prometheus under its process's job |
@@ -57,7 +61,9 @@
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |
 | pat-004-a-patient-lists-only-their-own-appointments | integration | P0 | impl | PART-A-FR-1 | A patient's appointment list is their own, newest slot first, and cannot be widened |
+| prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
+| prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |
 | rsc-001-a-reschedule-books-before-it-releases | workflow | P0 | impl | PART-A-FR-2 | A reschedule confirms the new appointment first, and only then releases the old slot |
 | rsc-002-a-failed-reschedule-leaves-the-original | workflow | P0 | impl | PART-A-NFR-2 | When the new booking fails, the old appointment is untouched and nothing is promoted |
 | rsc-003-two-reschedules-leave-one-replacement | integration | P0 | impl | PART-A-NFR-1 | Two concurrent reschedules of one appointment confirm exactly one replacement |
@@ -81,4 +87,5 @@
 | vst-006-a-check-in-before-a-past-deadline-is-kept | workflow | P0 | impl | PART-A-FR-3 | A visit whose deadline has already passed, with a check-in already signalled, ends checked_in and never runs the no-show step |
 | vst-007-the-visit-timer-outlasts-a-database-outage | workflow | P1 | impl | PART-A-FR-3, PART-A-NFR-2 | A transient database outage longer than the booking step budget does not permanently fail a visit timer |
 | vst-008-a-real-timer-marks-a-no-show | integration | P1 | impl | PART-A-FR-3 | On real Temporal and Postgres, an appointment nobody checks in for becomes no_show at the slot's end, its slot stays booked, and a late check-in is refused |
+| vst-009-a-completed-visit-is-charged | integration | P1 | impl | PART-A-FR-3 | Completing a visit captures the booking's authorisation, through visits.completed and the post-visit workflow |
 | wtl-001-a-cancelled-slot-is-promoted-to-the-waitlist | integration | P1 | impl | PART-A-FR-2 | Cancelling a booked slot confirms the waiting patient on it and fulfils their entry |
