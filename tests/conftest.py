@@ -12,11 +12,29 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 from asgi_lifespan import LifespanManager
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+# Must precede the application import: the first telemetry install wins.
+from tests.harness import telemetry as test_telemetry  # isort: skip
 from app.main import app
 from app.settings import get_settings
 from tests.harness.isolation import RunIsolation, make_isolation
 from tests.harness.stack import TestStack
+
+
+@pytest.fixture
+def spans() -> InMemorySpanExporter:
+    """The finished spans recorded during this test, and only this test."""
+    test_telemetry.SPAN_EXPORTER.clear()
+    return test_telemetry.SPAN_EXPORTER
+
+
+@pytest.fixture
+def metric_reader() -> InMemoryMetricReader:
+    """The suite's metric reader. Metrics are cumulative across the session, so assert
+    on presence, not on counts."""
+    return test_telemetry.METRIC_READER
 
 
 @pytest.fixture(autouse=True)
