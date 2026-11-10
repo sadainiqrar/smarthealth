@@ -1,0 +1,10 @@
+id: pb-010-reports-stream-from-the-background
+title: "An admin report starts at once, is written in the background with every figure from Part A, streams to any watcher and resumes from its record"
+requirement: [PART-B-FR-4, PART-B-NFR-1]
+tier: contract
+priority: P1
+status: ready
+# Spec 9.1: "Long, so it runs on the worker and streams"; "every number comes from a tool,
+# never from the model". StartReport returns a job; WatchReport replays the report's Redis
+# Stream and follows it; a finished report is served from the database. Admin only.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_an_admin_report_runs_in_the_background_and_streams_figures_then_narrative"

@@ -28,6 +28,7 @@ from redis.asyncio import Redis
 from assistant_service.agent import Agent
 from assistant_service.auth import TokenVerifier
 from assistant_service.conversations import InMemoryConversations, PostgresConversations
+from assistant_service.reports import InMemoryReports, PostgresReports
 from assistant_service.usage import InMemoryUsage, PostgresUsage
 from assistant_service.llm import DEFAULT_MODELS, chat_model
 from assistant_service.parta import PartA
@@ -83,7 +84,7 @@ async def main() -> None:
     parta = PartA(settings.parta_url, timeout=settings.parta_timeout_seconds)
     async with (
         checkpointer(settings.database_url) as saver,
-        conversation_store(settings.database_url) as (conversations, usage),
+        conversation_store(settings.database_url) as (conversations, usage, reports),
     ):
         model = chat_model(
             settings.llm_mode,
@@ -105,6 +106,7 @@ async def main() -> None:
             usage=usage,
             model_label=model_label(settings, model),
             prices=(settings.llm_price_input_per_mtok, settings.llm_price_output_per_mtok),
+            reports=reports,
         )
         await serve(settings, server, stores, redis)
     await parta.aclose()
@@ -142,15 +144,23 @@ def model_label(settings: AssistantSettings, model) -> tuple[str, str]:
 async def conversation_store(database_url: str):
     """Transcripts in the same database as the checkpoints, or in memory when none is set."""
     if not database_url:
-        yield InMemoryConversations(), InMemoryUsage()
+        yield InMemoryConversations(), InMemoryUsage(), InMemoryReports()
         return
     async with AsyncConnectionPool(
         database_url, min_size=1, max_size=5, open=False, kwargs={"autocommit": True}
     ) as pool:
-        store, usage = PostgresConversations(pool), PostgresUsage(pool)
+        store, usage, reports = (
+            PostgresConversations(pool),
+            PostgresUsage(pool),
+            PostgresReports(pool),
+        )
         await store.setup()
         await usage.setup()
-        yield store, usage
+        await reports.setup()
+        # A report that was running when the process stopped will never finish: say so.
+        if failed := await reports.fail_running():
+            logger.warning("%s reports were interrupted by a restart", failed)
+        yield store, usage, reports
 
 
 async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redis) -> None:

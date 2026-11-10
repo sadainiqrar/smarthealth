@@ -17,7 +17,7 @@ The work itself is the LangGraph agent (agent.py).
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
+from datetime import date, timedelta
 import logging
 from zoneinfo import ZoneInfo
 
@@ -31,6 +31,8 @@ from assistant_service.agent import Agent, StaleAnswer, TurnContext
 from assistant_service.auth import Caller, TokenVerifier, Unauthenticated
 from assistant_service.conversations import ConversationStore, InMemoryConversations
 from assistant_service.flows import FLOWS
+from assistant_service.reports import KINDS as REPORT_KINDS
+from assistant_service.reports import InMemoryReports, Report, ReportRunner, ReportStore
 from assistant_service.usage import (
     InMemoryUsage,
     TurnUsage,
@@ -51,6 +53,8 @@ TOKEN_DELAY_SECONDS = 0.02
 UTC_ZONE = ZoneInfo("UTC")
 #: A confirmation turn's transcript text: the client shows the decision, not a bubble.
 DECIDED = {True: "[approved]", False: "[declined]"}
+#: How often a watcher of a running report checks for what was written since.
+REPORT_POLL_SECONDS = 0.25
 
 
 def _fields(items: list[dict]) -> list[assistant_pb2.Field]:
@@ -101,9 +105,13 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
         model: BaseChatModel | None, timezone: ZoneInfo, conversations: ConversationStore,
         usage: UsageStore, model_label: tuple[str, str] = ("none", "none"),
         prices: tuple[float, float] = (0.0, 0.0),
+        reports: ReportStore | None = None,
         token_delay: float = TOKEN_DELAY_SECONDS,
     ) -> None:
         self._stores = stores
+        self.reports = ReportRunner(stores, reports or InMemoryReports(), parta, model,
+                                    on_usage=self._report_usage)
+        self._report_store = self.reports._reports
         self._usage = usage
         self._model_label = model_label
         self._prices = prices
@@ -345,6 +353,68 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             drafts_sent=drafted.sent, drafts_discarded=drafted.discarded,
             draft_recipients=drafted.recipients)
 
+    async def _report_usage(self, caller: Caller, report_id: str, usage: TurnUsage,
+                            events: list[dict]) -> None:
+        await self._record_usage(caller, f"report:{report_id}", report_id, usage, events)
+
+    async def _admin(self, context) -> Caller:
+        caller = await self._caller(context)
+        if caller.role != "admin":
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "reports are for admins")
+        return caller
+
+    @staticmethod
+    def _job(report: Report) -> assistant_pb2.ReportJob:
+        return assistant_pb2.ReportJob(
+            report_id=report.id, title=report.title, status=report.status,
+            from_date=report.period_from.isoformat(), to_date=report.period_to.isoformat(),
+            created_at=report.created_at.isoformat())
+
+    async def StartReport(self, request, context):  # noqa: N802
+        caller = await self._admin(context)
+        if request.kind not in REPORT_KINDS:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                                f"kind is one of {', '.join(REPORT_KINDS)}")
+        try:
+            start = date.fromisoformat(request.from_date) if request.from_date else None
+            end = date.fromisoformat(request.to_date) if request.to_date else None
+        except ValueError:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "dates are YYYY-MM-DD")
+        return self._job(await self.reports.start(caller, request.kind, start, end))
+
+    async def ListReports(self, request, context):  # noqa: N802
+        caller = await self._admin(context)
+        reports = await self._report_store.list(caller.user_id, min(request.limit or 20, 100))
+        return assistant_pb2.ListReportsReply(reports=[self._job(r) for r in reports])
+
+    async def WatchReport(self, request, context):  # noqa: N802
+        caller = await self._admin(context)
+        report = await self._report_store.get(caller.user_id, request.report_id)
+        if report is None:
+            await context.abort(grpc.StatusCode.NOT_FOUND, "no such report")
+        key = ReportRunner.stream_key(report.id)
+        seen = request.resume_from
+        if report.status != "running" and report.events is not None:
+            for i, event in enumerate(report.events, start=1):  # finished: from the record
+                if i > seen:
+                    yield to_message(report.id, i, event)
+            return
+        while True:  # running: replay what is written, then follow until done
+            for seq, event in await self._stores.replay(key, seen):
+                seen = seq
+                yield to_message(report.id, seq, event)
+                if event["kind"] == "done":
+                    return
+            await asyncio.sleep(REPORT_POLL_SECONDS)
+            if not await self._stores.exists(key):
+                finished = await self._report_store.get(caller.user_id, report.id)
+                if finished is None or finished.status != "running":
+                    for i, event in enumerate((finished.events or []) if finished else [],
+                                              start=1):
+                        if i > seen:
+                            yield to_message(report.id, i, event)
+                    return
+
     async def DeleteConversation(self, request, context):  # noqa: N802
         caller = await self._caller(context)
         deleted = await self._conversations.delete(caller.user_id, request.conversation_id)
@@ -363,6 +433,7 @@ def build_server(stores: Stores, verifier: TokenVerifier, knowledge_channel: grp
                  usage: UsageStore | None = None,
                  model_label: tuple[str, str] = ("none", "none"),
                  prices: tuple[float, float] = (0.0, 0.0),
+                 reports: ReportStore | None = None,
                  token_delay: float = TOKEN_DELAY_SECONDS) -> grpc.aio.Server:
     server = grpc.aio.server()
     servicer = AssistantServicer(
@@ -370,7 +441,7 @@ def build_server(stores: Stores, verifier: TokenVerifier, knowledge_channel: grp
         model=model, timezone=timezone,
         conversations=conversations if conversations is not None else InMemoryConversations(),
         usage=usage if usage is not None else InMemoryUsage(),
-        model_label=model_label, prices=prices,
+        model_label=model_label, prices=prices, reports=reports,
         token_delay=token_delay,
     )
     assistant_pb2_grpc.add_AssistantServicer_to_server(servicer, server)
@@ -378,4 +449,5 @@ def build_server(stores: Stores, verifier: TokenVerifier, knowledge_channel: grp
     health_pb2_grpc.add_HealthServicer_to_server(checker, server)
     server.port = server.add_insecure_port(f"[::]:{port}")  # the bound port (0 picks one)
     server.health = checker
+    server.servicer = servicer
     return server

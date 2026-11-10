@@ -725,3 +725,80 @@ async def test_a_signed_note_is_not_rewritten():
             doctor_token, choice=(last(events, "options").options_id, appointment_id)
         )
     assert "Amend it first" in text(events) and fake.writes == []
+
+
+# -- reports written in the background ----------------------------------------------------------
+
+
+async def _watch(h: Harness, token: str, report_id: str, resume: int = 0):
+    request = assistant_pb2.WatchReportRequest(report_id=report_id, resume_from=resume)
+    return [e async for e in h.stub.WatchReport(request, metadata=_auth(token))]
+
+
+async def test_an_admin_report_runs_in_the_background_and_streams_figures_then_narrative():
+    """Referenced by tests/cases/pb-010-reports-stream-from-the-background.yaml."""
+    narrative = "Bookings rose while cancellations doubled."
+    model = Scripted(
+        script=[
+            AIMessage(
+                content=narrative,
+                usage_metadata={"input_tokens": 500, "output_tokens": 60, "total_tokens": 560},
+            )
+        ]
+    )
+    fake = FakePartA.seeded()
+    async with Harness(fake, model=model) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="operations_7"), metadata=_auth(admin)
+        )
+        assert job.status == "running"  # answered before the report is written
+        events = await _watch(h, admin, job.report_id)
+        again = await _watch(h, admin, job.report_id, resume=2)  # from the record, resumable
+        listed = await h.stub.ListReports(assistant_pb2.ListReportsRequest(), metadata=_auth(admin))
+        usage = await h.stub.Usage(assistant_pb2.UsageRequest(), metadata=_auth(admin))
+    card = last(events, "card")
+    figures = {f.label: f.value for f in card.fields}
+    assert figures["Appointments booked"].startswith("48 (+20%")  # 48 vs 40, from Part A
+    assert figures["Cancellations"].startswith("6 (+100%")
+    assert narrative in text(events) and events[-1].done.reason == "complete"
+    assert [e.seq for e in again] == [e.seq for e in events if e.seq > 2]
+    assert [(r.report_id, r.status) for r in listed.reports] == [(job.report_id, "done")]
+    assert usage.users[0].input_tokens == 500  # the report's model call is counted
+    # The two windows are asked by Part A's own parameter names, and they differ.
+    windows = [(c["from"], c["to"]) for c in fake.analytics_calls]
+    assert len(set(windows)) == 2 and windows[0][1] > windows[1][1]
+
+
+async def test_reports_are_for_admins_only():
+    async with Harness(FakePartA.seeded()) as h:
+        with pytest.raises(grpc.aio.AioRpcError) as raised:
+            await h.stub.StartReport(
+                assistant_pb2.StartReportRequest(kind="operations_7"),
+                metadata=_auth(_token(UserRole.FRONT_DESK, user="u-desk")),
+            )
+    assert raised.value.code() is grpc.StatusCode.PERMISSION_DENIED
+
+
+async def test_a_report_without_part_a_fails_and_says_why():
+    fake = FakePartA.seeded()
+    fake.down = True
+    async with Harness(fake) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="operations_30"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+        listed = await h.stub.ListReports(assistant_pb2.ListReportsRequest(), metadata=_auth(admin))
+    assert "Couldn't fetch the figures" in last(events, "error").message
+    assert listed.reports[0].status == "failed"
+
+
+async def test_the_snapshot_asks_part_a_for_two_different_weeks():
+    """Regression: the window was sent as start/end, which Part A ignores (it names them
+    from/to), so "this week" and "last week" were both the default 30 days."""
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        await h.chat(_token(UserRole.ADMIN, user="u-admin"), starter="snapshot")
+    windows = [(c.get("from"), c.get("to")) for c in fake.analytics_calls]
+    assert len(windows) == 2 and None not in windows[0] and windows[0] != windows[1]

@@ -42,6 +42,8 @@ class FakePartA:
     notes: dict[str, dict] = field(default_factory=dict)
     #: Idempotency-Keys of staff messages already queued (POST /notifications).
     sent_keys: set[str] = field(default_factory=set)
+    #: Query parameters of every GET /analytics/summary, in order.
+    analytics_calls: list[dict] = field(default_factory=list)
     down: bool = False
     #: Status a new booking ends in ("confirmed", or "failed" to simulate a decline).
     outcome: str = "confirmed"
@@ -197,6 +199,28 @@ class FakePartA:
                 return httpx.Response(409, json={"detail": "a signed note is not edited"})
             note.update(body)
             return httpx.Response(200, json=note)
+        if (method, path) == ("GET", "/analytics/summary"):
+            self.analytics_calls.append(dict(q))
+            busy = len(self.analytics_calls) % 2 == 1  # this period first, the one before second
+            return httpx.Response(
+                200,
+                json={
+                    "start": q.get("from"),
+                    "end": q.get("to"),
+                    "total_patients": 120,
+                    "appointments_booked": 48 if busy else 40,
+                    "completed_visits": 30 if busy else 31,
+                    "cancellations": 6 if busy else 3,
+                    "no_shows": 2,
+                    "cancellation_rate": 0.125 if busy else 0.075,
+                    "average_wait_seconds": 540.0,
+                },
+            )
+        if (method, path) == ("GET", "/analytics/timeseries"):
+            return httpx.Response(
+                200,
+                json={"metric": q.get("metric"), "points": [{"day": q.get("from"), "value": 7.0}]},
+            )
         if (method, path) == ("POST", "/notifications"):
             key = request.headers["idempotency-key"]
             if key in self.sent_keys:

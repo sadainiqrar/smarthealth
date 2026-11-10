@@ -353,3 +353,49 @@ class UsageReply(_message.Message):
     drafts_discarded: int
     draft_recipients: int
     def __init__(self, from_date: _Optional[str] = ..., to_date: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., price_input_per_mtok: _Optional[float] = ..., price_output_per_mtok: _Optional[float] = ..., users: _Optional[_Iterable[_Union[UserUsage, _Mapping]]] = ..., totals: _Optional[_Union[UserUsage, _Mapping]] = ..., drafts_generated: _Optional[int] = ..., drafts_sent: _Optional[int] = ..., drafts_discarded: _Optional[int] = ..., draft_recipients: _Optional[int] = ...) -> None: ...
+
+class StartReportRequest(_message.Message):
+    __slots__ = ("kind", "from_date", "to_date")
+    KIND_FIELD_NUMBER: _ClassVar[int]
+    FROM_DATE_FIELD_NUMBER: _ClassVar[int]
+    TO_DATE_FIELD_NUMBER: _ClassVar[int]
+    kind: str
+    from_date: str
+    to_date: str
+    def __init__(self, kind: _Optional[str] = ..., from_date: _Optional[str] = ..., to_date: _Optional[str] = ...) -> None: ...
+
+class ReportJob(_message.Message):
+    __slots__ = ("report_id", "title", "status", "from_date", "to_date", "created_at")
+    REPORT_ID_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    FROM_DATE_FIELD_NUMBER: _ClassVar[int]
+    TO_DATE_FIELD_NUMBER: _ClassVar[int]
+    CREATED_AT_FIELD_NUMBER: _ClassVar[int]
+    report_id: str
+    title: str
+    status: str
+    from_date: str
+    to_date: str
+    created_at: str
+    def __init__(self, report_id: _Optional[str] = ..., title: _Optional[str] = ..., status: _Optional[str] = ..., from_date: _Optional[str] = ..., to_date: _Optional[str] = ..., created_at: _Optional[str] = ...) -> None: ...
+
+class WatchReportRequest(_message.Message):
+    __slots__ = ("report_id", "resume_from")
+    REPORT_ID_FIELD_NUMBER: _ClassVar[int]
+    RESUME_FROM_FIELD_NUMBER: _ClassVar[int]
+    report_id: str
+    resume_from: int
+    def __init__(self, report_id: _Optional[str] = ..., resume_from: _Optional[int] = ...) -> None: ...
+
+class ListReportsRequest(_message.Message):
+    __slots__ = ("limit",)
+    LIMIT_FIELD_NUMBER: _ClassVar[int]
+    limit: int
+    def __init__(self, limit: _Optional[int] = ...) -> None: ...
+
+class ListReportsReply(_message.Message):
+    __slots__ = ("reports",)
+    REPORTS_FIELD_NUMBER: _ClassVar[int]
+    reports: _containers.RepeatedCompositeFieldContainer[ReportJob]
+    def __init__(self, reports: _Optional[_Iterable[_Union[ReportJob, _Mapping]]] = ...) -> None: ...

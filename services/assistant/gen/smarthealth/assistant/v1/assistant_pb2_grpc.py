@@ -74,6 +74,21 @@ class AssistantStub:
                 request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.SerializeToString,
                 response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.FromString,
                 _registered_method=True)
+        self.StartReport = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/StartReport',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartReportRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ReportJob.FromString,
+                _registered_method=True)
+        self.WatchReport = channel.unary_stream(
+                '/smarthealth.assistant.v1.Assistant/WatchReport',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.WatchReportRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ChatEvent.FromString,
+                _registered_method=True)
+        self.ListReports = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/ListReports',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsReply.FromString,
+                _registered_method=True)
 
 
 class AssistantServicer:
@@ -141,6 +156,27 @@ class AssistantServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def StartReport(self, request, context):
+        """Long reports (PART-B-FR-4), admin only: StartReport answers at once with a job; the
+        report is written in the background, and WatchReport streams it -- replaying what is
+        written so far, then following until Done. Watch again (or resume_from) any time.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def WatchReport(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListReports(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AssistantServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -183,6 +219,21 @@ def add_AssistantServicer_to_server(servicer, server):
                     servicer.Usage,
                     request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.FromString,
                     response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.SerializeToString,
+            ),
+            'StartReport': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartReport,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartReportRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ReportJob.SerializeToString,
+            ),
+            'WatchReport': grpc.unary_stream_rpc_method_handler(
+                    servicer.WatchReport,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.WatchReportRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ChatEvent.SerializeToString,
+            ),
+            'ListReports': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListReports,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -401,6 +452,87 @@ class Assistant:
             '/smarthealth.assistant.v1.Assistant/Usage',
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.SerializeToString,
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StartReport(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/StartReport',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.StartReportRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ReportJob.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WatchReport(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/WatchReport',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.WatchReportRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ChatEvent.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListReports(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/ListReports',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.ListReportsReply.FromString,
             options,
             channel_credentials,
             insecure,

@@ -37,6 +37,12 @@ service Assistant {
   // Users are ids and roles: the admin's browser joins names and emails from Part A's
   // GET /users, so this service never holds Part A's user data.
   rpc Usage(UsageRequest) returns (UsageReply);
+  // Long reports (PART-B-FR-4), admin only: StartReport answers at once with a job; the
+  // report is written in the background, and WatchReport streams it -- replaying what is
+  // written so far, then following until Done. Watch again (or resume_from) any time.
+  rpc StartReport(StartReportRequest) returns (ReportJob);
+  rpc WatchReport(WatchReportRequest) returns (stream ChatEvent);
+  rpc ListReports(ListReportsRequest) returns (ListReportsReply);
 }
 
 message ChatRequest {
@@ -279,4 +285,36 @@ message UsageReply {
   int32 drafts_sent = 10;
   int32 drafts_discarded = 11;
   int32 draft_recipients = 12;
+}
+
+message StartReportRequest {
+  // "operations_7" (weekly) or "operations_30" (monthly).
+  string kind = 1;
+  // Optional inclusive dates, YYYY-MM-DD; default: the period ending today.
+  string from_date = 2;
+  string to_date = 3;
+}
+
+message ReportJob {
+  string report_id = 1;
+  string title = 2;
+  // running | done | failed
+  string status = 3;
+  string from_date = 4;
+  string to_date = 5;
+  // RFC 3339.
+  string created_at = 6;
+}
+
+message WatchReportRequest {
+  string report_id = 1;
+  int64 resume_from = 2;
+}
+
+message ListReportsRequest {
+  int32 limit = 1;
+}
+
+message ListReportsReply {
+  repeated ReportJob reports = 1;
 }

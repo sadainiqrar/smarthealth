@@ -182,8 +182,17 @@ class PartA:
         page = await self.request("GET", "/waitlist", token, params={"limit": 50, **filters})
         return page["items"]
 
-    async def analytics_summary(self, token: str, **params: Any) -> dict:
-        return await self.request("GET", "/analytics/summary", token, params=params)
+    async def analytics_summary(self, token: str, *, start: str, end: str) -> dict:
+        """The five metrics over [start, end], inclusive dates. Part A names the window
+        `from`/`to`; an unknown name would be ignored and answer the default 30 days."""
+        return await self.request("GET", "/analytics/summary", token,
+                                  params={"from": start, "to": end})
+
+    async def analytics_series(self, token: str, metric: str, *, start: str, end: str) -> list:
+        """One point per day with data: [{"day": ..., "value": ...}]."""
+        reply = await self.request("GET", "/analytics/timeseries", token,
+                                   params={"metric": metric, "from": start, "to": end})
+        return reply["points"]
 
     # -- writes (each only after the user confirmed, spec 9.2) --------------------------
 
