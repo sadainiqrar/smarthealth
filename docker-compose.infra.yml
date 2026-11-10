@@ -104,6 +104,32 @@ services:
       timeout: 12s
       retries: 8
 
+  relay:
+    # The outbox relay (spec D-21): publishes outbox rows to Kafka. Creates the topics and
+    # registers the schemas at start-up, so a schema that breaks compatibility stops the
+    # deploy here. Waits for `app`, which applies the migrations.
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "app.relay"]
+    environment:
+      SMARTHEALTH_ENVIRONMENT: docker
+      SMARTHEALTH_POSTGRES_HOST: postgres
+      SMARTHEALTH_POSTGRES_PORT: 5432
+      SMARTHEALTH_POSTGRES_USER: ${POSTGRES_USER:-smarthealth}
+      SMARTHEALTH_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthealth}
+      SMARTHEALTH_POSTGRES_DB: ${POSTGRES_DB:-smarthealth}
+      SMARTHEALTH_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SMARTHEALTH_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      SMARTHEALTH_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    depends_on:
+      app:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    stop_grace_period: 15s
+
   temporal-ui:
     # Temporal's web UI: every workflow's history and state (booking-<id>, visit-<id>,
     # cancel-<id>, reschedule-<id>) at http://localhost:8080. Read-only use; nothing in the
@@ -203,7 +229,9 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Off (Weeks 3-5 spec section 3.2): compaction and partitions must be declared, and
+      # a misspelt topic must fail loudly. `python -m app.relay --setup` creates them.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     ports: ["${KAFKA_PORT:-9092}:9092"]
     volumes: ["kafka-data:/var/lib/kafka/data"]
     healthcheck:

@@ -50,6 +50,11 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
         temporal_host="localhost",
         temporal_port=int(os.environ.get("SMARTHEALTH_TEST_TEMPORAL_PORT", "17233")),
         resource_prefix=isolation.resource_prefix,
+        kafka_bootstrap_servers=os.environ.get("SMARTHEALTH_TEST_KAFKA", "localhost:19092"),
+        schema_registry_url=os.environ.get(
+            "SMARTHEALTH_TEST_SCHEMA_REGISTRY", "http://localhost:18081"
+        ),
+        kafka_group=isolation.kafka_group,
     )
 
 
