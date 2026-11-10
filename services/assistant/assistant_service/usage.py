@@ -38,6 +38,13 @@ create table if not exists turn_usage (
     primary key (user_id, turn_id)
 );
 create index if not exists ix_turn_usage_created on turn_usage (created_at);
+create table if not exists bookings (
+    appointment_id text primary key,
+    origin text not null,
+    conversation_ref text,
+    booked_at timestamptz not null
+);
+create index if not exists ix_bookings_booked on bookings (booked_at);
 create table if not exists drafts (
     user_id text not null,
     draft_id text not null,
@@ -49,6 +56,20 @@ create table if not exists drafts (
     primary key (user_id, draft_id)
 );
 """
+
+
+@dataclass
+class BookingTotals:
+    """Booking conversion after AI interaction (PART-B-FR-5, spec 9.4), from Part A's
+    `appointments.booked`: every booking's origin, and the conversation an assistant booking
+    came from. Ids and origins only -- no patient data reaches Part B this way."""
+
+    total: int = 0
+    via_assistant: int = 0
+    #: Distinct conversations of this service's that a booking names.
+    conversations_with_booking: int = 0
+    #: Distinct chat conversations with a turn in the period.
+    conversations: int = 0
 
 
 @dataclass
@@ -139,12 +160,39 @@ class UsageStore(Protocol):
         self, user_id: str, draft_id: str, kind: str, status: str, recipients: int
     ) -> None: ...
     async def draft_totals(self, start: datetime, end: datetime) -> DraftTotals: ...
+    async def booking(
+        self, appointment_id: str, origin: str, conversation_ref: str | None, booked_at: datetime
+    ) -> None: ...
+    async def booking_totals(self, start: datetime, end: datetime) -> BookingTotals: ...
 
 
 @dataclass
 class InMemoryUsage:
     rows: dict[tuple[str, str], UsageRow] = field(default_factory=dict)
     drafts: dict[tuple[str, str], dict] = field(default_factory=dict)
+    bookings: dict[str, tuple[str, str | None, datetime]] = field(default_factory=dict)
+
+    async def booking(
+        self, appointment_id: str, origin: str, conversation_ref: str | None, booked_at: datetime
+    ) -> None:
+        self.bookings.setdefault(appointment_id, (origin, conversation_ref, booked_at))
+
+    async def booking_totals(self, start: datetime, end: datetime) -> BookingTotals:
+        rows = [b for b in self.bookings.values() if start <= b[2] < end]
+        chats = {
+            r.conversation_id
+            for r in self.rows.values()
+            if start <= r.created_at < end and not r.conversation_id.startswith("report:")
+        }
+        known = {r.conversation_id for r in self.rows.values()}
+        return BookingTotals(
+            total=len(rows),
+            via_assistant=sum(1 for b in rows if b[0] == "assistant"),
+            conversations_with_booking=len(
+                {b[1] for b in rows if b[0] == "assistant" and b[1] in known}
+            ),
+            conversations=len(chats),
+        )
 
     async def draft(
         self, user_id: str, draft_id: str, kind: str, status: str, recipients: int
@@ -236,6 +284,38 @@ class PostgresUsage:
                 " decided_at = now() where excluded.status <> 'generated'",
                 (user_id, draft_id, kind, status, recipients),
             )
+
+    async def booking(
+        self, appointment_id: str, origin: str, conversation_ref: str | None, booked_at: datetime
+    ) -> None:
+        async with self._pool.connection() as conn:
+            await conn.execute(
+                "insert into bookings (appointment_id, origin, conversation_ref, booked_at)"
+                " values (%s, %s, %s, %s) on conflict do nothing",
+                (appointment_id, origin, conversation_ref, booked_at),
+            )
+
+    async def booking_totals(self, start: datetime, end: datetime) -> BookingTotals:
+        async with self._pool.connection() as conn:
+            row = await (
+                await conn.execute(
+                    "select count(*), count(*) filter (where origin = 'assistant'),"
+                    " (select count(distinct b.conversation_ref) from bookings b"
+                    "   where b.origin = 'assistant' and b.booked_at >= %s and b.booked_at < %s"
+                    # "A conversation_ref it recognises" (spec 9.4): one this service
+                    # holds -- a thread, or a turn it recorded.
+                    "   and (exists (select 1 from conversations c"
+                    "                where c.id = b.conversation_ref)"
+                    "        or exists (select 1 from turn_usage t"
+                    "                   where t.conversation_id = b.conversation_ref))),"
+                    " (select count(distinct conversation_id) from turn_usage"
+                    "   where created_at >= %s and created_at < %s"
+                    "   and conversation_id not like 'report:%%')"
+                    " from bookings where booked_at >= %s and booked_at < %s",
+                    (start, end, start, end, start, end),
+                )
+            ).fetchone()
+        return BookingTotals(*[int(v or 0) for v in row])
 
     async def draft_totals(self, start: datetime, end: datetime) -> DraftTotals:
         async with self._pool.connection() as conn:

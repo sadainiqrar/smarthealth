@@ -6,7 +6,7 @@
 // configured price per million tokens.
 
 import { useQuery } from "@tanstack/react-query";
-import { ActivityIcon, CoinsIcon, FileTextIcon, MessagesSquareIcon, TimerIcon } from "lucide-react";
+import { ActivityIcon, CalendarCheckIcon, CoinsIcon, FileTextIcon, MessagesSquareIcon, TimerIcon } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/api";
 import { assistant } from "@/assistant/client";
@@ -38,6 +38,12 @@ function isoDay(date: Date): string {
 
 const number = new Intl.NumberFormat();
 const money = new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 4 });
+
+/** Booking conversion after AI interaction: chats that led to a booking, of all chats. */
+function conversion(withBooking: number, chats: number): string {
+  if (!chats) return "no chats in this period";
+  return `${withBooking} of ${chats} chats led to a booking (${Math.round((withBooking / chats) * 100)}%)`;
+}
 
 function seconds(ms: number): string {
   return ms ? `${(ms / 1000).toFixed(1)} s` : "—";
@@ -100,7 +106,7 @@ export default function Usage() {
       {usage.isError && <p className="text-sm text-destructive">Couldn't load usage: {usage.error.message}</p>}
 
       {totals && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Stat icon={<MessagesSquareIcon />} label="Conversations" value={number.format(totals.conversations)}
                 note={`${number.format(totals.turns)} turns, ${number.format(totals.modelTurns)} used the model`} />
           <Stat icon={<ActivityIcon />} label="Tokens" value={number.format(Number(totals.inputTokens + totals.outputTokens))}
@@ -112,6 +118,9 @@ export default function Usage() {
           <Stat icon={<FileTextIcon />} label="Drafts sent"
                 value={`${usage.data!.draftsSent} of ${usage.data!.draftsGenerated}`}
                 note={`${usage.data!.draftsDiscarded} discarded · reached ${usage.data!.draftRecipients} patients`} />
+          <Stat icon={<CalendarCheckIcon />} label="Booked with the assistant"
+                value={`${usage.data!.bookingsViaAssistant} of ${usage.data!.bookingsTotal}`}
+                note={conversion(usage.data!.conversationsWithBooking, usage.data!.conversations)} />
         </div>
       )}
 

@@ -123,3 +123,45 @@ async def test_a_deactivated_login_reaches_the_assistants_deny_list(db_session, 
     finally:
         stop.set()
         await task
+
+
+async def test_an_assistant_booking_reaches_the_conversion_count_over_kafka(db_settings, factory):
+    """Booking conversion (spec 9.4) from Part A's own event: emitted through the outbox,
+    published by the relay as Avro, decoded by the assistant under the registered schema."""
+    from datetime import UTC, datetime, timedelta
+
+    from app.events.outbox import emit
+    from assistant_service.main import consume_bookings  # noqa: E402
+    from assistant_service.usage import InMemoryUsage  # noqa: E402
+
+    appointment_id, conversation = str(uuid.uuid4()), f"conv-{uuid.uuid4().hex[:8]}"
+    starts = datetime.now(UTC) + timedelta(days=1)
+    async with factory() as session:
+        emit(session, "appointments.booked", key=appointment_id, payload={
+            "appointment_id": appointment_id, "patient_id": str(uuid.uuid4()),
+            "provider_id": str(uuid.uuid4()), "clinic_id": str(uuid.uuid4()),
+            "department_id": None, "slot_id": str(uuid.uuid4()),
+            "starts_at": starts, "ends_at": starts + timedelta(minutes=30),
+            "rescheduled_from_id": None, "origin": "assistant",
+            "conversation_ref": conversation})
+        await session.commit()
+    await _drain(db_settings, factory)
+
+    usage = InMemoryUsage()
+    settings = AssistantSettings(
+        kafka_bootstrap_servers=db_settings.kafka_bootstrap_servers,
+        schema_registry_url=db_settings.schema_registry_url,
+        topic_prefix=db_settings.resource_prefix, kafka_group=f"test-{uuid.uuid4().hex[:8]}",
+    )
+    stop = asyncio.Event()
+    task = asyncio.create_task(consume_bookings(settings, usage, stop))
+    try:
+        async def recorded():
+            return appointment_id in usage.bookings
+
+        await _until(recorded)
+    finally:
+        stop.set()
+        await task
+    origin, ref, _ = usage.bookings[appointment_id]
+    assert (origin, ref) == ("assistant", conversation)

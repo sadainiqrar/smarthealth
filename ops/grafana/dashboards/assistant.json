@@ -746,6 +746,53 @@
           }
         }
       ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Share of bookings made with the assistant",
+      "description": "From Part A's appointments.booked, by origin: bookings the assistant made (after the user confirmed) over all bookings. Conversion per chat is on the AI usage page.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(assistant_bookings_total{job=\"smarthealth/assistant\",origin=\"assistant\"}[1h])) / sum(increase(assistant_bookings_total{job=\"smarthealth/assistant\"}[1h]))",
+          "legendFormat": "assistant share (1h)",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
     }
   ]
 }

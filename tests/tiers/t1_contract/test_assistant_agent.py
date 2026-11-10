@@ -841,3 +841,48 @@ async def test_a_turn_is_counted_on_the_dashboard_without_naming_the_user():
     assert any(
         p.attributes["role"] == "patient" and p.attributes["model_used"] == "true" for p in turns
     )
+
+
+# -- booking conversion, from appointments.booked ------------------------------------------------
+
+
+def _booked_event(appointment_id: str, origin: str, conversation_ref: str | None) -> dict:
+    """appointments.booked as the Avro deserializer hands it over (Part A's schema)."""
+    return {
+        "event_id": str(uuid.uuid4()),
+        "event_type": "appointments.booked",
+        "schema_version": 1,
+        "occurred_at": datetime.now(UTC),
+        "producer": "part-a",
+        "subject_id": appointment_id,
+        "payload": {
+            "appointment_id": appointment_id,
+            "origin": origin,
+            "conversation_ref": conversation_ref,
+        },
+    }
+
+
+async def test_conversion_counts_bookings_that_came_from_a_conversation():
+    """Referenced by tests/cases/pb-011-booking-conversion-from-kafka.yaml."""
+    from assistant_service.main import apply_booking
+
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token()
+        confirmation, _ = await _book_until_confirmation(h, token, conversation="chat-1")
+        events = await h.confirm(token, confirmation.confirmation_id, True, conversation="chat-1")
+        await h.chat(token, conversation="chat-2", message="late cancellation fee")  # no booking
+        appointment_id = last(events, "card").link.rsplit("/", 1)[1]
+        usage = h._server.servicer._usage
+        booked = _booked_event(appointment_id, "assistant", "chat-1")
+        await apply_booking(usage, booked)
+        await apply_booking(usage, booked)  # redelivered: counted once
+        await apply_booking(usage, _booked_event(str(uuid.uuid4()), "front_desk", None))
+        await apply_booking(usage, _booked_event(str(uuid.uuid4()), "assistant", "not-ours"))
+        reply = await h.stub.Usage(
+            assistant_pb2.UsageRequest(), metadata=_auth(_token(UserRole.ADMIN, user="u-admin"))
+        )
+    assert (reply.bookings_total, reply.bookings_via_assistant) == (3, 2)
+    # A conversation ref this service never had a turn in is not a conversion of ours.
+    assert (reply.conversations_with_booking, reply.conversations) == (1, 2)

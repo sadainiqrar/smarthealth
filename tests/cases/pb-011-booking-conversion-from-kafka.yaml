@@ -1,0 +1,10 @@
+id: pb-011-booking-conversion-from-kafka
+title: "Booking conversion after AI interaction is counted from appointments.booked: once per appointment, only for conversations the assistant had"
+requirement: [PART-B-FR-5]
+tier: contract
+priority: P1
+status: ready
+# Spec 9.4: "appointments.booked with origin = assistant and a conversation_ref it
+# recognises, over conversations". The assistant consumes the topic into its own store (ids
+# and origins only); redelivery is idempotent by appointment id.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_conversion_counts_bookings_that_came_from_a_conversation"

@@ -324,6 +324,7 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_date is before from_date")
         rows = await self._usage.per_user(start, end)
         drafted = await self._usage.draft_totals(start, end)
+        booked = await self._usage.booking_totals(start, end)
         price_in, price_out = self._prices
 
         def message(t: UserTotals) -> assistant_pb2.UserUsage:
@@ -359,7 +360,10 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             price_output_per_mtok=price_out, users=[message(r) for r in rows],
             totals=message(totals), drafts_generated=drafted.generated,
             drafts_sent=drafted.sent, drafts_discarded=drafted.discarded,
-            draft_recipients=drafted.recipients)
+            draft_recipients=drafted.recipients, bookings_total=booked.total,
+            bookings_via_assistant=booked.via_assistant,
+            conversations_with_booking=booked.conversations_with_booking,
+            conversations=booked.conversations)
 
     async def _report_usage(self, caller: Caller, report_id: str, usage: TurnUsage,
                             events: list[dict]) -> None:

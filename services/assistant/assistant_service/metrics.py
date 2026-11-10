@@ -19,25 +19,47 @@ from opentelemetry import metrics
 _meter = metrics.get_meter("assistant")
 
 turns = _meter.create_counter(
-    "assistant.turns", unit="1",
-    description="Finished turns, by role, outcome and whether the model was used")
+    "assistant.turns",
+    unit="1",
+    description="Finished turns, by role, outcome and whether the model was used",
+)
 turn_duration = _meter.create_histogram(
-    "assistant.turn.duration", unit="ms", description="Whole turn, first event to done")
+    "assistant.turn.duration", unit="ms", description="Whole turn, first event to done"
+)
 first_token = _meter.create_histogram(
-    "assistant.first_token", unit="ms", description="Time to the model's first token")
+    "assistant.first_token", unit="ms", description="Time to the model's first token"
+)
 llm_calls = _meter.create_counter(
-    "assistant.llm.calls", unit="1", description="Calls to the language model")
+    "assistant.llm.calls", unit="1", description="Calls to the language model"
+)
 llm_tokens = _meter.create_counter(
-    "assistant.llm.tokens", unit="1", description="Tokens, by direction (input/output)")
+    "assistant.llm.tokens", unit="1", description="Tokens, by direction (input/output)"
+)
 drafts = _meter.create_counter(
-    "assistant.drafts", unit="1", description="Drafts, by kind and status")
+    "assistant.drafts", unit="1", description="Drafts, by kind and status"
+)
+bookings = _meter.create_counter(
+    "assistant.bookings",
+    unit="1",
+    description="Bookings seen on appointments.booked, by origin (assistant or not)",
+)
 reports = _meter.create_counter(
-    "assistant.reports", unit="1", description="Reports, by kind and outcome")
+    "assistant.reports", unit="1", description="Reports, by kind and outcome"
+)
 
 
-def record_turn(*, role: str, outcome: str, model: str, model_calls: int,
-                input_tokens: int, output_tokens: int, first_token_ms: int | None,
-                total_ms: int, kind: str = "chat") -> None:
+def record_turn(
+    *,
+    role: str,
+    outcome: str,
+    model: str,
+    model_calls: int,
+    input_tokens: int,
+    output_tokens: int,
+    first_token_ms: int | None,
+    total_ms: int,
+    kind: str = "chat",
+) -> None:
     used = "true" if model_calls else "false"
     base = {"role": role, "model_used": used, "kind": kind}
     turns.add(1, {**base, "outcome": outcome})
@@ -56,3 +78,7 @@ def record_draft(kind: str, status: str) -> None:
 
 def record_report(kind: str, status: str) -> None:
     reports.add(1, {"kind": kind, "status": status})
+
+
+def record_booking(origin: str) -> None:
+    bookings.add(1, {"origin": "assistant" if origin == "assistant" else "other"})

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from datetime import UTC, datetime
 from contextlib import asynccontextmanager
 from zoneinfo import ZoneInfo
 
@@ -25,11 +26,12 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
+from assistant_service import metrics
 from assistant_service.agent import Agent
 from assistant_service.auth import TokenVerifier
 from assistant_service.conversations import InMemoryConversations, PostgresConversations
 from assistant_service.reports import InMemoryReports, PostgresReports
-from assistant_service.usage import InMemoryUsage, PostgresUsage
+from assistant_service.usage import InMemoryUsage, PostgresUsage, UsageStore
 from assistant_service.llm import DEFAULT_MODELS, chat_model
 from assistant_service.parta import PartA
 from assistant_service.server import SERVING, build_server
@@ -49,12 +51,48 @@ async def apply_revocation(stores: Stores, value: dict) -> None:
     )
 
 
+async def apply_booking(usage: UsageStore, value: dict) -> None:
+    """appointments.booked -> one row per appointment (idempotent: redelivery is a no-op)."""
+    payload = value["payload"]
+    occurred = value["occurred_at"]
+    if not isinstance(occurred, datetime):
+        occurred = datetime.fromtimestamp(float(occurred) / 1000, UTC)
+    origin = payload.get("origin") or "unknown"
+    await usage.booking(
+        str(payload["appointment_id"]), origin, payload.get("conversation_ref"), occurred
+    )
+    metrics.record_booking(origin)
+
+
 async def consume_revocations(settings: AssistantSettings, stores: Stores, stop: asyncio.Event):
-    topic = settings.topic("identity.sessions_revoked")
+    await consume(
+        settings,
+        "identity.sessions_revoked",
+        "revocations",
+        lambda value: apply_revocation(stores, value),
+        stop,
+    )
+
+
+async def consume_bookings(settings: AssistantSettings, usage: UsageStore, stop: asyncio.Event):
+    await consume(
+        settings,
+        "appointments.booked",
+        "conversions",
+        lambda value: apply_booking(usage, value),
+        stop,
+    )
+
+
+async def consume(
+    settings: AssistantSettings, name: str, group: str, handle, stop: asyncio.Event
+) -> None:
+    """At-least-once: commit only after the handler succeeded; handlers are idempotent."""
+    topic = settings.topic(name)
     consumer = Consumer(
         {
             "bootstrap.servers": settings.kafka_bootstrap_servers,
-            "group.id": f"{settings.kafka_group}.revocations",
+            "group.id": f"{settings.kafka_group}.{group}",
             "enable.auto.commit": False,
             "auto.offset.reset": "earliest",
         }
@@ -67,7 +105,7 @@ async def consume_revocations(settings: AssistantSettings, stores: Stores, stop:
             message = await asyncio.to_thread(consumer.poll, 1.0)
             if message is None or message.error():
                 continue
-            await apply_revocation(stores, decode(message.value(), context))
+            await handle(decode(message.value(), context))
             await asyncio.to_thread(consumer.commit, message=message, asynchronous=False)
     finally:
         await asyncio.to_thread(consumer.close)
@@ -108,7 +146,7 @@ async def main() -> None:
             prices=(settings.llm_price_input_per_mtok, settings.llm_price_output_per_mtok),
             reports=reports,
         )
-        await serve(settings, server, stores, redis)
+        await serve(settings, server, stores, redis, usage)
     await parta.aclose()
     await channel.close()
     await redis.aclose()
@@ -163,7 +201,9 @@ async def conversation_store(database_url: str):
         yield store, usage, reports
 
 
-async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redis) -> None:
+async def serve(
+    settings: AssistantSettings, server, stores: Stores, redis: Redis, usage: UsageStore
+) -> None:
     await server.start()
     await redis.ping()
     await server.health.set("", SERVING)
@@ -175,9 +215,11 @@ async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redi
             break
     logger.info("assistant serving on %s", settings.grpc_port)
     revocations = asyncio.create_task(consume_revocations(settings, stores, stop))
+    conversions = asyncio.create_task(consume_bookings(settings, usage, stop))
     await stop.wait()
     await server.stop(5)
     await revocations
+    await conversions
 
 
 if __name__ == "__main__":

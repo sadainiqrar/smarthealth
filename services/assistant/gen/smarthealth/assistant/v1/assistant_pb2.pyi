@@ -327,7 +327,7 @@ class UserUsage(_message.Message):
     def __init__(self, user_id: _Optional[str] = ..., role: _Optional[str] = ..., conversations: _Optional[int] = ..., turns: _Optional[int] = ..., model_turns: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cost_usd: _Optional[float] = ..., avg_first_token_ms: _Optional[float] = ..., avg_total_ms: _Optional[float] = ..., errors: _Optional[int] = ..., last_active: _Optional[str] = ...) -> None: ...
 
 class UsageReply(_message.Message):
-    __slots__ = ("from_date", "to_date", "provider", "model", "price_input_per_mtok", "price_output_per_mtok", "users", "totals", "drafts_generated", "drafts_sent", "drafts_discarded", "draft_recipients")
+    __slots__ = ("from_date", "to_date", "provider", "model", "price_input_per_mtok", "price_output_per_mtok", "users", "totals", "drafts_generated", "drafts_sent", "drafts_discarded", "draft_recipients", "bookings_total", "bookings_via_assistant", "conversations_with_booking", "conversations")
     FROM_DATE_FIELD_NUMBER: _ClassVar[int]
     TO_DATE_FIELD_NUMBER: _ClassVar[int]
     PROVIDER_FIELD_NUMBER: _ClassVar[int]
@@ -340,6 +340,10 @@ class UsageReply(_message.Message):
     DRAFTS_SENT_FIELD_NUMBER: _ClassVar[int]
     DRAFTS_DISCARDED_FIELD_NUMBER: _ClassVar[int]
     DRAFT_RECIPIENTS_FIELD_NUMBER: _ClassVar[int]
+    BOOKINGS_TOTAL_FIELD_NUMBER: _ClassVar[int]
+    BOOKINGS_VIA_ASSISTANT_FIELD_NUMBER: _ClassVar[int]
+    CONVERSATIONS_WITH_BOOKING_FIELD_NUMBER: _ClassVar[int]
+    CONVERSATIONS_FIELD_NUMBER: _ClassVar[int]
     from_date: str
     to_date: str
     provider: str
@@ -352,7 +356,11 @@ class UsageReply(_message.Message):
     drafts_sent: int
     drafts_discarded: int
     draft_recipients: int
-    def __init__(self, from_date: _Optional[str] = ..., to_date: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., price_input_per_mtok: _Optional[float] = ..., price_output_per_mtok: _Optional[float] = ..., users: _Optional[_Iterable[_Union[UserUsage, _Mapping]]] = ..., totals: _Optional[_Union[UserUsage, _Mapping]] = ..., drafts_generated: _Optional[int] = ..., drafts_sent: _Optional[int] = ..., drafts_discarded: _Optional[int] = ..., draft_recipients: _Optional[int] = ...) -> None: ...
+    bookings_total: int
+    bookings_via_assistant: int
+    conversations_with_booking: int
+    conversations: int
+    def __init__(self, from_date: _Optional[str] = ..., to_date: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., price_input_per_mtok: _Optional[float] = ..., price_output_per_mtok: _Optional[float] = ..., users: _Optional[_Iterable[_Union[UserUsage, _Mapping]]] = ..., totals: _Optional[_Union[UserUsage, _Mapping]] = ..., drafts_generated: _Optional[int] = ..., drafts_sent: _Optional[int] = ..., drafts_discarded: _Optional[int] = ..., draft_recipients: _Optional[int] = ..., bookings_total: _Optional[int] = ..., bookings_via_assistant: _Optional[int] = ..., conversations_with_booking: _Optional[int] = ..., conversations: _Optional[int] = ...) -> None: ...
 
 class StartReportRequest(_message.Message):
     __slots__ = ("kind", "from_date", "to_date")

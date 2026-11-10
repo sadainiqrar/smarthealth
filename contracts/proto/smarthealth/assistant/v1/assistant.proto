@@ -285,6 +285,12 @@ message UsageReply {
   int32 drafts_sent = 10;
   int32 drafts_discarded = 11;
   int32 draft_recipients = 12;
+  // Booking conversion (spec 9.4), from appointments.booked: all bookings in the period,
+  // those the assistant made, and how many of the period's chats led to one.
+  int32 bookings_total = 13;
+  int32 bookings_via_assistant = 14;
+  int32 conversations_with_booking = 15;
+  int32 conversations = 16;
 }
 
 message StartReportRequest {
