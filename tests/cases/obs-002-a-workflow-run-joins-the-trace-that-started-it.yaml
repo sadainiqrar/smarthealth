@@ -1,0 +1,12 @@
+id: obs-002-a-workflow-run-joins-the-trace-that-started-it
+title: "A workflow's run span belongs to the same trace as the client span that started it"
+requirement: [PART-A-OBS-2]
+tier: workflow
+priority: P0
+status: ready
+# P0 because it is what makes a booking diagnosable: without it the trace of
+# POST /appointments stops at "start workflow", and the activities where every booking
+# failure happens are separate traces nothing links back to the request. The SDK's
+# TracingInterceptor sits on every client (app/core/temporal.py:tracing_interceptors) and
+# a worker built from that client inherits it.
+impl: "tests/tiers/t2_workflow/test_temporal_tracing.py::test_starting_and_running_a_workflow_share_one_trace"

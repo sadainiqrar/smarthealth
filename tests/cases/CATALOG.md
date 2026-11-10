@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 45 |
-| contract | 6 |
-| integration | 25 |
+| Total cases | 48 |
+| contract | 7 |
+| integration | 26 |
 | unit | 5 |
-| workflow | 9 |
-| P0 | 26 |
-| P1 | 19 |
+| workflow | 10 |
+| P0 | 27 |
+| P1 | 21 |
 | declarative | 1 |
-| impl-backed | 44 |
+| impl-backed | 47 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -34,6 +34,9 @@
 | bkg-008-a-patient-cannot-hold-two-overlapping-appointments | integration | P0 | impl | PART-A-FR-2, PART-A-NFR-1 | Two concurrent claims for one patient at overlapping slots of different providers admit exactly one |
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
+| obs-001-every-request-is-traced-and-measured | contract | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither |
+| obs-002-a-workflow-run-joins-the-trace-that-started-it | workflow | P0 | impl | PART-A-OBS-2 | A workflow's run span belongs to the same trace as the client span that started it |
+| obs-003-telemetry-reaches-jaeger-and-prometheus | integration | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | A span sent to the collector is queryable in Jaeger, and a metric in Prometheus under its process's job |
 | ops-001-the-cli-creates-a-usable-account | integration | P1 | impl | PART-A-FR-1 | The create-user command inserts an account that can actually log in |
 | ops-002-seeding-never-fabricates-workflow-state | unit | P1 | impl | PART-A-FR-1 | Seed data builds a demonstrable network without inventing Week 2 workflow state |
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |

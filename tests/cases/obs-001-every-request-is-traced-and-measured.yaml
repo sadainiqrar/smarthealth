@@ -1,0 +1,14 @@
+id: obs-001-every-request-is-traced-and-measured
+title: "Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither"
+requirement: [PART-A-OBS-2, PART-A-OBS-3]
+tier: contract
+priority: P1
+status: ready
+# Week 3 slice 1. The instrumentation is attached when the app is created and binds to
+# the global proxy providers; the suite installs in-memory providers first
+# (tests/harness/telemetry.py), so a test reads exactly what production would export.
+# Probes are excluded deliberately: compose polls /health and /ready every few seconds,
+# and a trace per poll would bury the real traffic -- the sibling test
+# `test_health_probes_are_not_traced` holds that line, and
+# `test_request_duration_is_recorded_as_a_metric` the metric half.
+impl: "tests/tiers/t1_contract/test_http_telemetry.py::test_a_request_produces_a_server_span_named_by_its_route"

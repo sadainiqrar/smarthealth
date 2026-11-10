@@ -1,0 +1,12 @@
+id: obs-003-telemetry-reaches-jaeger-and-prometheus
+title: "A span sent to the collector is queryable in Jaeger, and a metric in Prometheus under its process's job"
+requirement: [PART-A-OBS-2, PART-A-OBS-3]
+tier: integration
+priority: P1
+status: ready
+# The in-process tests prove telemetry is recorded; this proves the deployment -- the
+# collector config, both exporters, Jaeger's OTLP intake, and Prometheus's scrape of the
+# collector. The metric half is `test_a_metric_reaches_prometheus_labelled_with_its_service`.
+# Running the worker against the stack is what found that resource-to-label conversion
+# made the collector drop every Temporal metric (ops/otel-collector/config.yaml).
+impl: "tests/tiers/t3_integration/test_telemetry_pipeline.py::test_a_span_reaches_jaeger"
