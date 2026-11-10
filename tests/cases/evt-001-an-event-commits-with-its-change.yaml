@@ -1,0 +1,12 @@
+id: evt-001-an-event-commits-with-its-change
+title: "A domain event is written in the same transaction as its change: a rollback leaves neither"
+requirement: [PART-A-FR-4]
+tier: integration
+priority: P0
+status: ready
+# The transactional outbox (Weeks 3-5 spec D-21). A business write and a Kafka publish
+# cannot be atomic; a business write and an INSERT into the same database can. PRD R-17
+# was the other shape -- a follow-up started after the commit, lost when that start
+# failed. The test confirms a booking (one appointments.booked row), rolls a cancel back
+# (no appointments.cancelled row) and commits one (exactly one row, unpublished).
+impl: "tests/tiers/t3_integration/test_event_backbone.py::test_a_cancel_writes_its_event_in_the_same_transaction"

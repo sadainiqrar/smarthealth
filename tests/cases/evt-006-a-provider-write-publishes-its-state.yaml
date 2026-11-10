@@ -1,0 +1,11 @@
+id: evt-006-a-provider-write-publishes-its-state
+title: "Registering and deactivating a provider each queue its whole state for the compacted providers.state topic"
+requirement: [PART-A-FR-4, PART-A-FR-1.2]
+tier: integration
+priority: P1
+status: ready
+# Event-carried state for the Part B knowledge service, which builds its own copy of
+# providers by reading the compacted topic from offset 0 and never queries Part A's
+# tables (spec D-19). Deactivation is the same event with is_active false: the trigger
+# the provider-deactivation consumer (slice 4, PRD R-25) acts on.
+impl: "tests/tiers/t3_integration/test_providers_api.py::test_every_provider_write_publishes_its_state"

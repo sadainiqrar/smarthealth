@@ -1,0 +1,11 @@
+id: evt-005-a-poison-event-is-dead-lettered
+title: "An event whose handler keeps failing goes to the dead-letter topic with its error, and the partition moves on"
+requirement: [PART-A-FR-4, PART-A-OBS-2]
+tier: integration
+priority: P0
+status: ready
+# After three attempts with backoff the runtime writes the original bytes, the error and
+# the attempt count to <topic>.dlt and the offset is committed, so one bad event cannot
+# stall every event behind it. The event is not marked processed, so `dlt-replay` after
+# the fix applies it (test_a_replayed_dead_letter_is_applied).
+impl: "tests/tiers/t3_integration/test_consumer_runtime.py::test_a_poison_event_is_dead_lettered_and_the_partition_moves_on"

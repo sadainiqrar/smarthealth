@@ -1,0 +1,11 @@
+id: evt-003-a-breaking-schema-change-is-refused
+title: "Schema Registry refuses a schema change that old events could not be read under (BACKWARD_TRANSITIVE)"
+requirement: [PART-A-FR-4]
+tier: integration
+priority: P1
+status: ready
+# Spec D-22. Compacted state topics are replayed from offset 0 by new consumers, so a
+# consumer on the newest schema must read every event ever written. The relay registers
+# every contract at start-up with auto-registration off, so a breaking schema stops the
+# deploy instead of slipping in with the first publish.
+impl: "tests/tiers/t3_integration/test_event_backbone.py::test_schema_registry_refuses_a_breaking_change"

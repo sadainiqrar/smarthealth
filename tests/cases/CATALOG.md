@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 54 |
+| Total cases | 60 |
 | contract | 10 |
-| integration | 29 |
+| integration | 35 |
 | unit | 5 |
 | workflow | 10 |
-| P0 | 31 |
-| P1 | 23 |
+| P0 | 35 |
+| P1 | 25 |
 | declarative | 1 |
-| impl-backed | 53 |
+| impl-backed | 59 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -40,6 +40,12 @@
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
 | bkg-010-booking-is-rate-limited-per-user | contract | P1 | impl | PART-A-NFR-5 | A user over the booking rate limit gets 429 with Retry-After, before any workflow starts |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
+| evt-001-an-event-commits-with-its-change | integration | P0 | impl | PART-A-FR-4 | A domain event is written in the same transaction as its change: a rollback leaves neither |
+| evt-002-the-relay-publishes-in-order | integration | P0 | impl | PART-A-FR-4, PART-A-NFR-3 | The relay publishes outbox rows to Kafka as Avro under their registered schema, keyed by subject, and marks them |
+| evt-003-a-breaking-schema-change-is-refused | integration | P1 | impl | PART-A-FR-4 | Schema Registry refuses a schema change that old events could not be read under (BACKWARD_TRANSITIVE) |
+| evt-004-a-consumer-applies-an-event-once | integration | P0 | impl | PART-A-NFR-3 | A consumer given the same event twice applies it once, and does not even run its handler the second time |
+| evt-005-a-poison-event-is-dead-lettered | integration | P0 | impl | PART-A-FR-4, PART-A-OBS-2 | An event whose handler keeps failing goes to the dead-letter topic with its error, and the partition moves on |
+| evt-006-a-provider-write-publishes-its-state | integration | P1 | impl | PART-A-FR-4, PART-A-FR-1.2 | Registering and deactivating a provider each queue its whole state for the compacted providers.state topic |
 | obs-001-every-request-is-traced-and-measured | contract | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither |
 | obs-002-a-workflow-run-joins-the-trace-that-started-it | workflow | P0 | impl | PART-A-OBS-2 | A workflow's run span belongs to the same trace as the client span that started it |
 | obs-003-telemetry-reaches-jaeger-and-prometheus | integration | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | A span sent to the collector is queryable in Jaeger, and a metric in Prometheus under its process's job |

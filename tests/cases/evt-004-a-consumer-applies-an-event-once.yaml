@@ -1,0 +1,12 @@
+id: evt-004-a-consumer-applies-an-event-once
+title: "A consumer given the same event twice applies it once, and does not even run its handler the second time"
+requirement: [PART-A-NFR-3]
+tier: integration
+priority: P0
+status: ready
+# Harness requirement 4: the idempotency key is explicit (event_id), checked in
+# processed_events inside the handler's own transaction -- never a Redis mark, which
+# could succeed while the side effect's transaction fails. The retry sibling
+# (test_a_transient_failure_is_retried_and_applied_once) proves the mark rolls back with a
+# failed attempt, or the retry would be skipped and the event lost.
+impl: "tests/tiers/t3_integration/test_consumer_runtime.py::test_a_redelivered_event_is_applied_once"

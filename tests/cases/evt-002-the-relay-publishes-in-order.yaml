@@ -1,0 +1,12 @@
+id: evt-002-the-relay-publishes-in-order
+title: "The relay publishes outbox rows to Kafka as Avro under their registered schema, keyed by subject, and marks them"
+requirement: [PART-A-FR-4, PART-A-NFR-3]
+tier: integration
+priority: P0
+status: ready
+# Rows go in `seq` order and one key always lands on one partition, so an appointment's
+# booked and cancelled events reach every consumer in that order. Siblings in the same
+# file: a relay that dies after sending but before marking sends again (at least once,
+# test_a_relay_that_dies_before_marking_sends_again), and the published event continues
+# the writer's trace through the table (test_the_published_event_continues_the_writers_trace).
+impl: "tests/tiers/t3_integration/test_event_backbone.py::test_the_relay_publishes_avro_keyed_by_subject_in_order"
