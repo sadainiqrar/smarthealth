@@ -8,6 +8,15 @@ scrape_configs:
     honor_labels: true
     static_configs:
       - targets: ["otel-collector:8889"]
+  # RabbitMQ's built-in plugin; per-object, so queue depth is per queue (the DLQ included).
+  - job_name: rabbitmq
+    metrics_path: /metrics/per-object
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+  # Consumer-group lag per topic: the number that says a consumer is falling behind.
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]

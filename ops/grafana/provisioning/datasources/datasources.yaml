@@ -8,6 +8,20 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     editable: false
+  # The analytics rollup (PART-A-FR-5), read as analytics_reader: SELECT on the rollup and
+  # the patient count, nothing else (migration 0008).
+  - name: Analytics
+    uid: analytics
+    type: grafana-postgresql-datasource
+    url: postgres:5432
+    user: analytics_reader
+    secureJsonData:
+      password: analytics-reader
+    jsonData:
+      database: smarthealth
+      sslmode: disable
+      postgresVersion: 1600
+    editable: false
   - name: Jaeger
     uid: jaeger
     type: jaeger

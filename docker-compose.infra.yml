@@ -404,6 +404,15 @@ services:
       timeout: 5s
       retries: 12
 
+  kafka-exporter:
+    # Consumer lag and topic offsets for Prometheus; Kafka exposes neither itself.
+    image: danielqsj/kafka-exporter:v1.8.0
+    command: ["--kafka.server=kafka:29092"]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: on-failure
+
   grafana:
     image: grafana/grafana:11.2.2
     environment:
