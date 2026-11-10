@@ -1,0 +1,10 @@
+id: pb-004-part-b-learns-from-part-a-over-kafka-only
+title: "A provider registered in Part A appears in the knowledge service's directory, by Kafka alone"
+requirement: [PART-B-FR-1, PART-A-FR-4]
+tier: integration
+priority: P0
+status: ready
+# Independence end to end (spec D-19): POST /providers -> outbox -> relay -> providers.state
+# (Avro, Schema Registry) -> the knowledge service's own consumer, which imports nothing of
+# Part A, into its own store. tests/meta/test_service_independence.py holds the static half.
+impl: "tests/tiers/t3_integration/test_partb_over_kafka.py::test_knowledge_builds_its_directory_from_part_as_events"

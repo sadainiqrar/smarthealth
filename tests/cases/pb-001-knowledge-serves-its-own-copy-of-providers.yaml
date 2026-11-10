@@ -1,0 +1,11 @@
+id: pb-001-knowledge-serves-its-own-copy-of-providers
+title: "The knowledge service answers Search from its own copy of providers, built from state events, for a caller Part A signed"
+requirement: [PART-B-FR-1]
+tier: contract
+priority: P1
+status: ready
+# The Week 3 slice 7 skeleton of the RAG service (spec section 8): a gRPC server whose
+# directory comes from providers.state (event-carried state transfer: inactive providers
+# and tombstones drop out), and whose caller is verified against Part A's JWKS -- a token
+# Part A did not sign, or none, is UNAUTHENTICATED. Retrieval is a text match until Week 4.
+impl: "tests/tiers/t1_contract/test_partb_services.py::test_knowledge_answers_from_its_own_copy_built_from_provider_state"

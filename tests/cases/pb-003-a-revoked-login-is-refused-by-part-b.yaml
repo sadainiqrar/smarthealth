@@ -1,0 +1,11 @@
+id: pb-003-a-revoked-login-is-refused-by-part-b
+title: "The assistant refuses a validly signed token issued before its user's sessions were revoked"
+requirement: [PART-A-NFR-8]
+tier: contract
+priority: P0
+status: ready
+# Part B verifies tokens by signature alone and never reads Part A's sessions (spec D-25).
+# identity.sessions_revoked fills the assistant's own deny-list; the integration sibling
+# test_partb_over_kafka.py::test_a_deactivated_login_reaches_the_assistants_deny_list
+# proves the event really arrives from a deactivation in Part A.
+impl: "tests/tiers/t1_contract/test_partb_services.py::test_a_token_issued_before_a_revocation_is_refused"

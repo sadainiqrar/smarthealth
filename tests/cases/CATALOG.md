@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 75 |
-| contract | 11 |
-| integration | 45 |
-| unit | 7 |
+| Total cases | 80 |
+| contract | 14 |
+| integration | 46 |
+| unit | 8 |
 | workflow | 12 |
-| P0 | 43 |
-| P1 | 32 |
+| P0 | 46 |
+| P1 | 34 |
 | declarative | 1 |
-| impl-backed | 74 |
+| impl-backed | 79 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -68,6 +68,10 @@
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |
 | pat-004-a-patient-lists-only-their-own-appointments | integration | P0 | impl | PART-A-FR-1 | A patient's appointment list is their own, newest slot first, and cannot be widened |
+| pb-001-knowledge-serves-its-own-copy-of-providers | contract | P1 | impl | PART-B-FR-1 | The knowledge service answers Search from its own copy of providers, built from state events, for a caller Part A signed |
+| pb-002-a-chat-turn-streams-and-resumes | contract | P1 | impl | PART-B-NFR-1, PART-B-FR-2 | A chat turn streams tokens, citations from knowledge, then Done; a reconnect resumes after its last seq; Cancel ends it |
+| pb-003-a-revoked-login-is-refused-by-part-b | contract | P0 | impl | PART-A-NFR-8 | The assistant refuses a validly signed token issued before its user's sessions were revoked |
+| pb-004-part-b-learns-from-part-a-over-kafka-only | integration | P0 | impl | PART-B-FR-1, PART-A-FR-4 | A provider registered in Part A appears in the knowledge service's directory, by Kafka alone |
 | prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |
@@ -87,6 +91,7 @@
 | sys-009-a-worker-executes-the-canary-on-the-real-server | integration | P1 | impl | PART-A-OBS-1 | A worker on the run's prefixed task queue executes the canary workflow on the real Temporal server |
 | sys-010-swagger-can-authorise-every-gated-route | contract | P1 | impl | PART-A-NFR-8 | Every role-gated route declares the bearer scheme in OpenAPI; login and health declare none |
 | sys-011-every-celery-task-is-registered-and-acks-late | unit | P1 | impl | PART-A-NFR-3 | Every Celery task is in the task registry, acknowledges late, and is routed to a named queue |
+| sys-012-the-services-stay-independent | unit | P0 | impl | PART-A-OBS-4 | No service imports another, no Part B setting can point at Part A's stores, and compose gives none another's connections |
 | vst-001-a-second-check-in-is-a-conflict | integration | P0 | impl | PART-A-FR-3 | A visit action is written in the request's own transaction, and a repeated check-in is refused rather than silently accepted |
 | vst-002-no-check-in-becomes-a-no-show | workflow | P0 | impl | PART-A-FR-3 | An appointment nobody checks in for becomes a no-show when the slot's end plus grace passes, and the database's answer is the workflow's result |
 | vst-003-pre-visit-bookings-still-replay | workflow | P0 | impl | PART-A-NFR-2 | A booking that was in flight before the visit slice deployed still replays against the new workflow code |

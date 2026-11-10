@@ -1,0 +1,7 @@
+id: sys-012-the-services-stay-independent
+title: "No service imports another, no Part B setting can point at Part A's stores, and compose gives none another's connections"
+requirement: [PART-A-OBS-4]
+tier: unit
+priority: P0
+status: ready
+impl: "tests/meta/test_service_independence.py::test_a_part_b_service_imports_nothing_of_part_a_or_of_the_other"
