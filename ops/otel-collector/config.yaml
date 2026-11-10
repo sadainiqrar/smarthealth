@@ -1,0 +1,35 @@
+# The one place telemetry goes (Weeks 3-5 spec D-28). Every process exports OTLP here;
+# where it goes next is decided in this file, not in application code.
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }   # Temporal core's SDK metrics
+      http: { endpoint: 0.0.0.0:4318 }   # application spans and metrics
+
+processors:
+  memory_limiter: { check_interval: 1s, limit_mib: 256 }
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls: { insecure: true }
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # service.name and friends become labels, so a query can say which process.
+    resource_to_telemetry_conversion: { enabled: true }
+
+extensions:
+  health_check: { endpoint: 0.0.0.0:13133 }
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
