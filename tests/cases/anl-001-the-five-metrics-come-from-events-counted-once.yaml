@@ -1,0 +1,12 @@
+id: anl-001-the-five-metrics-come-from-events-counted-once
+title: "The five Part A metrics are served from events counted once: a redelivered booking or visit changes no number"
+requirement: [PART-A-FR-5, PART-A-NFR-3]
+tier: integration
+priority: P0
+status: ready
+# Analytics is a consumer, never called by the flows it measures. Each event adds to one
+# (day, clinic, provider) row in the handler's transaction with its processed_events mark,
+# so a duplicated visits.completed cannot double Completed Visits or skew Average Wait Time
+# (ARCHITECTURE 3.5) -- the one surface where a wrong number looks like a right one.
+# The test asserts all five through GET /analytics/summary and the booked series.
+impl: "tests/tiers/t3_integration/test_analytics.py::test_events_are_counted_once_and_served_by_the_api"

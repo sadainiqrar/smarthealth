@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 72 |
-| contract | 10 |
-| integration | 43 |
+| Total cases | 75 |
+| contract | 11 |
+| integration | 45 |
 | unit | 7 |
 | workflow | 12 |
-| P0 | 42 |
-| P1 | 30 |
+| P0 | 43 |
+| P1 | 32 |
 | declarative | 1 |
-| impl-backed | 71 |
+| impl-backed | 74 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -22,6 +22,9 @@
 
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
+| anl-001-the-five-metrics-come-from-events-counted-once | integration | P0 | impl | PART-A-FR-5, PART-A-NFR-3 | The five Part A metrics are served from events counted once: a redelivered booking or visit changes no number |
+| anl-002-the-nightly-reconcile-finds-drift | integration | P1 | impl | PART-A-FR-5, PART-A-OBS-3 | The nightly reconcile reports a booking the rollup never counted, and nothing once it is counted |
+| anl-003-only-staff-read-clinic-wide-numbers | contract | P1 | impl | PART-A-FR-5, PART-A-FR-1.3 | Only admin and front desk may read the analytics, and malformed windows are refused before any query |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
 | aut-002-login-does-not-block-the-event-loop | unit | P1 | impl | PART-A-NFR-5 | Password verification runs off the event loop, so one login cannot stall the worker |
 | aut-003-a-session-ends-when-it-is-logged-out | integration | P0 | impl | PART-A-NFR-8 | Logging out ends the session at once: every access token of it and its refresh token stop working |

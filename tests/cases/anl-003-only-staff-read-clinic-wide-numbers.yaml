@@ -1,0 +1,7 @@
+id: anl-003-only-staff-read-clinic-wide-numbers
+title: "Only admin and front desk may read the analytics, and malformed windows are refused before any query"
+requirement: [PART-A-FR-5, PART-A-FR-1.3]
+tier: contract
+priority: P1
+status: ready
+impl: "tests/tiers/t1_contract/test_analytics_contract.py::test_patients_and_providers_may_not_read_clinic_wide_numbers"

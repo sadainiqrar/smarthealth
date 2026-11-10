@@ -1,0 +1,11 @@
+id: anl-002-the-nightly-reconcile-finds-drift
+title: "The nightly reconcile reports a booking the rollup never counted, and nothing once it is counted"
+requirement: [PART-A-FR-5, PART-A-OBS-3]
+tier: integration
+priority: P1
+status: ready
+# The check that the consumer has not lost or doubled an event: the rollup against
+# scheduling's own counts (through scheduling.public), per (day, clinic, provider). It
+# reports and exports smarthealth_analytics_drift; it never overwrites, because an event
+# still in flight would then be counted twice.
+impl: "tests/tiers/t3_integration/test_analytics.py::test_the_reconcile_reports_a_booking_the_rollup_never_counted"

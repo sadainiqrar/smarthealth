@@ -89,8 +89,14 @@ first, throttles per patient, retries with backoff, dead-letters; email via SMTP
 (compose `mailpit`, inbox :8025, test 18025/11025), SMS a logging fake. The reminder is timed by
 `VisitWorkflow` (behind `workflow.patched("visit-reminder")`, D-26). Beat: requeue stuck
 notifications, the stale-pending reconciler (**PRD R-9 closed**), outbox purge. Compose
-`celery-worker`, `celery-beat` (profile app). Next is slice 6 (analytics). Analytics does not exist yet, and the Week 2 stand-ins (billing pre-check,
-reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
+`celery-worker`, `celery-beat` (profile app). **Slice 6, analytics and the dashboards, is built:** `app/modules/analytics/` (the
+`analytics.daily-rollup` consumer into `analytics_daily`, `GET /analytics/summary` and
+`/timeseries`, a nightly reconcile against `scheduling/public.py:daily_counts`); Grafana has
+*Service overview*, *Async backbone* and *Platform analytics* (Postgres datasource as the
+read-only `analytics_reader`, migration 0008) and six provisioned alert rules; Prometheus also
+scrapes RabbitMQ and `kafka-exporter`. Schema evolution happened once: cancelled and no-show
+are v2 (optional `clinic_id`). Next is slice 7 (the Part B skeletons). Week 3's Part A scope is complete: every Week 2 stand-in
+(billing pre-check, reminder scheduling, refund) is now real, and cancel/reschedule have events.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
 deactivated provider's existing appointments (PRD R-25, Week 3 — new bookings for one are
