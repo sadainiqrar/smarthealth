@@ -270,7 +270,7 @@ code is each service's):
 | `visits.completed` | `PostVisitWorkflow` (new): billing charge activity, then a durable timer, then a follow-up reminder enqueued to Celery | `post-visit-<visit_id>` | **PART-A-FR-3**'s billing and follow-up |
 
 **D-23 — A deactivated provider's future appointments are cancelled and the patients
-notified.** The R-25 policy choice. *Rejected:* automatic reassignment to another provider
+notified.** *Decided 2026-11-10.* The R-25 policy choice. *Rejected:* automatic reassignment to another provider
 (a clinical choice — specialty, continuity, language — that should not be made by code);
 refusing deactivation while appointments remain (blocks the admin in exactly the case —
 sudden absence — when deactivation is urgent). The notification tells the patient the
@@ -412,13 +412,34 @@ is ever scaled by mistake.
 
 ### 5.3 Billing
 
-**D-27 — A small `billing` module with `billing_records`; no payment gateway.** The
-pre-check, the refund (`cancel.refund`) and the post-visit charge stop being stand-ins that
-only log: each writes a `billing_records` row (appointment, kind `precheck|charge|refund`,
-status, amount) through `app/modules/billing/`, idempotently by appointment and kind, and
-emits `billing.status_updated`. The pre-check rule is deterministic and configurable (e.g. a
-patient flagged `billing_hold` fails it), so the booking's compensation path is
-demonstrable. A payment gateway stays a non-goal (PRD §2).
+**D-27 — A `billing` module with `billing_records`, talking to a fake payment gateway.**
+*Decided 2026-11-10.* The pre-check, the refund (`cancel.refund`) and the post-visit charge
+stop being stand-ins that only log. Each is a Temporal activity that calls a **mock payment
+gateway** and records the outcome as a `billing_records` row (appointment, kind
+`precheck|charge|refund`, status, amount, gateway reference) through
+`app/modules/billing/`, then emits `billing.status_updated`.
+
+The gateway, `payments-mock`, is its own small compose service standing in for an external
+provider — **it belongs to no service and shares no store** (D-19); Part A reaches it only
+over HTTP:
+
+- `POST /authorizations` (the pre-check: a hold), `POST /captures` (the charge),
+  `POST /refunds`, `GET /transactions/{ref}`.
+- **Every call carries an `Idempotency-Key`** — the appointment id and kind — and the mock
+  honours it: a repeated key returns the first result instead of charging twice. This is
+  what makes Temporal's activity retries safe against a real gateway.
+- **Configurable misbehaviour** (environment variables, and a `POST /_chaos` endpoint for
+  demos and tests): added latency, a failure rate returning 503, a rate of timeouts **after**
+  the charge was taken (the hardest case — the activity times out, retries with the same key,
+  and gets the original result), and a deterministic decline for a patient flagged
+  `billing_hold`.
+- The booking's compensation path now releases the authorisation hold (`POST
+  /authorizations/{ref}/void`) as well as the slot.
+
+The mock is written for this project (FastAPI, in-memory store with a file snapshot) under
+`services/payments-mock/`, is traced and exports metrics like every other process, and has a
+**circuit breaker** in front of it in Part A so a gateway outage fails bookings fast instead
+of piling up retries. A real gateway stays a non-goal (PRD §2).
 
 ---
 
@@ -760,7 +781,7 @@ would become a system of record for clinical data).
 
 **The visit flow becomes:** check in → seen → the provider writes the note (a draft, saved
 as they go) with any diagnoses, prescriptions and orders → **signs it** → `/complete`.
-**Completing a visit requires a signed note** (enforced in `complete_visit`, under the same
+**Completing a visit requires a signed note** (*decided 2026-11-10*) (enforced in `complete_visit`, under the same
 appointment lock), so a completed visit always has its record. A signed note can be amended
 by its author as a new version, audited (O-3).
 
@@ -842,7 +863,7 @@ New core paths (`tests/core-paths.txt`) for the `Stop` hook: `services/*/src/**`
 | 1 | **Observability base** — Collector, Jaeger, Prometheus, Grafana (provisioned); OTel in API and Temporal worker; trace ids in logs | PART-A-OBS-2/3 (base) |
 | 2 | **Sessions** — EdDSA + JWKS, Redis sessions, refresh rotation, logout, revoke-on-deactivate, login throttling, rate limits; two Redis instances | Week 1 §11 deferral, R-7 (part) |
 | 3 | **Event backbone** — outbox, relay, Schema Registry, `contracts/events/`, topic creation, consumer runtime with dedupe and DLT, all producers, `republish` | PART-A-FR-4, NFR-3 |
-| 4 | **Kafka → Temporal** — cancel follow-up via event, `ProviderDeactivationWorkflow`, `PostVisitWorkflow`; `billing` module | R-17, R-25, FR-3 |
+| 4 | **Kafka → Temporal** — cancel follow-up via event, `ProviderDeactivationWorkflow`, `PostVisitWorkflow`; `billing` module and `payments-mock` | R-17, R-25, FR-3 |
 | 5 | **Notifications** — Celery app on RabbitMQ, `notifications` module, Mailpit, reminder timer in `VisitWorkflow`, beat jobs (incl. stale-pending reconciler), `/slots` cache | R-9, R-7, the reminder stand-in |
 | 6 | **Analytics** — rollup consumer, `/analytics`, Platform analytics dashboard, the full dashboard and alert set | PART-A-FR-5, OBS-3 |
 | 7 | **Part B skeletons** — `knowledge` and `assistant` running in compose with their own stores; `contracts/proto/`; Envoy; JWKS verification; `knowledge` consuming `providers.state` into Qdrant; `assistant` streaming an echo through Envoy to the frontend while calling `knowledge.Search`; one trace browser → Envoy → assistant → knowledge | Fixes the Weeks 4–5 architecture before they start |
@@ -869,15 +890,17 @@ extraction of lab values from reports (so a provider can ask for a trend across 
 | O-1 | Reminder lead time(s) | one reminder, 24 h before; configurable |
 | O-2 | Billing pre-check rule | a patient flagged `billing_hold` fails; amounts from a per-department price table |
 | O-3 | Amending a signed note | its author may amend it as a new version at any time, audited; the earlier version stays readable |
-| O-6 | Diagnosis coding | free text required, ICD-10 code optional, from a small seeded code list |
-| O-7 | Can a patient see a result before the ordering doctor reviews it? | yes — it is their own upload — but the assistant's explanation always ends with "your doctor will review it", and marks results not yet `reviewed` |
-| O-4 | Week 5 LLM provider and model | decided in the Week 5 design, behind the factory |
+| ~~O-6~~ | Diagnosis coding | **Decided 2026-11-10:** free text required, ICD-10 code optional, from a small seeded code list |
+| ~~O-7~~ | Can a patient see a result before the ordering doctor reviews it? | **Decided 2026-11-10:** yes — it is their own upload — and the assistant may explain it, marking it not yet `reviewed` and always ending with "your doctor will review it" |
+| ~~O-8~~ | Notification channels | **Decided 2026-11-10:** email over SMTP to Mailpit, SMS through a logging fake |
+| O-9 | LLM API key for Weeks 4–5 | the project owner supplies one for `record`/`live` mode only; `fixture` mode (CI, every test) needs none |
+| O-4 | Week 5 LLM provider and model | **decided in the Week 5 design** (confirmed 2026-11-10), behind the factory |
 | O-5 | Re-ranking | off by default; turned on if the golden set shows it earns its latency |
 
 ## 13. Risks this design accepts
 
 - **More moving parts.** Kafka, Schema Registry, RabbitMQ, two Redis, three Postgres,
-  Qdrant, MinIO, Envoy, Mailpit and the observability stack is a heavy compose file. Mitigated by
+  Qdrant, MinIO, Envoy, Mailpit, `payments-mock` and the observability stack is a heavy compose file. Mitigated by
   compose profiles (`infra`, `obs`, `partb`) so a Part A test run starts only what it needs.
 - **Eventual consistency is now visible.** A notification, an analytics number or a
   re-indexed provider lags its cause by the outbox and consumer latency — seconds, and
