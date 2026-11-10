@@ -167,6 +167,8 @@ def system_prompt(ctx: Ctx) -> str:
         "user's own appointments, record, prescriptions or results, call start_flow; it shows "
         "the user the real data and asks them to confirm changes.\n"
         "- Every number you state must come from a tool result.\n"
+        "- Never write source ids, brackets or citation marks: the sources you used are "
+        "shown to the user beside your answer.\n"
         f"Flows you may start:\n{flows}"
     )
 

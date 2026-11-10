@@ -2,13 +2,16 @@
 //
 // Every way in -- typing, picking an option, starting from a starter, approving a
 // confirmation -- is a new turn with a client-chosen id, so a retry or a resume names the
-// same turn and the server never generates it twice.
+// same turn and the server never generates it twice. Opening an existing thread loads its
+// transcript and rebuilds it with the same reducer the live stream uses.
 
+import { Code, ConnectError } from "@connectrpc/connect";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatEvent, StarterGroup } from "@/gen/smarthealth/assistant/v1/assistant_pb";
 import { assistant, streamTurn, type Opener } from "./client";
 import {
   applyEvent,
+  fromTranscript,
   markChosen,
   markDecided,
   newAssistantTurn,
@@ -16,7 +19,7 @@ import {
   type Turn,
 } from "./conversation";
 
-function id(): string {
+export function newId(): string {
   return crypto.randomUUID();
 }
 
@@ -28,13 +31,28 @@ export interface SendInput {
   starterId?: string;
 }
 
-export function useConversation() {
-  const [conversationId, setConversationId] = useState(id);
+interface Options {
+  /** The thread to show. */
+  conversationId: string;
+  /** Load its transcript from the server (an existing thread), or start empty (a new one). */
+  existing: boolean;
+  /** A turn finished: the thread list may have changed. */
+  onTurnFinished?: (conversationId: string) => void;
+  /** The thread does not exist (or is not the caller's). */
+  onMissing?: () => void;
+}
+
+export function useConversation({ conversationId, existing, onTurnFinished, onMissing }: Options) {
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [loading, setLoading] = useState(false);
   const [activeTurn, setActiveTurn] = useState<string | null>(null);
   const [starters, setStarters] = useState<StarterGroup[]>([]);
   const [startersError, setStartersError] = useState<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+  // The thread the turns on screen belong to; a stream for another thread must not land here.
+  const shown = useRef(conversationId);
+  const callbacks = useRef({ onTurnFinished, onMissing });
+  callbacks.current = { onTurnFinished, onMissing };
 
   useEffect(() => {
     let live = true;
@@ -46,6 +64,31 @@ export function useConversation() {
       live = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (shown.current === conversationId && turns.length > 0) return; // already on screen
+    abort.current?.abort();
+    shown.current = conversationId;
+    setActiveTurn(null);
+    setTurns([]);
+    if (!existing) return;
+    let live = true;
+    setLoading(true);
+    assistant
+      .getConversation({ conversationId })
+      .then((reply) => {
+        if (!live) return;
+        setTurns(fromTranscript(reply.turns.map((t) => ({ turnId: t.turnId, userText: t.userText, events: t.events }))));
+      })
+      .catch((error) => {
+        if (live && error instanceof ConnectError && error.code === Code.NotFound) callbacks.current.onMissing?.();
+      })
+      .finally(() => live && setLoading(false));
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- turns is read, not a trigger
+  }, [conversationId, existing]);
 
   useEffect(() => () => abort.current?.abort(), []);
 
@@ -73,6 +116,7 @@ export function useConversation() {
     async (turnId: string, open: Opener) => {
       const controller = new AbortController();
       abort.current = controller;
+      const thread = shown.current;
       setActiveTurn(turnId);
       try {
         await streamTurn(open, (event) => update(turnId, event), controller.signal);
@@ -80,6 +124,7 @@ export function useConversation() {
         fail(turnId, error instanceof Error ? error.message : "The assistant is unavailable.");
       } finally {
         setActiveTurn((current) => (current === turnId ? null : current));
+        callbacks.current.onTurnFinished?.(thread);
       }
     },
     [update, fail],
@@ -88,10 +133,10 @@ export function useConversation() {
   const send = useCallback(
     (input: SendInput) => {
       if (activeTurn) return;
-      const turnId = id();
+      const turnId = newId();
       setTurns((current) => {
         const marked = input.choice ? markChosen(current, input.choice.optionsId, input.choice.optionId) : current;
-        return [...marked, { role: "user", id: id(), text: input.text }, newAssistantTurn(turnId)];
+        return [...marked, { role: "user", id: newId(), text: input.text }, newAssistantTurn(turnId)];
       });
       void run(turnId, (resumeFrom, signal) =>
         assistant.chat(
@@ -113,7 +158,7 @@ export function useConversation() {
   const decide = useCallback(
     (confirmationId: string, approved: boolean) => {
       if (activeTurn) return;
-      const turnId = id();
+      const turnId = newId();
       setTurns((current) => [...markDecided(current, confirmationId, approved), newAssistantTurn(turnId)]);
       void run(turnId, (resumeFrom, signal) =>
         assistant.confirm({ conversationId, turnId, confirmationId, approved, resumeFrom }, { signal }),
@@ -129,12 +174,5 @@ export function useConversation() {
     void assistant.cancel({ turnId: activeTurn }).catch(() => abort.current?.abort());
   }, [activeTurn]);
 
-  const reset = useCallback(() => {
-    abort.current?.abort();
-    setTurns([]);
-    setActiveTurn(null);
-    setConversationId(id());
-  }, []);
-
-  return { conversationId, turns, busy: activeTurn !== null, starters, startersError, send, decide, stop, reset };
+  return { turns, loading, busy: activeTurn !== null, starters, startersError, send, decide, stop };
 }

@@ -65,10 +65,12 @@ export function Steps({ steps }: { steps: Of<"tool">[] }) {
 }
 
 export function Sources({ part }: { part: Of<"citations"> }) {
+  // Several passages from one guide are one source to a reader: one chip per title.
+  const items = part.items.filter((item, i) => part.items.findIndex((x) => (x.title || x.sourceId) === (item.title || item.sourceId)) === i);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <span className="text-xs text-muted-foreground">Sources</span>
-      {part.items.map((item, index) => (
+      {items.map((item, index) => (
         <HoverCard key={item.sourceId}>
           <HoverCardTrigger
             render={

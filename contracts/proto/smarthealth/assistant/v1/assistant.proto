@@ -27,6 +27,12 @@ service Assistant {
   // What this caller can start with: use cases for their role, grouped. The server picks
   // them from the token's role; the client never sends a role.
   rpc Starters(StartersRequest) returns (StartersReply);
+  // The caller's conversations, most recent first, and one conversation's transcript, so
+  // a user keeps many threads and a reload reopens them. Scoped to the caller's user id
+  // on the server: no request names whose conversations to read.
+  rpc ListConversations(ListConversationsRequest) returns (ListConversationsReply);
+  rpc GetConversation(GetConversationRequest) returns (ConversationReply);
+  rpc DeleteConversation(DeleteConversationRequest) returns (DeleteConversationReply);
 }
 
 message ChatRequest {
@@ -182,4 +188,49 @@ message Starter {
   // "flow": a guided, click-driven use case; "prompt": sends `prompt` as a chat message.
   string mode = 5;
   string prompt = 6;
+}
+
+message ListConversationsRequest {
+  int32 limit = 1;
+}
+
+message ConversationSummary {
+  string conversation_id = 1;
+  string title = 2;
+  // RFC 3339.
+  string updated_at = 3;
+  int32 turns = 4;
+  // The thread ended on a question the user has not answered yet.
+  bool awaiting_input = 5;
+}
+
+message ListConversationsReply {
+  repeated ConversationSummary conversations = 1;
+}
+
+message GetConversationRequest {
+  string conversation_id = 1;
+}
+
+// One recorded turn: what the user said or picked ("[approved]" / "[declined]" for a
+// confirmation decision) and
+// every event the assistant streamed, in seq order -- the client folds them as it did live.
+message TranscriptTurn {
+  string turn_id = 1;
+  string user_text = 2;
+  repeated ChatEvent events = 3;
+}
+
+message ConversationReply {
+  string conversation_id = 1;
+  string title = 2;
+  repeated TranscriptTurn turns = 3;
+}
+
+message DeleteConversationRequest {
+  string conversation_id = 1;
+}
+
+message DeleteConversationReply {
+  bool deleted = 1;
 }

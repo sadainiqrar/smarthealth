@@ -193,3 +193,29 @@ export function isLatest(turns: Turn[], turnId: string): boolean {
   const last = [...turns].reverse().find((t) => t.role === "assistant") as AssistantTurn | undefined;
   return last?.turnId === turnId;
 }
+
+/**
+ * A reopened thread, rebuilt from its transcript by folding each turn's events exactly as
+ * they were folded live. The user's picks are restored too: an option is marked chosen
+ * when the next turn's text is its label, and a confirmation by its recorded decision.
+ */
+export function fromTranscript(
+  turns: { turnId: string; userText: string; events: ChatEvent[] }[],
+): Turn[] {
+  let out: Turn[] = [];
+  for (const recorded of turns) {
+    const decision = recorded.userText === "[approved]" || recorded.userText === "[declined]";
+    const previous = [...out].reverse().find((t) => t.role === "assistant") as AssistantTurn | undefined;
+    if (decision && previous) {
+      const pending = previous.parts.find((p) => p.kind === "confirmation" && !p.decision);
+      if (pending?.kind === "confirmation") out = markDecided(out, pending.id, recorded.userText === "[approved]");
+    } else if (recorded.userText) {
+      const options = previous?.parts.find((p) => p.kind === "options" && p.chosen === undefined);
+      const picked = options?.kind === "options" ? options.options.find((o) => o.label === recorded.userText) : undefined;
+      if (options?.kind === "options" && picked) out = markChosen(out, options.id, picked.id);
+      out.push({ role: "user", id: `${recorded.turnId}-user`, text: recorded.userText });
+    }
+    out.push(recorded.events.reduce(applyEvent, newAssistantTurn(recorded.turnId)));
+  }
+  return out;
+}

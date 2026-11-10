@@ -66,7 +66,8 @@ function App() {
         <Route path="/book" element={<Book />} />
         <Route path="/bookings/:id" element={<Booking />} />
         <Route path="/waitlist" element={<Waitlist />} />
-        <Route path="/assistant" element={<AssistantPage />} />
+        {/* One route with an optional segment: opening a thread keeps the page mounted. */}
+        <Route path="/assistant/:conversationId?" element={<AssistantPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

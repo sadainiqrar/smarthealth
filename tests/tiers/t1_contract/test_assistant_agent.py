@@ -473,3 +473,75 @@ async def test_a_cancelled_turn_ends_with_done_cancelled():
         )
         events = await h.chat(_token(), message="late cancellation fee", turn="t-cancel")
     assert kinds(events) == ["done"] and events[0].done.reason == "cancelled"
+
+
+# -- threads --------------------------------------------------------------------------------
+
+
+async def _list(h: Harness, token: str):
+    reply = await h.stub.ListConversations(
+        assistant_pb2.ListConversationsRequest(), metadata=_auth(token)
+    )
+    return list(reply.conversations)
+
+
+async def test_each_conversation_is_its_own_thread_listed_newest_first():
+    """Referenced by tests/cases/pb-007-assistant-keeps-threads-per-user.yaml."""
+    async with Harness(FakePartA.seeded()) as h:
+        token = _token()
+        await h.chat(token, conversation="first", message="is there a late cancellation fee")
+        await h.chat(token, conversation="second", starter="book")
+        threads = await _list(h, token)
+    assert [t.conversation_id for t in threads] == ["second", "first"]
+    assert threads[0].title == "Book an appointment" and threads[0].awaiting_input
+    assert threads[1].title == "is there a late cancellation fee" and not threads[1].awaiting_input
+
+
+async def test_a_reopened_thread_has_every_turn_and_its_open_question_still_answers():
+    fake = FakePartA.seeded()
+    async with Harness(fake) as h:
+        token = _token()
+        events = await h.chat(token, conversation="t", starter="book")
+        specialties = last(events, "options")
+        await h.chat(token, conversation="t", choice=(specialties.options_id, "Cardiology"))
+        reply = await h.stub.GetConversation(
+            assistant_pb2.GetConversationRequest(conversation_id="t"), metadata=_auth(token)
+        )
+        doctors = [e.options for e in reply.turns[-1].events if e.WhichOneof("kind") == "options"][
+            -1
+        ]
+        # Days later, from the reopened thread: the paused flow resumes where it stopped.
+        resumed = await h.chat(token, conversation="t", choice=(doctors.options_id, "any"))
+    assert [t.user_text for t in reply.turns] == ["Book an appointment", "Cardiology"]
+    assert reply.turns[-1].events[-1].done.reason == "awaiting_input"
+    assert last(resumed, "options").prompt == "Which time suits you?"
+
+
+async def test_one_users_threads_are_invisible_to_another():
+    async with Harness(FakePartA.seeded()) as h:
+        await h.chat(_token(), conversation="private", message="late cancellation fee")
+        other = _token(user="u-other")
+        assert await _list(h, other) == []
+        with pytest.raises(grpc.aio.AioRpcError) as raised:
+            await h.stub.GetConversation(
+                assistant_pb2.GetConversationRequest(conversation_id="private"),
+                metadata=_auth(other),
+            )
+    assert raised.value.code() is grpc.StatusCode.NOT_FOUND
+
+
+async def test_a_deleted_thread_is_gone_with_its_paused_flow():
+    async with Harness(FakePartA.seeded()) as h:
+        token = _token()
+        events = await h.chat(token, conversation="gone", starter="book")
+        specialties = last(events, "options")
+        deleted = await h.stub.DeleteConversation(
+            assistant_pb2.DeleteConversationRequest(conversation_id="gone"), metadata=_auth(token)
+        )
+        after = await h.chat(
+            token, conversation="gone", choice=(specialties.options_id, "Cardiology")
+        )
+        threads = await _list(h, token)
+    assert deleted.deleted
+    assert last(after, "error").code == "stale"
+    assert [t.conversation_id for t in threads] == ["gone"]  # the stale reply is a new turn

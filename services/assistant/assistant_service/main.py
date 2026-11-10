@@ -22,10 +22,12 @@ from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg_pool import AsyncConnectionPool
 from redis.asyncio import Redis
 
 from assistant_service.agent import Agent
 from assistant_service.auth import TokenVerifier
+from assistant_service.conversations import InMemoryConversations, PostgresConversations
 from assistant_service.llm import chat_model
 from assistant_service.parta import PartA
 from assistant_service.server import SERVING, build_server
@@ -73,13 +75,15 @@ async def main() -> None:
     stores = RedisStores(redis, turn_ttl=settings.turn_ttl_seconds)
     channel = grpc.aio.insecure_channel(settings.knowledge_target)
     parta = PartA(settings.parta_url, timeout=settings.parta_timeout_seconds)
-    async with checkpointer(settings.database_url) as saver:
+    async with checkpointer(settings.database_url) as saver, \
+            conversation_store(settings.database_url) as conversations:
         model = chat_model(settings.llm_mode, provider=settings.llm_provider,
                            model=settings.llm_model, api_key=settings.llm_api_key)
         logger.info("assistant model: %s", settings.llm_mode if model else "off (offline brain)")
         server = build_server(stores, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
                               channel, settings.grpc_port, agent=Agent(saver), parta=parta,
-                              model=model, timezone=ZoneInfo(settings.display_timezone))
+                              model=model, timezone=ZoneInfo(settings.display_timezone),
+                              conversations=conversations)
         await serve(settings, server, stores, redis)
     await parta.aclose()
     await channel.close()
@@ -97,6 +101,19 @@ async def checkpointer(database_url: str):
     async with AsyncPostgresSaver.from_conn_string(database_url) as saver:
         await saver.setup()  # idempotent: creates or migrates its tables
         yield saver
+
+
+@asynccontextmanager
+async def conversation_store(database_url: str):
+    """Transcripts in the same database as the checkpoints, or in memory when none is set."""
+    if not database_url:
+        yield InMemoryConversations()
+        return
+    async with AsyncConnectionPool(database_url, min_size=1, max_size=5, open=False,
+                                   kwargs={"autocommit": True}) as pool:
+        store = PostgresConversations(pool)
+        await store.setup()
+        yield store
 
 
 async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redis) -> None:

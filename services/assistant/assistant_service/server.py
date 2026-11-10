@@ -28,6 +28,8 @@ from smarthealth.knowledge.v1 import knowledge_pb2, knowledge_pb2_grpc
 
 from assistant_service.agent import Agent, StaleAnswer, TurnContext
 from assistant_service.auth import Caller, TokenVerifier, Unauthenticated
+from assistant_service.conversations import ConversationStore, InMemoryConversations
+from assistant_service.flows import FLOWS
 from assistant_service.parta import PartA
 from assistant_service.starters import starters_for
 from assistant_service.stores import Stores
@@ -37,6 +39,8 @@ SERVING = health_pb2.HealthCheckResponse.SERVING
 #: Pace of word-by-word prose, so streaming is visible in a browser; zero in tests.
 TOKEN_DELAY_SECONDS = 0.02
 UTC_ZONE = ZoneInfo("UTC")
+#: A confirmation turn's transcript text: the client shows the decision, not a bubble.
+DECIDED = {True: "[approved]", False: "[declined]"}
 
 
 def _fields(items: list[dict]) -> list[assistant_pb2.Field]:
@@ -84,10 +88,11 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
     def __init__(
         self, stores: Stores, verifier: TokenVerifier,
         knowledge: knowledge_pb2_grpc.KnowledgeStub, agent: Agent, parta: PartA, *,
-        model: BaseChatModel | None, timezone: ZoneInfo,
+        model: BaseChatModel | None, timezone: ZoneInfo, conversations: ConversationStore,
         token_delay: float = TOKEN_DELAY_SECONDS,
     ) -> None:
         self._stores = stores
+        self._conversations = conversations
         self._verifier = verifier
         self._knowledge = knowledge
         self._agent = agent
@@ -122,8 +127,11 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                            conversation_id=conversation_id, timezone=self._timezone,
                            model=self._model)
 
-    async def _turn(self, turn: str, resume_from: int, events):
-        """Record and send a turn's events; replay instead if the turn already exists."""
+    async def _turn(self, turn: str, resume_from: int, events, *, caller: Caller,
+                    conversation_id: str, user_text: str):
+        """Send a turn's events, appending each to its stream first; replay instead if the
+        turn already exists. A finished turn goes into the conversation's transcript, even
+        when the client went away before the end (shielded from the cancellation)."""
         if await self._stores.exists(turn):
             # A reconnect (or a retry): replay what was recorded, never generate again.
             for seq, event in await self._stores.replay(turn, resume_from):
@@ -131,12 +139,14 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             return
         seq = 0
         ended = False
+        sent: list[dict] = []
         try:
             async for event in events:
                 if await self._stores.cancelled(turn):
                     event = {"kind": "done", "reason": "cancelled"}
                 seq += 1
                 await self._stores.append(turn, seq, event)
+                sent.append(event)
                 if seq > resume_from:
                     yield to_message(turn, seq, event)
                 if event["kind"] == "done":
@@ -148,6 +158,7 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             seq += 1
             error = {"kind": "error", "code": "stale", "message": str(exc).capitalize() + "."}
             await self._stores.append(turn, seq, error)
+            sent.append(error)
             yield to_message(turn, seq, error)
         except Exception:
             logger.exception("turn failed", extra={"turn_id": turn})
@@ -155,21 +166,51 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
             error = {"kind": "error", "code": "internal",
                      "message": "Something went wrong on my side. Please try again."}
             await self._stores.append(turn, seq, error)
+            sent.append(error)
             yield to_message(turn, seq, error)
+        finally:
+            if sent:
+                record = sent if sent[-1]["kind"] == "done" else [
+                    *sent, {"kind": "done", "reason": "complete"}]
+                await asyncio.shield(self._record(caller, conversation_id, turn, user_text,
+                                                  record))
         if not ended:
             seq += 1
             done = {"kind": "done", "reason": "complete"}
             await self._stores.append(turn, seq, done)
             yield to_message(turn, seq, done)
 
+    async def _record(self, caller: Caller, conversation_id: str, turn: str, user_text: str,
+                      events: list[dict]) -> None:
+        try:
+            await self._conversations.record(caller.user_id, conversation_id, turn, user_text,
+                                             events)
+        except Exception:  # noqa: BLE001 - a lost transcript row must not fail the answer
+            logger.exception("could not record the turn", extra={"turn_id": turn})
+
+    async def _user_text(self, caller: Caller, conversation_id: str, request) -> str:
+        """What the user's bubble says, as the client showed it."""
+        if request.starter_id:
+            flow = FLOWS.get(request.starter_id)
+            return flow.title if flow else request.starter_id
+        if request.HasField("choice"):
+            waiting = await self._agent.pending(caller, conversation_id) or {}
+            for option in waiting.get("options", []):
+                if option["id"] == request.choice.option_id:
+                    return option["label"]
+        return request.message
+
     async def Chat(self, request, context):  # noqa: N802 - gRPC method name
         caller = await self._caller(context)
         turn = request.turn_id or "unnamed"
         choice = ((request.choice.options_id, request.choice.option_id)
                   if request.HasField("choice") else None)
-        events = self._agent.run(self._context(caller, request.conversation_id or turn),
+        conversation_id = request.conversation_id or turn
+        user_text = await self._user_text(caller, conversation_id, request)
+        events = self._agent.run(self._context(caller, conversation_id),
                                  text=request.message, starter=request.starter_id, choice=choice)
-        async for message in self._turn(turn, request.resume_from, events):
+        async for message in self._turn(turn, request.resume_from, events, caller=caller,
+                                        conversation_id=conversation_id, user_text=user_text):
             yield message
 
     async def Confirm(self, request, context):  # noqa: N802
@@ -177,7 +218,9 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
         turn = request.turn_id or "unnamed"
         events = self._agent.run(self._context(caller, request.conversation_id),
                                  decision=(request.confirmation_id, request.approved))
-        async for message in self._turn(turn, request.resume_from, events):
+        async for message in self._turn(turn, request.resume_from, events, caller=caller,
+                                        conversation_id=request.conversation_id,
+                                        user_text=DECIDED[request.approved]):
             yield message
 
     async def Cancel(self, request, context):  # noqa: N802
@@ -193,15 +236,52 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                 for s in starters])
             for title, starters in starters_for(caller.role)])
 
+    async def ListConversations(self, request, context):  # noqa: N802
+        caller = await self._caller(context)
+        limit = min(request.limit or 30, 100)
+        return assistant_pb2.ListConversationsReply(conversations=[
+            assistant_pb2.ConversationSummary(
+                conversation_id=s.conversation_id, title=s.title,
+                updated_at=s.updated_at.isoformat(), turns=s.turns,
+                awaiting_input=s.awaiting_input)
+            for s in await self._conversations.list(caller.user_id, limit)])
+
+    async def GetConversation(self, request, context):  # noqa: N802
+        caller = await self._caller(context)
+        found = await self._conversations.get(caller.user_id, request.conversation_id)
+        if found is None:
+            # Another user's conversation is indistinguishable from none at all.
+            await context.abort(grpc.StatusCode.NOT_FOUND, "no such conversation")
+        title, turns = found
+        return assistant_pb2.ConversationReply(
+            conversation_id=request.conversation_id, title=title,
+            turns=[assistant_pb2.TranscriptTurn(
+                turn_id=t.turn_id, user_text=t.user_text,
+                events=[to_message(t.turn_id, i + 1, e) for i, e in enumerate(t.events)])
+                for t in turns])
+
+    async def DeleteConversation(self, request, context):  # noqa: N802
+        caller = await self._caller(context)
+        deleted = await self._conversations.delete(caller.user_id, request.conversation_id)
+        if deleted:
+            # The paused flow goes with it: nothing can resume a deleted conversation.
+            thread = self._agent.thread(caller, request.conversation_id)
+            await self._agent.graph.checkpointer.adelete_thread(
+                thread["configurable"]["thread_id"])
+        return assistant_pb2.DeleteConversationReply(deleted=deleted)
+
 
 def build_server(stores: Stores, verifier: TokenVerifier, knowledge_channel: grpc.aio.Channel,
                  port: int, *, agent: Agent, parta: PartA, model: BaseChatModel | None,
                  timezone: ZoneInfo = UTC_ZONE,
+                 conversations: ConversationStore | None = None,
                  token_delay: float = TOKEN_DELAY_SECONDS) -> grpc.aio.Server:
     server = grpc.aio.server()
     servicer = AssistantServicer(
         stores, verifier, knowledge_pb2_grpc.KnowledgeStub(knowledge_channel), agent, parta,
-        model=model, timezone=timezone, token_delay=token_delay,
+        model=model, timezone=timezone,
+        conversations=conversations if conversations is not None else InMemoryConversations(),
+        token_delay=token_delay,
     )
     assistant_pb2_grpc.add_AssistantServicer_to_server(servicer, server)
     checker = health.aio.HealthServicer()

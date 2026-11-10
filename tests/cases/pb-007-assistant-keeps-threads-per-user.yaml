@@ -1,0 +1,10 @@
+id: pb-007-assistant-keeps-threads-per-user
+title: "A user keeps many assistant threads: listed newest first, reopened with every turn, a paused flow still answerable, invisible to other users, deletable"
+requirement: [PART-B-FR-2, PART-B-FR-5]
+tier: contract
+priority: P1
+status: ready
+# Transcripts (conversations.py) are the record a person reads; the LangGraph checkpoint is
+# the state that resumes a paused flow. Both are keyed by user and conversation, so another
+# user's thread answers NOT_FOUND, exactly like one that does not exist.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_each_conversation_is_its_own_thread_listed_newest_first"

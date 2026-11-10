@@ -23,7 +23,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file smarthealth/assistant/v1/assistant.proto.
  */
 export const file_smarthealth_assistant_v1_assistant: GenFile = /*@__PURE__*/
-  fileDesc("CihzbWFydGhlYWx0aC9hc3Npc3RhbnQvdjEvYXNzaXN0YW50LnByb3RvEhhzbWFydGhlYWx0aC5hc3Npc3RhbnQudjEiqQEKC0NoYXRSZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEwoLcmVzdW1lX2Zyb20YBCABKAMSNgoGY2hvaWNlGAUgASgLMiYuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLk9wdGlvbkNob2ljZRISCgpzdGFydGVyX2lkGAYgASgJIjUKDE9wdGlvbkNob2ljZRISCgpvcHRpb25zX2lkGAEgASgJEhEKCW9wdGlvbl9pZBgCIAEoCSKABAoJQ2hhdEV2ZW50Eg8KB3R1cm5faWQYASABKAkSCwoDc2VxGAIgASgDEg8KBXRva2VuGAMgASgJSAASNgoIY2l0YXRpb24YBCABKAsyIi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2l0YXRpb25IABIuCgRkb25lGAUgASgLMh4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRvbmVIABIwCgVlcnJvchgGIAEoCzIfLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5FcnJvckgAEjYKBHRvb2wYByABKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuVG9vbEFjdGl2aXR5SAASNAoHb3B0aW9ucxgIIAEoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb25zSAASRgoMY29uZmlybWF0aW9uGAkgASgLMi4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1hdGlvblJlcXVpcmVkSAASLgoEY2FyZBgKIAEoCzIeLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYXJkSAASPAoLc3VnZ2VzdGlvbnMYCyABKAsyJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3VnZ2VzdGlvbnNIAEIGCgRraW5kIj0KCENpdGF0aW9uEhEKCXNvdXJjZV9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIPCgdzbmlwcGV0GAMgASgJIhYKBERvbmUSDgoGcmVhc29uGAEgASgJIiYKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSJdCgxUb29sQWN0aXZpdHkSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWxhYmVsGAMgASgJEg4KBnN0YXR1cxgEIAEoCRIPCgdzdW1tYXJ5GAUgASgJIm8KB09wdGlvbnMSEgoKb3B0aW9uc19pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSMQoHb3B0aW9ucxgDIAMoCzIgLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb24SDQoFc3R5bGUYBCABKAkiRwoGT3B0aW9uEgoKAmlkGAEgASgJEg0KBWxhYmVsGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg0KBWJhZGdlGAQgASgJIrkBChRDb25maXJtYXRpb25SZXF1aXJlZBIXCg9jb25maXJtYXRpb25faWQYASABKAkSDgoGYWN0aW9uGAIgASgJEg0KBXRpdGxlGAMgASgJEjAKB2RldGFpbHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSFQoNY29uZmlybV9sYWJlbBgFIAEoCRISCgpkZW55X2xhYmVsGAYgASgJEgwKBHRvbmUYByABKAkigwEKBENhcmQSDAoEa2luZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIQCghzdWJ0aXRsZRgDIAEoCRIvCgZmaWVsZHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSDQoFYmFkZ2UYBSABKAkSDAoEbGluaxgGIAEoCSIlCgVGaWVsZBINCgVsYWJlbBgBIAEoCRINCgV2YWx1ZRgCIAEoCSIcCgtTdWdnZXN0aW9ucxINCgVpdGVtcxgBIAMoCSJ6Cg5Db25maXJtUmVxdWVzdBIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDwoHdHVybl9pZBgCIAEoCRIXCg9jb25maXJtYXRpb25faWQYAyABKAkSEAoIYXBwcm92ZWQYBCABKAgSEwoLcmVzdW1lX2Zyb20YBSABKAMiIAoNQ2FuY2VsUmVxdWVzdBIPCgd0dXJuX2lkGAEgASgJIiAKC0NhbmNlbFJlcGx5EhEKCWNhbmNlbGxlZBgBIAEoCCIRCg9TdGFydGVyc1JlcXVlc3QiRwoNU3RhcnRlcnNSZXBseRI2CgZncm91cHMYASADKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlckdyb3VwIlIKDFN0YXJ0ZXJHcm91cBINCgV0aXRsZRgBIAEoCRIzCghzdGFydGVycxgCIAMoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyImUKB1N0YXJ0ZXISCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSDAoEaWNvbhgEIAEoCRIMCgRtb2RlGAUgASgJEg4KBnByb21wdBgGIAEoCTL3AgoJQXNzaXN0YW50ElQKBENoYXQSJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdFJlcXVlc3QaIy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdEV2ZW50MAESWgoHQ29uZmlybRIoLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5Db25maXJtUmVxdWVzdBojLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0RXZlbnQwARJYCgZDYW5jZWwSJy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2FuY2VsUmVxdWVzdBolLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYW5jZWxSZXBseRJeCghTdGFydGVycxIpLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyc1JlcXVlc3QaJy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlcnNSZXBseWIGcHJvdG8z");
+  fileDesc("CihzbWFydGhlYWx0aC9hc3Npc3RhbnQvdjEvYXNzaXN0YW50LnByb3RvEhhzbWFydGhlYWx0aC5hc3Npc3RhbnQudjEiqQEKC0NoYXRSZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEwoLcmVzdW1lX2Zyb20YBCABKAMSNgoGY2hvaWNlGAUgASgLMiYuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLk9wdGlvbkNob2ljZRISCgpzdGFydGVyX2lkGAYgASgJIjUKDE9wdGlvbkNob2ljZRISCgpvcHRpb25zX2lkGAEgASgJEhEKCW9wdGlvbl9pZBgCIAEoCSKABAoJQ2hhdEV2ZW50Eg8KB3R1cm5faWQYASABKAkSCwoDc2VxGAIgASgDEg8KBXRva2VuGAMgASgJSAASNgoIY2l0YXRpb24YBCABKAsyIi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2l0YXRpb25IABIuCgRkb25lGAUgASgLMh4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRvbmVIABIwCgVlcnJvchgGIAEoCzIfLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5FcnJvckgAEjYKBHRvb2wYByABKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuVG9vbEFjdGl2aXR5SAASNAoHb3B0aW9ucxgIIAEoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb25zSAASRgoMY29uZmlybWF0aW9uGAkgASgLMi4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1hdGlvblJlcXVpcmVkSAASLgoEY2FyZBgKIAEoCzIeLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYXJkSAASPAoLc3VnZ2VzdGlvbnMYCyABKAsyJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3VnZ2VzdGlvbnNIAEIGCgRraW5kIj0KCENpdGF0aW9uEhEKCXNvdXJjZV9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIPCgdzbmlwcGV0GAMgASgJIhYKBERvbmUSDgoGcmVhc29uGAEgASgJIiYKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSJdCgxUb29sQWN0aXZpdHkSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWxhYmVsGAMgASgJEg4KBnN0YXR1cxgEIAEoCRIPCgdzdW1tYXJ5GAUgASgJIm8KB09wdGlvbnMSEgoKb3B0aW9uc19pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSMQoHb3B0aW9ucxgDIAMoCzIgLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb24SDQoFc3R5bGUYBCABKAkiRwoGT3B0aW9uEgoKAmlkGAEgASgJEg0KBWxhYmVsGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg0KBWJhZGdlGAQgASgJIrkBChRDb25maXJtYXRpb25SZXF1aXJlZBIXCg9jb25maXJtYXRpb25faWQYASABKAkSDgoGYWN0aW9uGAIgASgJEg0KBXRpdGxlGAMgASgJEjAKB2RldGFpbHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSFQoNY29uZmlybV9sYWJlbBgFIAEoCRISCgpkZW55X2xhYmVsGAYgASgJEgwKBHRvbmUYByABKAkigwEKBENhcmQSDAoEa2luZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIQCghzdWJ0aXRsZRgDIAEoCRIvCgZmaWVsZHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSDQoFYmFkZ2UYBSABKAkSDAoEbGluaxgGIAEoCSIlCgVGaWVsZBINCgVsYWJlbBgBIAEoCRINCgV2YWx1ZRgCIAEoCSIcCgtTdWdnZXN0aW9ucxINCgVpdGVtcxgBIAMoCSJ6Cg5Db25maXJtUmVxdWVzdBIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDwoHdHVybl9pZBgCIAEoCRIXCg9jb25maXJtYXRpb25faWQYAyABKAkSEAoIYXBwcm92ZWQYBCABKAgSEwoLcmVzdW1lX2Zyb20YBSABKAMiIAoNQ2FuY2VsUmVxdWVzdBIPCgd0dXJuX2lkGAEgASgJIiAKC0NhbmNlbFJlcGx5EhEKCWNhbmNlbGxlZBgBIAEoCCIRCg9TdGFydGVyc1JlcXVlc3QiRwoNU3RhcnRlcnNSZXBseRI2CgZncm91cHMYASADKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlckdyb3VwIlIKDFN0YXJ0ZXJHcm91cBINCgV0aXRsZRgBIAEoCRIzCghzdGFydGVycxgCIAMoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyImUKB1N0YXJ0ZXISCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSDAoEaWNvbhgEIAEoCRIMCgRtb2RlGAUgASgJEg4KBnByb21wdBgGIAEoCSIpChhMaXN0Q29udmVyc2F0aW9uc1JlcXVlc3QSDQoFbGltaXQYASABKAUieAoTQ29udmVyc2F0aW9uU3VtbWFyeRIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDQoFdGl0bGUYAiABKAkSEgoKdXBkYXRlZF9hdBgDIAEoCRINCgV0dXJucxgEIAEoBRIWCg5hd2FpdGluZ19pbnB1dBgFIAEoCCJeChZMaXN0Q29udmVyc2F0aW9uc1JlcGx5EkQKDWNvbnZlcnNhdGlvbnMYASADKAsyLS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ29udmVyc2F0aW9uU3VtbWFyeSIxChZHZXRDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSJpCg5UcmFuc2NyaXB0VHVybhIPCgd0dXJuX2lkGAEgASgJEhEKCXVzZXJfdGV4dBgCIAEoCRIzCgZldmVudHMYAyADKAsyIy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdEV2ZW50InQKEUNvbnZlcnNhdGlvblJlcGx5EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRI3CgV0dXJucxgDIAMoCzIoLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5UcmFuc2NyaXB0VHVybiI0ChlEZWxldGVDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSIqChdEZWxldGVDb252ZXJzYXRpb25SZXBseRIPCgdkZWxldGVkGAEgASgIMuIFCglBc3Npc3RhbnQSVAoEQ2hhdBIlLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0UmVxdWVzdBojLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0RXZlbnQwARJaCgdDb25maXJtEiguc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1SZXF1ZXN0GiMuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNoYXRFdmVudDABElgKBkNhbmNlbBInLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYW5jZWxSZXF1ZXN0GiUuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNhbmNlbFJlcGx5El4KCFN0YXJ0ZXJzEikuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLlN0YXJ0ZXJzUmVxdWVzdBonLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyc1JlcGx5EnkKEUxpc3RDb252ZXJzYXRpb25zEjIuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkxpc3RDb252ZXJzYXRpb25zUmVxdWVzdBowLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5MaXN0Q29udmVyc2F0aW9uc1JlcGx5EnAKD0dldENvbnZlcnNhdGlvbhIwLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5HZXRDb252ZXJzYXRpb25SZXF1ZXN0Gisuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbnZlcnNhdGlvblJlcGx5EnwKEkRlbGV0ZUNvbnZlcnNhdGlvbhIzLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5EZWxldGVDb252ZXJzYXRpb25SZXF1ZXN0GjEuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRlbGV0ZUNvbnZlcnNhdGlvblJlcGx5YgZwcm90bzM");
 
 /**
  * @generated from message smarthealth.assistant.v1.ChatRequest
@@ -676,6 +676,190 @@ export const StarterSchema: GenMessage<Starter> = /*@__PURE__*/
   messageDesc(file_smarthealth_assistant_v1_assistant, 19);
 
 /**
+ * @generated from message smarthealth.assistant.v1.ListConversationsRequest
+ */
+export type ListConversationsRequest = Message<"smarthealth.assistant.v1.ListConversationsRequest"> & {
+  /**
+   * @generated from field: int32 limit = 1;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.ListConversationsRequest.
+ * Use `create(ListConversationsRequestSchema)` to create a new message.
+ */
+export const ListConversationsRequestSchema: GenMessage<ListConversationsRequest> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 20);
+
+/**
+ * @generated from message smarthealth.assistant.v1.ConversationSummary
+ */
+export type ConversationSummary = Message<"smarthealth.assistant.v1.ConversationSummary"> & {
+  /**
+   * @generated from field: string conversation_id = 1;
+   */
+  conversationId: string;
+
+  /**
+   * @generated from field: string title = 2;
+   */
+  title: string;
+
+  /**
+   * RFC 3339.
+   *
+   * @generated from field: string updated_at = 3;
+   */
+  updatedAt: string;
+
+  /**
+   * @generated from field: int32 turns = 4;
+   */
+  turns: number;
+
+  /**
+   * The thread ended on a question the user has not answered yet.
+   *
+   * @generated from field: bool awaiting_input = 5;
+   */
+  awaitingInput: boolean;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.ConversationSummary.
+ * Use `create(ConversationSummarySchema)` to create a new message.
+ */
+export const ConversationSummarySchema: GenMessage<ConversationSummary> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 21);
+
+/**
+ * @generated from message smarthealth.assistant.v1.ListConversationsReply
+ */
+export type ListConversationsReply = Message<"smarthealth.assistant.v1.ListConversationsReply"> & {
+  /**
+   * @generated from field: repeated smarthealth.assistant.v1.ConversationSummary conversations = 1;
+   */
+  conversations: ConversationSummary[];
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.ListConversationsReply.
+ * Use `create(ListConversationsReplySchema)` to create a new message.
+ */
+export const ListConversationsReplySchema: GenMessage<ListConversationsReply> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 22);
+
+/**
+ * @generated from message smarthealth.assistant.v1.GetConversationRequest
+ */
+export type GetConversationRequest = Message<"smarthealth.assistant.v1.GetConversationRequest"> & {
+  /**
+   * @generated from field: string conversation_id = 1;
+   */
+  conversationId: string;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.GetConversationRequest.
+ * Use `create(GetConversationRequestSchema)` to create a new message.
+ */
+export const GetConversationRequestSchema: GenMessage<GetConversationRequest> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 23);
+
+/**
+ * One recorded turn: what the user said or picked ("[approved]" / "[declined]" for a
+ * confirmation decision) and
+ * every event the assistant streamed, in seq order -- the client folds them as it did live.
+ *
+ * @generated from message smarthealth.assistant.v1.TranscriptTurn
+ */
+export type TranscriptTurn = Message<"smarthealth.assistant.v1.TranscriptTurn"> & {
+  /**
+   * @generated from field: string turn_id = 1;
+   */
+  turnId: string;
+
+  /**
+   * @generated from field: string user_text = 2;
+   */
+  userText: string;
+
+  /**
+   * @generated from field: repeated smarthealth.assistant.v1.ChatEvent events = 3;
+   */
+  events: ChatEvent[];
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.TranscriptTurn.
+ * Use `create(TranscriptTurnSchema)` to create a new message.
+ */
+export const TranscriptTurnSchema: GenMessage<TranscriptTurn> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 24);
+
+/**
+ * @generated from message smarthealth.assistant.v1.ConversationReply
+ */
+export type ConversationReply = Message<"smarthealth.assistant.v1.ConversationReply"> & {
+  /**
+   * @generated from field: string conversation_id = 1;
+   */
+  conversationId: string;
+
+  /**
+   * @generated from field: string title = 2;
+   */
+  title: string;
+
+  /**
+   * @generated from field: repeated smarthealth.assistant.v1.TranscriptTurn turns = 3;
+   */
+  turns: TranscriptTurn[];
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.ConversationReply.
+ * Use `create(ConversationReplySchema)` to create a new message.
+ */
+export const ConversationReplySchema: GenMessage<ConversationReply> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 25);
+
+/**
+ * @generated from message smarthealth.assistant.v1.DeleteConversationRequest
+ */
+export type DeleteConversationRequest = Message<"smarthealth.assistant.v1.DeleteConversationRequest"> & {
+  /**
+   * @generated from field: string conversation_id = 1;
+   */
+  conversationId: string;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.DeleteConversationRequest.
+ * Use `create(DeleteConversationRequestSchema)` to create a new message.
+ */
+export const DeleteConversationRequestSchema: GenMessage<DeleteConversationRequest> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 26);
+
+/**
+ * @generated from message smarthealth.assistant.v1.DeleteConversationReply
+ */
+export type DeleteConversationReply = Message<"smarthealth.assistant.v1.DeleteConversationReply"> & {
+  /**
+   * @generated from field: bool deleted = 1;
+   */
+  deleted: boolean;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.DeleteConversationReply.
+ * Use `create(DeleteConversationReplySchema)` to create a new message.
+ */
+export const DeleteConversationReplySchema: GenMessage<DeleteConversationReply> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 27);
+
+/**
  * @generated from service smarthealth.assistant.v1.Assistant
  */
 export const Assistant: GenService<{
@@ -722,6 +906,34 @@ export const Assistant: GenService<{
     methodKind: "unary";
     input: typeof StartersRequestSchema;
     output: typeof StartersReplySchema;
+  },
+  /**
+   * The caller's conversations, most recent first, and one conversation's transcript, so
+   * a user keeps many threads and a reload reopens them. Scoped to the caller's user id
+   * on the server: no request names whose conversations to read.
+   *
+   * @generated from rpc smarthealth.assistant.v1.Assistant.ListConversations
+   */
+  listConversations: {
+    methodKind: "unary";
+    input: typeof ListConversationsRequestSchema;
+    output: typeof ListConversationsReplySchema;
+  },
+  /**
+   * @generated from rpc smarthealth.assistant.v1.Assistant.GetConversation
+   */
+  getConversation: {
+    methodKind: "unary";
+    input: typeof GetConversationRequestSchema;
+    output: typeof ConversationReplySchema;
+  },
+  /**
+   * @generated from rpc smarthealth.assistant.v1.Assistant.DeleteConversation
+   */
+  deleteConversation: {
+    methodKind: "unary";
+    input: typeof DeleteConversationRequestSchema;
+    output: typeof DeleteConversationReplySchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_smarthealth_assistant_v1_assistant, 0);

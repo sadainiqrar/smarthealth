@@ -20,7 +20,8 @@ import {
   PaperclipIcon,
   PillIcon,
   PlusIcon,
-  RotateCcwIcon,
+  HistoryIcon,
+  MessageSquarePlusIcon,
   SearchIcon,
   SirenIcon,
   SparklesIcon,
@@ -30,6 +31,8 @@ import {
   XIcon,
 } from "lucide-react";
 import { useRef, useState, type FormEvent, type ReactElement } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "react-router-dom";
 import { useAuth } from "@/auth";
 import {
   Attachment,
@@ -64,7 +67,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { isLatest, type AssistantTurn, type Part } from "@/assistant/conversation";
 import { Choices, Confirmation, ErrorNote, Prose, ResultCard, Sources, Steps } from "@/assistant/parts";
 import { uploadReport } from "@/assistant/upload";
-import { useConversation } from "@/assistant/useConversation";
+import { Threads, THREADS_KEY, useThreads } from "@/assistant/Threads";
+import { newId, useConversation } from "@/assistant/useConversation";
 import type { Starter } from "@/gen/smarthealth/assistant/v1/assistant_pb";
 
 const ICONS: Record<string, LucideIcon> = {
@@ -96,8 +100,33 @@ const INTRO: Record<string, string> = {
 export default function Assistant() {
   const { session } = useAuth();
   const role = session?.role ?? "patient";
-  const conversation = useConversation();
-  const { turns, busy, starters, startersError, send, decide, stop, reset } = conversation;
+  // The thread is in the URL (/assistant/:conversationId), so a reload reopens it. A new
+  // chat gets its id up front and moves into the URL once its first turn is recorded.
+  const { conversationId: routeId } = useParams();
+  const navigate = useNavigate();
+  const client = useQueryClient();
+  const [draftId, setDraftId] = useState(newId);
+  const conversationId = routeId ?? draftId;
+  const conversation = useConversation({
+    conversationId,
+    existing: routeId !== undefined,
+    onTurnFinished: (thread) => {
+      void client.invalidateQueries({ queryKey: THREADS_KEY });
+      if (!routeId && thread === draftId) navigate(`/assistant/${thread}`, { replace: true });
+    },
+    onMissing: () => navigate("/assistant", { replace: true }),
+  });
+  const { turns, loading, busy, starters, startersError, send, decide, stop } = conversation;
+  const threads = useThreads();
+
+  function newChat() {
+    setDraftId(newId());
+    navigate("/assistant");
+  }
+
+  function open(id: string) {
+    if (id !== conversationId) navigate(`/assistant/${id}`);
+  }
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -147,7 +176,15 @@ export default function Assistant() {
 
   return (
     <MessageScrollerProvider>
-      <div className="assistant-page mx-auto flex h-[calc(100dvh-7.5rem)] w-full max-w-3xl flex-col gap-3">
+      <div className="assistant-page flex h-[calc(100dvh-7.5rem)] w-full gap-6">
+        <Threads
+          className="hidden w-60 shrink-0 border-r pr-4 md:flex"
+          activeId={routeId ?? null}
+          onOpen={open}
+          onNew={newChat}
+          onDeleted={(id) => id === conversationId && newChat()}
+        />
+      <div className="mx-auto flex min-w-0 max-w-3xl flex-1 flex-col gap-3">
         <div className="flex items-start justify-between gap-4">
           <div className="flex flex-col gap-0.5">
             <h1 className="flex items-center gap-2 text-lg font-semibold">
@@ -155,20 +192,41 @@ export default function Assistant() {
             </h1>
             <p className="text-sm text-muted-foreground">{INTRO[role]}</p>
           </div>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button variant="outline" size="icon" aria-label="New conversation" onClick={reset} disabled={busy} />
-              }
-            >
-              <RotateCcwIcon />
-            </TooltipTrigger>
-            <TooltipContent>New conversation</TooltipContent>
-          </Tooltip>
+          <div className="flex gap-2">
+            {/* Narrow screens have no sidebar: the chats are a menu instead. */}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={<Button variant="outline" size="icon" aria-label="Chats" className="md:hidden" />}
+              >
+                <HistoryIcon />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                {(threads.data ?? []).slice(0, 15).map((thread) => (
+                  <DropdownMenuItem key={thread.conversationId} onClick={() => open(thread.conversationId)}>
+                    <MessageSquareTextIcon />
+                    <span className="truncate">{thread.title}</span>
+                  </DropdownMenuItem>
+                ))}
+                {threads.data?.length === 0 && <DropdownMenuItem disabled>No chats yet</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <Tooltip>
+              <TooltipTrigger
+                render={<Button variant="outline" size="icon" aria-label="New chat" onClick={newChat} />}
+              >
+                <MessageSquarePlusIcon />
+              </TooltipTrigger>
+              <TooltipContent>New chat</TooltipContent>
+            </Tooltip>
+          </div>
         </div>
 
         <div className="min-h-0 flex-1">
-          {turns.length === 0 ? (
+          {loading ? (
+            <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Spinner /> Opening the chat…
+            </div>
+          ) : turns.length === 0 ? (
             <div className="flex h-full flex-col gap-6 overflow-y-auto pb-2">
               <Empty className="flex-none py-6">
                 <EmptyHeader>
@@ -374,6 +432,7 @@ export default function Assistant() {
             The assistant gives information, not diagnosis. In an emergency call your local emergency number.
           </p>
         </div>
+      </div>
       </div>
     </MessageScrollerProvider>
   );

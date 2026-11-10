@@ -3,7 +3,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { ChatEventSchema, type ChatEvent } from "@/gen/smarthealth/assistant/v1/assistant_pb";
 import { streamTurn } from "./client";
-import { applyEvent, isLatest, markChosen, markDecided, newAssistantTurn, type Turn } from "./conversation";
+import { applyEvent, fromTranscript, isLatest, markChosen, markDecided, newAssistantTurn, type AssistantTurn, type Turn } from "./conversation";
 
 vi.mock("@/api", () => ({ readToken: () => "t", refreshOnce: vi.fn(async () => true), sessionEnded: vi.fn() }));
 
@@ -138,5 +138,23 @@ describe("streamTurn", () => {
         throw new ConnectError("no", Code.PermissionDenied);
       })();
     await expect(streamTurn(open, () => {}, new AbortController().signal, [0])).rejects.toThrow("no");
+  });
+});
+
+describe("fromTranscript", () => {
+  it("rebuilds the thread and restores the user's pick and decision", () => {
+    const options = ev(1, { case: "options", value: { optionsId: "o1", prompt: "Who?", options: [{ id: "p1", label: "Dr A" }] } as never });
+    const confirm = ev(1, { case: "confirmation", value: { confirmationId: "k1", title: "Book?" } as never });
+    const done = (seq: number, reason: string) => ev(seq, { case: "done", value: { reason } as never });
+    const turns = fromTranscript([
+      { turnId: "a", userText: "Book an appointment", events: [options, done(2, "awaiting_input")] },
+      { turnId: "b", userText: "Dr A", events: [confirm, done(2, "awaiting_input")] },
+      { turnId: "c", userText: "[approved]", events: [ev(1, { case: "token", value: "Done" }), done(2, "complete")] },
+    ]);
+    expect(turns.map((t) => t.role)).toEqual(["user", "assistant", "user", "assistant", "assistant"]);
+    const [, first, , second] = turns as AssistantTurn[];
+    expect(first.parts[0]).toMatchObject({ kind: "options", chosen: "p1" });
+    expect(second.parts[0]).toMatchObject({ kind: "confirmation", decision: "approved" });
+    expect((turns[4] as AssistantTurn).status).toBe("complete");
   });
 });
