@@ -106,8 +106,8 @@ credentials; a login may be linked later. See §7 D-1.
 | Id | Requirement | Milestone | Status |
 | --- | --- | --- | --- |
 | **PART-A-OBS-1** | Liveness and readiness endpoints; structured logging; a uniform error contract that leaks no internal detail | Week 1 | **Done.** Structured logging is verified at the *process* level by `sys-006`, not only at the formatter — uvicorn's `propagate = False` meant the served application emitted no JSON at all until that was fixed. The error contract became genuinely uniform when R-6 closed |
-| **PART-A-OBS-2** | Distributed tracing across booking, availability sync, billing, reminders and background workers | Week 3 | Not started |
-| **PART-A-OBS-3** | Metrics and dashboards (Prometheus + Grafana) | Week 3 | Not started |
+| **PART-A-OBS-2** | Distributed tracing across booking, availability sync, billing, reminders and background workers | Week 3 | **Partial — base built (Week 3 slice 1).** Every API request is a trace (SQL included); a workflow's run and its activities join the trace of the client that started it (`TracingInterceptor` on every Temporal client); JSON log lines carry `trace_id`/`span_id`; one collector exports to Jaeger. Kafka, Celery and the outbox hop join in later slices (spec §7.2). Cases `obs-001`, `obs-002`, `obs-003` |
+| **PART-A-OBS-3** | Metrics and dashboards (Prometheus + Grafana) | Week 3 | **Partial — base built (Week 3 slice 1).** HTTP request metrics, Temporal SDK metrics (from Temporal core over OTLP/gRPC), Prometheus scraping the collector, Grafana with provisioned datasources and a *Service overview* dashboard (`ops/grafana/`). Business metrics, the remaining dashboards and alert rules are later slices. Cases `obs-001`, `obs-003` |
 | **PART-A-OBS-4** | Clear separation of responsibilities between modules, so a failure is attributable to one | Week 1 → ongoing | Done for Week 1 scope |
 
 ## 6. Functional requirements — Part B
@@ -198,7 +198,7 @@ D-12 (the visit lifecycle) was added here when slice 3 landed; D-13, D-14 and D-
 | --- | --- | --- | --- |
 | **1** | Foundation & core services | Working patient/provider APIs, auth, ten-table schema with migrations, Docker setup, clean module structure | **Complete** |
 | **2** | Scheduling & workflows | Temporal booking workflow, slot reservation, visit lifecycle, duplicate prevention, appointment state machine | **Complete** (2026-10-29). Against the execution guidelines' Week 2 deliverables: *stable scheduling workflow* is booking, cancel, reschedule and the waitlist, with billing pre-check, reminder scheduling and refund still stand-ins until Week 3; *reliable appointment state machine* is the transition table in `state.py`, slot status written in the same transaction as appointment status (R-2), and the visit lifecycle; *provider orchestration ready* is narrower than it sounds: it is the slot inventory (seeded `provider_slots`, claimed, booked and released with `version`, and `GET /slots`) and the visit lifecycle. There is **no provider availability generator** (explicitly deferred, Week 2 spec §1), no per-object provider authorisation (R-14), and clinic and department endpoints (`PART-A-FR-1.5`) were deliberately deferred, as was provider schedule management (`PART-A-FR-2.1`); deactivating a provider stops new bookings (R-24) but does not yet touch existing ones (R-25) |
-| **3** | Events & observability | Kafka integration, Celery workers, notification flows, analytics metrics, tracing and dashboards | Planned |
+| **3** | Events & observability | Kafka integration, Celery workers, notification flows, analytics metrics, tracing and dashboards | **In progress** — seven slices, designed in `docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md` §11; slice 1 (observability base) built |
 | **4** | Ingestion & retrieval | PDF parsing, chunking, embeddings, vector DB, semantic retrieval | Planned |
 | **5** | AI layer | Patient assistant, booking guidance, communication generation, streaming, AI metrics | Planned |
 
@@ -216,6 +216,7 @@ Three links connect a requirement to shipped, tested code.
 | `PART-A-FR-4` | — not started |
 | `PART-A-FR-5` | — not started; schema support in `app/modules/scheduling/models.py` |
 | `PART-A-OBS-1` | `app/api/health.py`, `app/core/logging.py`, `app/api/error_handlers.py`, `app/worker.py` (`--check`) |
+| `PART-A-OBS-2`, `PART-A-OBS-3` | `app/core/telemetry.py`, `app/core/logging.py` (trace ids), `app/main.py` (FastAPI instrumentation), `app/core/temporal.py` (`tracing_interceptors`, `telemetry_runtime`), `app/worker.py`; `ops/otel-collector/`, `ops/prometheus/`, `ops/grafana/`; `tests/harness/telemetry.py` |
 | `PART-A-NFR-1` | `migrations/versions/0001_baseline.py` (`ux_appointments_live_slot`, GiST exclusion), `migrations/versions/0004_live_reschedule_unique.py` (`ux_appointments_live_reschedule`) |
 | `PART-A-NFR-6` | `migrations/versions/0002_coherence_constraints.py`, `app/db/mongo.py` |
 
@@ -237,9 +238,11 @@ requirement id with the cases covering it; `--write-catalog` regenerates the tra
 | `PART-A-NFR-5` | 2 |
 | `PART-A-NFR-8` | 1 — `sys-010` (every gated route declares the bearer scheme, so `/docs` can authorise) |
 | `PART-A-OBS-1` | 6 |
+| `PART-A-OBS-2` | 3 — `obs-001`, `obs-002`, `obs-003` |
+| `PART-A-OBS-3` | 2 — `obs-001`, `obs-003` |
 | `PART-A-OBS-4` | 1 |
 
-45 cases, as of 2026-10-29 (a case naming two requirements is counted under each, so the rows sum to 48). All other ids are uncovered because the features they describe are not
+48 cases, as of 2026-11-10 (a case naming two requirements is counted under each, so the rows sum to 53). All other ids are uncovered because the features they describe are not
 yet built. Recount with
 `grep -h '^requirement:' tests/cases/*.yaml | grep -o 'PART-[A-Z]*-[A-Z]*-[0-9.]*' | sort | uniq -c`,
 which splits a multi-requirement case into one line per id. Keep the `^requirement:` filter:

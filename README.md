@@ -415,6 +415,23 @@ docker compose -f docker-compose.infra.yml exec temporal \
   temporal workflow show -w booking-$APPOINTMENT --address temporal:7233
 ```
 
+**Seeing a trace, a metric, a dashboard.** Every process exports traces and metrics to an
+OpenTelemetry Collector (`otel-collector`), which sends traces to Jaeger and metrics to
+Prometheus. These run in the plain infrastructure stack — no profile needed:
+
+| URL | What |
+| --- | --- |
+| <http://localhost:16686> | Jaeger — pick service `part-a-api` (or `part-a-worker`); a booking's trace runs from `POST /appointments` through `StartWorkflow:BookAppointment` into each `RunActivity:booking.*` and its SQL |
+| <http://localhost:9090> | Prometheus — e.g. `http_server_duration_milliseconds_count{job="smarthealth/part-a-api"}`, `temporal_workflow_completed_total` |
+| <http://localhost:3000> | Grafana, anonymous read-only (admin password `GRAFANA_ADMIN_PASSWORD`, default `smarthealth`) — folder **SmartHealth**, dashboard **Service overview**; Jaeger is a datasource under Explore |
+
+Every JSON log line written inside a request or an activity carries `trace_id` and
+`span_id`, so a log line leads to its trace. The test stack publishes the same four on
+offset ports (`.env.test`: Jaeger 26686, Prometheus 19090, Grafana 13000, collector
+14317/14318). To export from a process on the host, set
+`SMARTHEALTH_OTEL_ENDPOINT_HTTP=http://localhost:4318` (and, for the worker's Temporal SDK
+metrics, `SMARTHEALTH_OTEL_ENDPOINT_GRPC=http://localhost:4317`); unset, nothing is exported.
+
 **Run a visit.** Continue from the booking above once `$APPOINTMENT` reads `confirmed`.
 Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
 provider login `a.osei@medinova.example` (same password as the other seeded logins) can

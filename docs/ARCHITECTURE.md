@@ -17,8 +17,11 @@ how the asynchronous half of Part A is designed to work before any of it is writ
 **Weeks 1 and 2 of 5 are complete**, Week 2 in five slices: the Temporal worker (slice 1),
 the booking workflow (slice 2), the visit lifecycle (slice 3), cancel/reschedule with the
 waitlist (slice 4) and patient self-service (slice 5: `GET /appointments`, and the
-`link-patient` command that makes `GET /patients/me` reachable). Week 3 (Kafka, Celery,
-notifications, analytics, observability) is next and none of it is built.
+`link-patient` command that makes `GET /patients/me` reachable). **Week 3 is in progress**,
+designed in `docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md`: slice 1,
+the observability base, is built (OpenTelemetry in the API and the Temporal worker, one
+collector, Jaeger, Prometheus, a provisioned Grafana); Kafka, Celery, notifications and
+analytics are not.
 Everything in §1 and §2 describes code that exists and is exercised by tests, with one
 exception: the worker's signal handling depends on POSIX signals and is not exercised by
 tests (verified manually with `docker stop`). In §3, the Temporal plumbing, the booking
@@ -36,9 +39,9 @@ What is *not* built, stated plainly so a reviewer does not have to discover it:
 | Temporal | yes (`temporal`), plus a `worker` service under `--profile app` | yes (`temporalio`) | **yes** — client, worker process, registries, a canary workflow, and four business workflows: booking (§3.2), the visit no-show timer (§3.2a), the cancel follow-up and reschedule (§3.3) |
 | Kafka + Schema Registry | yes (`kafka`, `schema-registry`) | **no** | **no** |
 | Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
-| Prometheus / Grafana / Jaeger / OpenTelemetry | **no container at all** | **no** | **no** |
+| OpenTelemetry Collector, Jaeger, Prometheus, Grafana | yes (`otel-collector`, `jaeger`, `prometheus`, `grafana`; config under `ops/`) | yes (`opentelemetry-sdk`, OTLP/HTTP exporter, FastAPI and SQLAlchemy instrumentation; Temporal's `contrib.opentelemetry`) | **yes** — `app/core/telemetry.py` (providers, first install wins), trace ids in `app/core/logging.py`, FastAPI instrumentation in `app/main.py`, `tracing_interceptors()` / `telemetry_runtime()` in `app/core/temporal.py`; Redis, Mongo, Kafka and Celery are not instrumented yet |
 
-Verified by `grep -rni --include="*.py" "kafka\|rabbitmq\|celery\|opentelemetry" app/` — the only occurrences are in
+Verified by `grep -rni --include="*.py" "kafka\|rabbitmq\|celery" app/` — the only occurrences are in
 prose comments and docstrings, plus `Settings.topic()` / `queue()` (`app/settings.py:99-105`),
 the naming helpers Kafka and RabbitMQ will use when they arrive. Temporal code lives in
 `app/core/temporal.py`, `app/core/temporal_canary.py`, `app/components.py`,

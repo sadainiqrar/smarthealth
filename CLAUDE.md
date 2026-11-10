@@ -45,8 +45,19 @@ links a patient login to its record (audited), which `GET /patients/me` needs. T
 client gained an Appointments page with cancel. All five slices are designed in
 `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
-**Next: Week 3** — Kafka + Schema Registry, Celery/RabbitMQ, notifications, analytics and
-observability (PRD §10). None of it exists yet, and the Week 2 stand-ins (billing pre-check,
+**Week 3 is in progress**, in seven slices designed with Weeks 4–5 in
+`docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md` (three services: Part
+A stays one monolith; Part B is `knowledge`, the RAG service, and `assistant`; they share
+Kafka, Envoy and the observability stack and never a store — decisions D-17 … D-31).
+**Slice 1, the observability base, is built:** `app/core/telemetry.py` installs one tracer
+and meter provider per process (first install wins — the suite installs in-memory ones
+first, `tests/harness/telemetry.py`); FastAPI and SQLAlchemy are instrumented; every
+Temporal client carries `TracingInterceptor`, so a workflow's run and activities join the
+trace that started it; the worker exports Temporal SDK metrics over OTLP/gRPC; JSON log
+lines carry `trace_id`/`span_id`; compose runs `otel-collector` → `jaeger` / `prometheus`,
+and `grafana` with provisioned datasources and a *Service overview* dashboard (`ops/`).
+Export is off unless `SMARTHEALTH_OTEL_ENDPOINT_HTTP` (and `_GRPC`) are set. Next is slice
+2 (sessions in Redis). Kafka, Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -224,7 +235,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 934 fast tests (plus 1 skip) in ~49s (49.31s on a run of `python -m pytest -m "not docker" -q`) and 203 docker-lane tests (`-m docker`, 98s), measured 2026-10-29; 45 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 950 fast tests (plus 1 skip) in ~40s (39.80s on a run of `python -m pytest -m "not docker" -q`) and 205 docker-lane tests (`-m docker`, 92s), measured 2026-11-10; 48 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -246,7 +257,7 @@ harness it serves.
 | 6 | Time comes from an injectable `now()` provider, never `datetime.utcnow()` inline | Test |
 | 7 | Every service exposes a readiness endpoint | Test |
 
-**6** and **7** are satisfied today, and **1** and **3** for Temporal only; the rest await the code they
+**5**, **6** and **7** are satisfied today, and **1** and **3** for Temporal only; the rest await the code they
 constrain.
 
 - **1** — for Temporal only: the worker and the booking router take the queue from
@@ -258,6 +269,10 @@ constrain.
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:
   the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow`, and the thirteen scheduling activities (seven `booking.*`, two `visit.*`, `cancel.refund`, `reschedule.complete`, `waitlist.candidates`, `waitlist.fulfil`). Kafka consumers
   and Celery tasks have no registries yet.
+- **5** — `app/core/telemetry.py`: `build_telemetry` takes span processors and metric
+  readers, and `install` lets the first install win, so the suite's in-memory providers
+  (`tests/harness/telemetry.py`, imported by `tests/conftest.py` before the app) replace
+  the real exporters everywhere.
 - **6** — `app/core/clock.py`.
 - **7** — `app/api/health.py` for the API; the worker has no HTTP endpoint, and its
   readiness probe is `python -m app.worker --check`, the `worker` service's healthcheck.
