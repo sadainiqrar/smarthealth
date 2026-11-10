@@ -23,6 +23,7 @@ from app.core.temporal import ACTIVITIES, WORKFLOWS, bind_activities
 from app.core.temporal_canary import CanaryWorkflow
 from app.events.consumer import CONSUMERS
 from app.modules.billing.public import PaymentGateway
+from app.modules.notifications.consumers import NOTIFICATION_CONSUMERS
 from app.modules.scheduling.consumers import SCHEDULING_CONSUMERS
 from app.modules.scheduling.activities import SchedulingActivities
 from app.modules.scheduling.workflows import (
@@ -52,6 +53,8 @@ _SCHEDULING_ACTIVITIES = (
     SchedulingActivities.waitlist_candidates,
     SchedulingActivities.waitlist_fulfil,
     SchedulingActivities.post_visit_charge,
+    SchedulingActivities.reminder_due,
+    SchedulingActivities.remind,
     SchedulingActivities.provider_future_appointments,
     SchedulingActivities.provider_cancel_appointment,
 )
@@ -80,7 +83,7 @@ def register_all() -> None:
     WORKFLOWS.register(ProviderDeactivationWorkflow.__name__, ProviderDeactivationWorkflow)
     for function in _SCHEDULING_ACTIVITIES:
         ACTIVITIES.register(_activity_name(function), function)
-    for spec in SCHEDULING_CONSUMERS:
+    for spec in (*SCHEDULING_CONSUMERS, *NOTIFICATION_CONSUMERS):
         CONSUMERS.register(spec.name, spec)
     _registered = True
 
@@ -103,6 +106,7 @@ def build_activities(
         SchedulingActivities(
             session_factory, audit, clock, no_show_grace, gateway=gateway,
             amount_minor=settings.billing_amount_minor, currency=settings.billing_currency,
+            reminder_lead=timedelta(hours=settings.reminder_lead_hours),
         )
     ]
     return bind_activities(list(ACTIVITIES), instances)

@@ -53,7 +53,8 @@ GOOD = str(uuid.uuid4())
 def _activities() -> SchedulingActivities:
     """No resources: a malformed id must fail before any is touched."""
     return SchedulingActivities(
-        None, None, None, timedelta(minutes=1), gateway=None, amount_minor=1, currency="USD"
+        None, None, None, timedelta(minutes=1), gateway=None, amount_minor=1, currency="USD",
+        reminder_lead=timedelta(hours=24),
     )
 
 

@@ -30,6 +30,8 @@ from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.errors import Conflict, DomainError, NotFound, ServiceUnavailable
 import app.modules.billing.public as billing
+import app.modules.notifications.public as notifications
+from app.celery_app import enqueue_send
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.providers.public import ensure_bookable_provider
 from app.modules.scheduling import service
@@ -65,7 +67,7 @@ class SchedulingActivities:
     def __init__(
         self, session_factory: async_sessionmaker[AsyncSession], audit: AuditLog,
         clock: Clock, no_show_grace: timedelta, *, gateway: billing.PaymentGateway,
-        amount_minor: int, currency: str,
+        amount_minor: int, currency: str, reminder_lead: timedelta,
     ) -> None:
         # `no_show_grace` has no default: the one default is `Settings`, and a second
         # here could silently disagree with it at any construction site that forgot it.
@@ -76,6 +78,7 @@ class SchedulingActivities:
         self._gateway = gateway
         self._amount_minor = amount_minor
         self._currency = currency
+        self._reminder_lead = reminder_lead
 
     @asynccontextmanager
     async def _unit_of_work(self) -> AsyncIterator[AsyncSession]:
@@ -174,9 +177,12 @@ class SchedulingActivities:
 
     @activity.defn(name="booking.schedule_reminders")
     async def schedule_reminders(self, request: BookingRequest) -> None:
-        """Stand-in: logs. Week 3 enqueues delivery through Celery."""
+        """No longer where reminders are made, and kept only so booking histories replay:
+        the booking workflow still schedules this step. Since Week 3 slice 5 the reminder
+        is timed by the appointment's `VisitWorkflow` (`visit.reminder_due` /
+        `visit.remind`) and delivered by Celery (spec D-26)."""
         logger.info(
-            "reminders scheduled (stand-in)",
+            "reminder timing is owned by the visit workflow",
             extra={"appointment_id": request.appointment_id},
         )
 
@@ -259,6 +265,38 @@ class SchedulingActivities:
                 str(result.released_slot_id) if result.released_slot_id else None
             ),
         }
+
+    @activity.defn(name="visit.reminder_due")
+    async def reminder_due(self, request: VisitRequest) -> str | None:
+        """When to send the appointment's reminder, as ISO, or None for no reminder: the
+        lead time before the slot starts, or now if the booking came later than that. No
+        reminder for a slot already started or an appointment no longer worth one."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            facts = await service.reminder_facts(session, appointment_id)
+        if facts is None:
+            return None
+        _, starts_at, worth_it = facts
+        now = self._clock.now()
+        if not worth_it or starts_at <= now:
+            return None
+        return max(now, starts_at - self._reminder_lead).isoformat()
+
+    @activity.defn(name="visit.remind")
+    async def remind(self, request: VisitRequest) -> str:
+        """Queue the reminder for Celery to deliver (spec D-26: Temporal owns when, Celery
+        only how). "queued", or "skipped" when the appointment stopped needing one while
+        the timer ran, or the message was already queued (a retried activity)."""
+        appointment_id = parse_id(request.appointment_id, "appointment_id")
+        async with self._unit_of_work() as session:
+            facts = await service.reminder_facts(session, appointment_id)
+            if facts is None or not facts[2]:
+                return "skipped"
+            queued = await notifications.queue_reminder(
+                session, appointment_id=appointment_id, patient_id=facts[0],
+                starts_at=facts[1], enqueue=enqueue_send,
+            )
+        return "queued" if queued else "skipped"
 
     @activity.defn(name="post_visit.charge")
     async def post_visit_charge(self, request: PostVisitRequest) -> str | None:

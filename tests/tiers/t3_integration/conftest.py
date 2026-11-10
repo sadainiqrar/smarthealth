@@ -56,6 +56,10 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
         ),
         kafka_group=isolation.kafka_group,
         payments_url=os.environ.get("SMARTHEALTH_TEST_PAYMENTS", "http://localhost:18090"),
+        rabbitmq_host="localhost",
+        rabbitmq_port=int(os.environ.get("SMARTHEALTH_TEST_RABBITMQ_PORT", "5673")),
+        smtp_host="localhost",
+        smtp_port=int(os.environ.get("SMARTHEALTH_TEST_SMTP_PORT", "11025")),
     )
 
 

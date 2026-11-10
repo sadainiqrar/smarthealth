@@ -150,8 +150,31 @@ class VisitWorkflow:
     def _settled(self) -> bool:
         return self._checked_in or self._cancelled
 
+    async def _remind(self, request: VisitRequest) -> None:
+        due = await workflow.execute_activity_method(
+            SchedulingActivities.reminder_due, request, **VISIT_STEP
+        )
+        if due is None:
+            return
+        remaining = datetime.fromisoformat(due) - workflow.now()
+        if not self._settled() and remaining > timedelta(0):
+            try:
+                await workflow.wait_condition(self._settled, timeout=remaining)
+            except TimeoutError:
+                pass  # the reminder time came with nothing settled: send it
+        if not self._settled():
+            await workflow.execute_activity_method(
+                SchedulingActivities.remind, request, **VISIT_STEP
+            )
+
     @workflow.run
     async def run(self, request: VisitRequest) -> str:
+        # The reminder (Week 3 slice 5, spec D-26): the timer is here, because this
+        # workflow already owns the appointment's time and a cancel already ends it -- so
+        # a cancelled appointment's reminder dies with it, with no cancel path of its own.
+        # Behind `patched`: visit workflows started before it must replay without it.
+        if workflow.patched("visit-reminder"):
+            await self._remind(request)
         deadline = datetime.fromisoformat(
             await workflow.execute_activity_method(
                 SchedulingActivities.deadline, request, **VISIT_STEP

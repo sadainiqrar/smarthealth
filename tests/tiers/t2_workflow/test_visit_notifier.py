@@ -13,6 +13,7 @@ from app.core.temporal import build_worker
 from app.modules.scheduling.contracts import VisitRequest, visit_workflow_id
 from app.modules.scheduling.visits import notify_checked_in
 from app.modules.scheduling.workflows import VisitWorkflow
+from tests.tiers.t2_workflow.visit_fakes import reminder_fakes
 
 pytestmark = [pytest.mark.workflow, pytest.mark.asyncio(loop_scope="session")]
 
@@ -27,7 +28,7 @@ def _fakes(env, calls: list[str]):
         calls.append("no_show")
         return "no_show"
 
-    return [deadline, no_show]
+    return [deadline, no_show, *reminder_fakes()]
 
 
 def _worker(env, queue, calls):

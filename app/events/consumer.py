@@ -95,6 +95,10 @@ class ConsumerSpec:
     handler: Handler
     #: Events for the meta-test: one valid event per topic, as a handler would get it.
     fixtures: tuple[dict[str, Any], ...] = field(default=())
+    #: What the handler changes. "temporal": it starts a workflow under a deterministic id,
+    #: which the idempotency meta-test exercises. "database": it writes in the handler's
+    #: transaction under a unique key, proven against Postgres instead.
+    effect: str = "temporal"
 
 
 CONSUMERS: Registry[ConsumerSpec] = Registry("consumer")

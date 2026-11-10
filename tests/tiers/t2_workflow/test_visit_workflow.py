@@ -20,6 +20,7 @@ from app.core.temporal import build_worker
 from app.modules.scheduling.contracts import VisitRequest
 from app.modules.scheduling.state import NoShowOutcome
 from app.modules.scheduling.workflows import VisitWorkflow
+from tests.tiers.t2_workflow.visit_fakes import reminder_fakes
 
 pytestmark = [pytest.mark.workflow, pytest.mark.asyncio(loop_scope="session")]
 
@@ -27,6 +28,7 @@ pytestmark = [pytest.mark.workflow, pytest.mark.asyncio(loop_scope="session")]
 def _fakes(
     env, calls: list[str], *, deadline: timedelta = timedelta(hours=2),
     no_show: str = "no_show", transient: int = 0, transient_step: str = "deadline",
+    remind_in: timedelta | None = None,
 ):
     """`transient` makes `transient_step` raise a retryable error that many times first."""
     remaining = {"transient": transient}
@@ -49,7 +51,17 @@ def _fakes(
         _record("no_show")
         return no_show
 
-    return [fake_deadline, fake_no_show]
+    async def due() -> str | None:
+        if remind_in is None:
+            return None
+        return ((await env.get_current_time()) + remind_in).isoformat()
+
+    # Reminder calls are recorded only by the tests about reminders, so every other test
+    # here still asserts the exact steps it always did.
+    return [
+        fake_deadline, fake_no_show,
+        *reminder_fakes(calls if remind_in is not None else None, due=due),
+    ]
 
 
 async def _start(env, queue: str, **kwargs):
@@ -147,3 +159,29 @@ async def test_a_database_outage_outlasts_the_booking_step_budget(temporal_env, 
         handle = await _start(temporal_env, queue)
         assert await handle.result() == "no_show"
     assert calls.count(step) == 8
+
+
+
+async def test_the_reminder_goes_out_before_the_deadline(temporal_env):
+    """Referenced by tests/cases/ntf-002-the-reminder-is-timed-by-the-visit-workflow.yaml.
+
+    Spec D-26: Temporal owns when, Celery only delivers. The reminder timer runs first, in
+    the workflow that already owns the appointment's time; its activity queues the message."""
+    calls: list[str] = []
+    queue = _queue()
+    async with _worker(temporal_env, queue, calls, remind_in=timedelta(minutes=30)):
+        handle = await _start(temporal_env, queue)
+        assert await handle.result() == "no_show"
+    assert calls == ["reminder_due", "remind", "deadline", "no_show"]
+
+
+async def test_a_cancel_before_the_reminder_means_no_reminder(temporal_env):
+    """A cancelled appointment's reminder dies with its visit workflow -- the reason the
+    timer lives here and not in a Celery eta, which would need a cancel path of its own."""
+    calls: list[str] = []
+    queue = _queue()
+    async with _worker(temporal_env, queue, calls, remind_in=timedelta(hours=20)):
+        handle = await _start(temporal_env, queue)
+        await handle.signal("cancel")
+        assert await handle.result() == "cancelled"
+    assert "remind" not in calls

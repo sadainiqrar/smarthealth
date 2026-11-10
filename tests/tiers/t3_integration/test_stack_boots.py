@@ -4,7 +4,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
 EXPECTED_SERVICES = {
     "postgres", "mongo", "redis", "rabbitmq", "kafka", "schema-registry", "temporal",
-    "otel-collector", "jaeger", "prometheus", "grafana", "payments-mock",
+    "otel-collector", "jaeger", "prometheus", "grafana", "payments-mock", "mailpit",
 }
 
 

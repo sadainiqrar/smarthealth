@@ -141,6 +141,27 @@ def _str(value: uuid.UUID | None) -> str | None:
     return str(value) if value is not None else None
 
 
+async def reminder_facts(
+    session: AsyncSession, appointment_id: uuid.UUID
+) -> tuple[uuid.UUID, datetime, bool] | None:
+    """(patient, slot start, still worth reminding) for an appointment, or None if it has
+    no slot. Worth reminding: confirmed, and nobody has checked in."""
+    row = (
+        await session.execute(
+            select(Appointment.patient_id, Appointment.status, ProviderSlot.starts_at)
+            .join(ProviderSlot, ProviderSlot.id == Appointment.slot_id)
+            .where(Appointment.id == appointment_id)
+        )
+    ).one_or_none()
+    if row is None:
+        return None
+    remind = (
+        row.status is AppointmentStatus.CONFIRMED
+        and await get_visit(session, appointment_id) is None
+    )
+    return row.patient_id, row.starts_at, remind
+
+
 async def future_live_appointments(
     session: AsyncSession, *, provider_id: uuid.UUID, now: datetime
 ) -> list[uuid.UUID]:

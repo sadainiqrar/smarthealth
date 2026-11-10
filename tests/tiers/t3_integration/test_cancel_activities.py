@@ -59,6 +59,7 @@ def activities(factory, audit, db_settings) -> SchedulingActivities:
         gateway=PaymentGateway(db_settings.payments_url),
         amount_minor=db_settings.billing_amount_minor,
         currency=db_settings.billing_currency,
+        reminder_lead=timedelta(hours=24),
     )
 
 

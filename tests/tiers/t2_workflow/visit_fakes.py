@@ -21,6 +21,26 @@ from temporalio import activity
 from app.modules.scheduling.contracts import VisitRequest, visit_workflow_id
 
 
+def reminder_fakes(calls: list[str] | None = None, *, due=None):
+    """The reminder's two activities (Week 3 slice 5). By default `reminder_due` answers
+    None -- no reminder -- so a test about something else sees the workflow it always did.
+    `due` is an async callable returning the ISO time to remind at."""
+
+    @activity.defn(name="visit.reminder_due")
+    async def reminder_due(request: VisitRequest) -> str | None:
+        if calls is not None:
+            calls.append("reminder_due")
+        return await due() if due else None
+
+    @activity.defn(name="visit.remind")
+    async def remind(request: VisitRequest) -> str:
+        if calls is not None:
+            calls.append("remind")
+        return "queued"
+
+    return [reminder_due, remind]
+
+
 def open_visit_fakes(env, release: asyncio.Event):
     @activity.defn(name="visit.deadline")
     async def deadline(request: VisitRequest) -> str:
@@ -32,7 +52,7 @@ def open_visit_fakes(env, release: asyncio.Event):
     async def no_show(request: VisitRequest) -> str:
         return "no_show"
 
-    return [deadline, no_show]
+    return [deadline, no_show, *reminder_fakes()]
 
 
 async def finish_visit(env, appointment_id: str, release: asyncio.Event) -> str:

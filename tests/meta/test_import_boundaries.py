@@ -249,6 +249,14 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # Week 3 slice 4 (spec D-27): the booking, cancel, reschedule and post-visit
         # activities authorise, release and capture through billing's published interface.
         ("app.modules.scheduling.activities", "app.modules.billing.public"),
+        # Slice 4: the stale-pending reconciler releases an orphan's money as the
+        # workflow's compensation would have (PRD R-9).
+        ("app.modules.scheduling.tasks", "app.modules.billing.public"),
+        # Slice 5 (spec D-26): the visit workflow's reminder activity queues the message.
+        ("app.modules.scheduling.activities", "app.modules.notifications.public"),
+        # Notifications reaches a patient's name and contact details through patients'
+        # published interface, never the table.
+        ("app.modules.notifications.public", "app.modules.patients.public"),
         ("app.modules.scheduling.router", "app.modules.identity.deps"),
         ("app.modules.scheduling.router", "app.modules.identity.models"),
         ("app.modules.scheduling.router", "app.modules.identity.security"),

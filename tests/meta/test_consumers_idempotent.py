@@ -38,7 +38,7 @@ class _Temporal:
 
 def _specs():
     register_all()
-    return [spec for _, spec in CONSUMERS.items()]
+    return [spec for _, spec in CONSUMERS.items() if spec.effect == "temporal"]
 
 
 def test_consumers_are_registered():
