@@ -421,7 +421,7 @@ Prometheus. These run in the plain infrastructure stack — no profile needed:
 
 | URL | What |
 | --- | --- |
-| <http://localhost:16686> | Jaeger — pick service `part-a-api` (or `part-a-worker`); a booking's trace runs from `POST /appointments` through `StartWorkflow:BookAppointment` into each `RunActivity:booking.*` and its SQL |
+| <http://localhost:16686> | Jaeger — pick service `part-a-api` (or `part-a-worker`). A request's trace holds its SQL statements, and its `StartWorkflow:<type>` span is the parent of the workflow's `RunWorkflow` and `RunActivity` spans on the worker (proved for the canary by case `obs-002`) |
 | <http://localhost:9090> | Prometheus — e.g. `http_server_duration_milliseconds_count{job="smarthealth/part-a-api"}`, `temporal_workflow_completed_total` |
 | <http://localhost:3000> | Grafana, anonymous read-only (admin password `GRAFANA_ADMIN_PASSWORD`, default `smarthealth`) — folder **SmartHealth**, dashboard **Service overview**; Jaeger is a datasource under Explore |
 
