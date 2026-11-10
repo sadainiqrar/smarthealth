@@ -893,7 +893,7 @@ extraction of lab values from reports (so a provider can ask for a trend across 
 | ~~O-6~~ | Diagnosis coding | **Decided 2026-11-10:** free text required, ICD-10 code optional, from a small seeded code list |
 | ~~O-7~~ | Can a patient see a result before the ordering doctor reviews it? | **Decided 2026-11-10:** yes — it is their own upload — and the assistant may explain it, marking it not yet `reviewed` and always ending with "your doctor will review it" |
 | ~~O-8~~ | Notification channels | **Decided 2026-11-10:** email over SMTP to Mailpit, SMS through a logging fake |
-| O-9 | LLM API key for Weeks 4–5 | the project owner supplies one for `record`/`live` mode only; `fixture` mode (CI, every test) needs none |
+| ~~O-9~~ | LLM API key | **Decided 2026-11-10:** the project owner supplies it when Week 5 starts; until then nothing may need `record` or `live` mode — `fixture` mode and local embeddings only |
 | O-4 | Week 5 LLM provider and model | **decided in the Week 5 design** (confirmed 2026-11-10), behind the factory |
 | O-5 | Re-ranking | off by default; turned on if the golden set shows it earns its latency |
 
