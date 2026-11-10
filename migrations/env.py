@@ -45,6 +45,8 @@ UNMANAGED_CHECK_CONSTRAINTS = frozenset(
         "ck_visits_visitstatus",
         "ck_waitlist_entries_waitliststatus",
         "ck_billing_records_billingstatus",
+        "ck_notifications_channel",
+        "ck_notifications_notificationstatus",
     }
 )
 

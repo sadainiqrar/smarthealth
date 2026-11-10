@@ -9,6 +9,7 @@ this module's schema, which is exactly what the boundary exists to prevent.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,3 +33,30 @@ async def ensure_bookable_patient(session: AsyncSession, patient_id: uuid.UUID) 
 async def patient_id_for_user(session: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
     """The patient record linked to a login, or None for a user with no patient record."""
     return await session.scalar(select(Patient.id).where(Patient.user_id == user_id))
+
+
+@dataclass(frozen=True)
+class PatientContact:
+    """How to reach a patient: what notifications needs, and nothing more of the record."""
+
+    first_name: str
+    email: str | None
+    phone: str | None
+
+
+async def contact_for(session: AsyncSession, patient_id: uuid.UUID) -> PatientContact | None:
+    """The patient's name and contact details, or None for an unknown id. Read by query,
+    like the other functions here, so a stale identity-map object cannot answer."""
+    row = (
+        await session.execute(
+            select(Patient.first_name, Patient.email, Patient.phone).where(Patient.id == patient_id)
+        )
+    ).one_or_none()
+    return PatientContact(row.first_name, row.email, row.phone) if row else None
+
+
+async def count_patients(session: AsyncSession) -> int:
+    """How many patients are registered: the Total Patients metric (PART-A-FR-5)."""
+    from sqlalchemy import func
+
+    return int(await session.scalar(select(func.count()).select_from(Patient)) or 0)
