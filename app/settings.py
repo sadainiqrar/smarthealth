@@ -98,6 +98,25 @@ class Settings(BaseSettings):
     #: on one broker never steal each other's partitions.
     kafka_group: str = "smarthealth"
 
+    # --- RabbitMQ + Celery: background jobs (Week 3 slice 5, spec section 5) ---
+    rabbitmq_host: str = "localhost"
+    rabbitmq_port: int = 5672
+    rabbitmq_user: str = "smarthealth"
+    rabbitmq_password: str = "smarthealth"
+    #: Part A's own vhost (spec D-19): the Part B services get theirs, and neither can see
+    #: the other's queues. Test runs share it and are kept apart by the queue prefix.
+    rabbitmq_vhost: str = "part-a"
+
+    # --- Notifications (Week 3 slice 5) ---
+    #: SMTP for the email channel -- Mailpit in compose, a real relay in production.
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_from: str = "MediNova SmartHealth <no-reply@medinova.example>"
+    #: At most this many messages to one patient per hour; more wait for the next window.
+    notification_hourly_limit: int = Field(default=10, ge=1)
+    #: How long before an appointment its reminder goes out (spec O-1).
+    reminder_lead_hours: int = Field(default=24, ge=1)
+
     # --- Billing (Week 3 slice 4, spec D-27) ---
     #: The payment gateway: the payments-mock service, standing in for a real provider.
     payments_url: str = "http://localhost:8090"
@@ -187,6 +206,15 @@ class Settings(BaseSettings):
     @property
     def redis_url(self) -> str:
         return f"redis://{_format_host(self.redis_host)}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def rabbitmq_url(self) -> str:
+        vhost = quote(self.rabbitmq_vhost, safe="")
+        return (
+            f"amqp://{_encode_credential(self.rabbitmq_user)}:"
+            f"{_encode_credential(self.rabbitmq_password)}@"
+            f"{_format_host(self.rabbitmq_host)}:{self.rabbitmq_port}/{vhost}"
+        )
 
     @property
     def temporal_address(self) -> str:

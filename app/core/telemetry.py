@@ -132,6 +132,14 @@ def setup_telemetry(settings: Settings, service_name: str) -> Telemetry:
             service_name, settings.environment, otlp_http_endpoint=settings.otel_endpoint_http
         )
     )
+    # Celery: spans for publishing and running tasks, and the trace context carried in
+    # task headers, so a consumer's span is the parent of the send task's. In every process
+    # -- producers inject, workers extract.
+    from opentelemetry.instrumentation.celery import CeleryInstrumentor
+
+    instrumentor = CeleryInstrumentor()
+    if not instrumentor.is_instrumented_by_opentelemetry:
+        instrumentor.instrument()
     logger.info(
         "telemetry installed",
         extra={"service_name": service_name, "exports_to": telemetry.exports_to},
