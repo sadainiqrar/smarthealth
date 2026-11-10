@@ -802,3 +802,42 @@ async def test_the_snapshot_asks_part_a_for_two_different_weeks():
         await h.chat(_token(UserRole.ADMIN, user="u-admin"), starter="snapshot")
     windows = [(c.get("from"), c.get("to")) for c in fake.analytics_calls]
     assert len(windows) == 2 and None not in windows[0] and windows[0] != windows[1]
+
+
+# -- metrics for the Assistant dashboard ----------------------------------------------------------
+
+
+def _metric_points(name: str) -> list:
+    from tests.harness.telemetry import METRIC_READER
+
+    data = METRIC_READER.get_metrics_data()
+    return [
+        p
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == name
+        for p in m.data.data_points
+    ]
+
+
+async def test_a_turn_is_counted_on_the_dashboard_without_naming_the_user():
+    model = Scripted(
+        script=[
+            AIMessage(
+                content="Water only.",
+                usage_metadata={"input_tokens": 90, "output_tokens": 10, "total_tokens": 100},
+            )
+        ]
+    )
+    before = sum(p.value for p in _metric_points("assistant.llm.tokens"))
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        await h.chat(_token(), message="can I eat before a fasting blood test?")
+    tokens = _metric_points("assistant.llm.tokens")
+    assert sum(p.value for p in tokens) - before == 100
+    turns = _metric_points("assistant.turns")
+    labels = set().union(*(p.attributes.keys() for p in turns))
+    assert labels <= {"role", "outcome", "model_used", "kind"}  # never a user or turn id
+    assert any(
+        p.attributes["role"] == "patient" and p.attributes["model_used"] == "true" for p in turns
+    )

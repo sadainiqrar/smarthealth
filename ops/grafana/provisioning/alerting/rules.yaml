@@ -308,6 +308,114 @@
           ]
         }
       ]
+    },
+    {
+      "orgId": 1,
+      "name": "smarthealth-assistant",
+      "folder": "SmartHealth",
+      "interval": "1m",
+      "rules": [
+        {
+          "uid": "assistant-errors",
+          "title": "Assistant turns failing",
+          "condition": "C",
+          "for": "10m",
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "annotations": {
+            "summary": "More than 20% of assistant turns end in an error: is the model provider, Part A or knowledge down?"
+          },
+          "labels": {
+            "service": "assistant"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "refId": "A",
+                "expr": "sum(rate(assistant_turns_total{job=\"smarthealth/assistant\",outcome=\"error\"}[5m])) / sum(rate(assistant_turns_total{job=\"smarthealth/assistant\"}[5m]))",
+                "instant": true,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0.2
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "uid": "assistant-slow-first-token",
+          "title": "Assistant slow to start answering",
+          "condition": "C",
+          "for": "10m",
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "annotations": {
+            "summary": "p95 time to the model's first token is over 8 s: is the provider throttling?"
+          },
+          "labels": {
+            "service": "assistant"
+          },
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "prometheus",
+              "model": {
+                "refId": "A",
+                "expr": "histogram_quantile(0.95, sum by (le) (rate(assistant_first_token_milliseconds_bucket{job=\"smarthealth/assistant\"}[5m])))",
+                "instant": true,
+                "intervalMs": 1000,
+                "maxDataPoints": 43200
+              }
+            },
+            {
+              "refId": "C",
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "expression": "A",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        8000
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ]
 }

@@ -32,6 +32,7 @@ from typing import Protocol
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from assistant_service import metrics
 from assistant_service.auth import Caller
 from assistant_service.parta import PartA, PartAError, PartAUnavailable
 from assistant_service.stores import Stores
@@ -281,6 +282,7 @@ class ReportRunner:
             await emit({"kind": "error", "code": "internal", "message": "The report failed."})
             await emit({"kind": "done", "reason": "complete"})
         finally:
+            metrics.record_report(report.kind, status)
             await self._reports.finish(caller.user_id, report.id, status, events)
             if self._on_usage is not None:
                 await self._on_usage(caller, report.id, usage, events)

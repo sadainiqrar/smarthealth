@@ -30,6 +30,7 @@ from smarthealth.knowledge.v1 import knowledge_pb2, knowledge_pb2_grpc
 from assistant_service.agent import Agent, StaleAnswer, TurnContext
 from assistant_service.auth import Caller, TokenVerifier, Unauthenticated
 from assistant_service.conversations import ConversationStore, InMemoryConversations
+from assistant_service import metrics
 from assistant_service.flows import FLOWS
 from assistant_service.reports import KINDS as REPORT_KINDS
 from assistant_service.reports import InMemoryReports, Report, ReportRunner, ReportStore
@@ -147,6 +148,7 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
 
     def _context(self, caller: Caller, conversation_id: str, usage: TurnUsage) -> TurnContext:
         async def drafts(draft_id: str, kind: str, status: str, recipients: int) -> None:
+            metrics.record_draft(kind, status)
             await self._usage.draft(caller.user_id, draft_id, kind, status, recipients)
 
         return TurnContext(caller=caller, parta=self._parta, search=self._search_as(caller),
@@ -219,6 +221,12 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
     async def _record_usage(self, caller: Caller, conversation_id: str, turn: str,
                             usage: TurnUsage, events: list[dict]) -> None:
         provider, model = self._model_label if usage.model_calls else ("none", "none")
+        outcome = outcome_of(events)
+        metrics.record_turn(
+            role=caller.role, outcome=outcome, model=model, model_calls=usage.model_calls,
+            input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+            first_token_ms=usage.first_token_ms, total_ms=usage.elapsed_ms(),
+            kind="report" if conversation_id.startswith("report:") else "chat")
         try:
             await self._usage.record(UsageRow(
                 user_id=caller.user_id, turn_id=turn, role=caller.role,
