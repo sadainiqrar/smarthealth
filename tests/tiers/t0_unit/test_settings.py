@@ -70,3 +70,11 @@ def test_temporal_defaults_point_at_the_dev_stack():
 def test_temporal_address_brackets_an_ipv6_host():
     settings = Settings(temporal_host="::1", temporal_port=17233)
     assert settings.temporal_address == "[::1]:17233"
+
+
+def test_telemetry_export_is_off_unless_an_endpoint_is_configured(monkeypatch):
+    monkeypatch.delenv("SMARTHEALTH_OTEL_ENDPOINT_HTTP", raising=False)
+    monkeypatch.delenv("SMARTHEALTH_OTEL_ENDPOINT_GRPC", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.otel_endpoint_http == ""
+    assert settings.otel_endpoint_grpc == ""

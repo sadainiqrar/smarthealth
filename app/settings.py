@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # restart, not a code change and a redeploy.
     log_level: str = "INFO"
 
+    # --- OpenTelemetry (Week 3, spec D-28) ---
+    # Empty means "build the providers, export nowhere": tests and a bare laptop run with
+    # no collector and no connection errors. Compose points both at the collector.
+    otel_endpoint_http: str = ""  # OTLP/HTTP base URL, e.g. http://otel-collector:4318
+    otel_endpoint_grpc: str = ""  # OTLP/gRPC URL, for Temporal core's own SDK metrics
+
     # Namespaces every Kafka topic, RabbitMQ queue, and Temporal task queue.
     # The isolation layer sets this per test run; production leaves it empty.
     resource_prefix: str = ""
