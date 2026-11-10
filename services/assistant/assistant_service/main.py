@@ -28,7 +28,8 @@ from redis.asyncio import Redis
 from assistant_service.agent import Agent
 from assistant_service.auth import TokenVerifier
 from assistant_service.conversations import InMemoryConversations, PostgresConversations
-from assistant_service.llm import chat_model
+from assistant_service.usage import InMemoryUsage, PostgresUsage
+from assistant_service.llm import DEFAULT_MODELS, chat_model
 from assistant_service.parta import PartA
 from assistant_service.server import SERVING, build_server
 from assistant_service.settings import AssistantSettings
@@ -41,17 +42,22 @@ logger = logging.getLogger("assistant")
 async def apply_revocation(stores: Stores, value: dict) -> None:
     payload = value["payload"]
     revoked_at = payload["revoked_at"]
-    await stores.revoke(str(payload["user_id"]), revoked_at.timestamp()
-                        if hasattr(revoked_at, "timestamp") else float(revoked_at))
+    await stores.revoke(
+        str(payload["user_id"]),
+        revoked_at.timestamp() if hasattr(revoked_at, "timestamp") else float(revoked_at),
+    )
 
 
 async def consume_revocations(settings: AssistantSettings, stores: Stores, stop: asyncio.Event):
     topic = settings.topic("identity.sessions_revoked")
-    consumer = Consumer({
-        "bootstrap.servers": settings.kafka_bootstrap_servers,
-        "group.id": f"{settings.kafka_group}.revocations",
-        "enable.auto.commit": False, "auto.offset.reset": "earliest",
-    })
+    consumer = Consumer(
+        {
+            "bootstrap.servers": settings.kafka_bootstrap_servers,
+            "group.id": f"{settings.kafka_group}.revocations",
+            "enable.auto.commit": False,
+            "auto.offset.reset": "earliest",
+        }
+    )
     consumer.subscribe([topic])
     decode = AvroDeserializer(SchemaRegistryClient({"url": settings.schema_registry_url}))
     context = SerializationContext(topic, MessageField.VALUE)
@@ -75,15 +81,31 @@ async def main() -> None:
     stores = RedisStores(redis, turn_ttl=settings.turn_ttl_seconds)
     channel = grpc.aio.insecure_channel(settings.knowledge_target)
     parta = PartA(settings.parta_url, timeout=settings.parta_timeout_seconds)
-    async with checkpointer(settings.database_url) as saver, \
-            conversation_store(settings.database_url) as conversations:
-        model = chat_model(settings.llm_mode, provider=settings.llm_provider,
-                           model=settings.llm_model, api_key=settings.llm_api_key)
+    async with (
+        checkpointer(settings.database_url) as saver,
+        conversation_store(settings.database_url) as (conversations, usage),
+    ):
+        model = chat_model(
+            settings.llm_mode,
+            provider=settings.llm_provider,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+        )
         logger.info("assistant model: %s", settings.llm_mode if model else "off (offline brain)")
-        server = build_server(stores, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
-                              channel, settings.grpc_port, agent=Agent(saver), parta=parta,
-                              model=model, timezone=ZoneInfo(settings.display_timezone),
-                              conversations=conversations)
+        server = build_server(
+            stores,
+            TokenVerifier(settings.jwks_url, settings.jwt_issuer),
+            channel,
+            settings.grpc_port,
+            agent=Agent(saver),
+            parta=parta,
+            model=model,
+            timezone=ZoneInfo(settings.display_timezone),
+            conversations=conversations,
+            usage=usage,
+            model_label=model_label(settings, model),
+            prices=(settings.llm_price_input_per_mtok, settings.llm_price_output_per_mtok),
+        )
         await serve(settings, server, stores, redis)
     await parta.aclose()
     await channel.close()
@@ -103,17 +125,32 @@ async def checkpointer(database_url: str):
         yield saver
 
 
+def model_label(settings: AssistantSettings, model) -> tuple[str, str]:
+    """What the usage page names: the live provider and model, or the mode without one."""
+    if (
+        model is None
+        or settings.llm_mode == "fixture"
+        or (settings.llm_mode == "auto" and not settings.llm_api_key)
+    ):
+        return ("fixture", "recorded") if model is not None else ("none", "none")
+    return settings.llm_provider, settings.llm_model or DEFAULT_MODELS.get(
+        settings.llm_provider, ""
+    )
+
+
 @asynccontextmanager
 async def conversation_store(database_url: str):
     """Transcripts in the same database as the checkpoints, or in memory when none is set."""
     if not database_url:
-        yield InMemoryConversations()
+        yield InMemoryConversations(), InMemoryUsage()
         return
-    async with AsyncConnectionPool(database_url, min_size=1, max_size=5, open=False,
-                                   kwargs={"autocommit": True}) as pool:
-        store = PostgresConversations(pool)
+    async with AsyncConnectionPool(
+        database_url, min_size=1, max_size=5, open=False, kwargs={"autocommit": True}
+    ) as pool:
+        store, usage = PostgresConversations(pool), PostgresUsage(pool)
         await store.setup()
-        yield store
+        await usage.setup()
+        yield store, usage
 
 
 async def serve(settings: AssistantSettings, server, stores: Stores, redis: Redis) -> None:

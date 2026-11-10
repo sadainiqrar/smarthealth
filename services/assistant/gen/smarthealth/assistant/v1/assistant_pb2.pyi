@@ -289,3 +289,59 @@ class DeleteConversationReply(_message.Message):
     DELETED_FIELD_NUMBER: _ClassVar[int]
     deleted: bool
     def __init__(self, deleted: _Optional[bool] = ...) -> None: ...
+
+class UsageRequest(_message.Message):
+    __slots__ = ("from_date", "to_date")
+    FROM_DATE_FIELD_NUMBER: _ClassVar[int]
+    TO_DATE_FIELD_NUMBER: _ClassVar[int]
+    from_date: str
+    to_date: str
+    def __init__(self, from_date: _Optional[str] = ..., to_date: _Optional[str] = ...) -> None: ...
+
+class UserUsage(_message.Message):
+    __slots__ = ("user_id", "role", "conversations", "turns", "model_turns", "input_tokens", "output_tokens", "cost_usd", "avg_first_token_ms", "avg_total_ms", "errors", "last_active")
+    USER_ID_FIELD_NUMBER: _ClassVar[int]
+    ROLE_FIELD_NUMBER: _ClassVar[int]
+    CONVERSATIONS_FIELD_NUMBER: _ClassVar[int]
+    TURNS_FIELD_NUMBER: _ClassVar[int]
+    MODEL_TURNS_FIELD_NUMBER: _ClassVar[int]
+    INPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    OUTPUT_TOKENS_FIELD_NUMBER: _ClassVar[int]
+    COST_USD_FIELD_NUMBER: _ClassVar[int]
+    AVG_FIRST_TOKEN_MS_FIELD_NUMBER: _ClassVar[int]
+    AVG_TOTAL_MS_FIELD_NUMBER: _ClassVar[int]
+    ERRORS_FIELD_NUMBER: _ClassVar[int]
+    LAST_ACTIVE_FIELD_NUMBER: _ClassVar[int]
+    user_id: str
+    role: str
+    conversations: int
+    turns: int
+    model_turns: int
+    input_tokens: int
+    output_tokens: int
+    cost_usd: float
+    avg_first_token_ms: float
+    avg_total_ms: float
+    errors: int
+    last_active: str
+    def __init__(self, user_id: _Optional[str] = ..., role: _Optional[str] = ..., conversations: _Optional[int] = ..., turns: _Optional[int] = ..., model_turns: _Optional[int] = ..., input_tokens: _Optional[int] = ..., output_tokens: _Optional[int] = ..., cost_usd: _Optional[float] = ..., avg_first_token_ms: _Optional[float] = ..., avg_total_ms: _Optional[float] = ..., errors: _Optional[int] = ..., last_active: _Optional[str] = ...) -> None: ...
+
+class UsageReply(_message.Message):
+    __slots__ = ("from_date", "to_date", "provider", "model", "price_input_per_mtok", "price_output_per_mtok", "users", "totals")
+    FROM_DATE_FIELD_NUMBER: _ClassVar[int]
+    TO_DATE_FIELD_NUMBER: _ClassVar[int]
+    PROVIDER_FIELD_NUMBER: _ClassVar[int]
+    MODEL_FIELD_NUMBER: _ClassVar[int]
+    PRICE_INPUT_PER_MTOK_FIELD_NUMBER: _ClassVar[int]
+    PRICE_OUTPUT_PER_MTOK_FIELD_NUMBER: _ClassVar[int]
+    USERS_FIELD_NUMBER: _ClassVar[int]
+    TOTALS_FIELD_NUMBER: _ClassVar[int]
+    from_date: str
+    to_date: str
+    provider: str
+    model: str
+    price_input_per_mtok: float
+    price_output_per_mtok: float
+    users: _containers.RepeatedCompositeFieldContainer[UserUsage]
+    totals: UserUsage
+    def __init__(self, from_date: _Optional[str] = ..., to_date: _Optional[str] = ..., provider: _Optional[str] = ..., model: _Optional[str] = ..., price_input_per_mtok: _Optional[float] = ..., price_output_per_mtok: _Optional[float] = ..., users: _Optional[_Iterable[_Union[UserUsage, _Mapping]]] = ..., totals: _Optional[_Union[UserUsage, _Mapping]] = ...) -> None: ...

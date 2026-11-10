@@ -33,6 +33,10 @@ service Assistant {
   rpc ListConversations(ListConversationsRequest) returns (ListConversationsReply);
   rpc GetConversation(GetConversationRequest) returns (ConversationReply);
   rpc DeleteConversation(DeleteConversationRequest) returns (DeleteConversationReply);
+  // LLM usage per user over a date range -- admin only (PERMISSION_DENIED otherwise).
+  // Users are ids and roles: the admin's browser joins names and emails from Part A's
+  // GET /users, so this service never holds Part A's user data.
+  rpc Usage(UsageRequest) returns (UsageReply);
 }
 
 message ChatRequest {
@@ -233,4 +237,40 @@ message DeleteConversationRequest {
 
 message DeleteConversationReply {
   bool deleted = 1;
+}
+
+message UsageRequest {
+  // Inclusive dates, YYYY-MM-DD (UTC). Empty: the last seven days.
+  string from_date = 1;
+  string to_date = 2;
+}
+
+message UserUsage {
+  string user_id = 1;
+  string role = 2;
+  int32 conversations = 3;
+  int32 turns = 4;
+  // Turns that called the model at all (a guided flow alone calls none).
+  int32 model_turns = 5;
+  int64 input_tokens = 6;
+  int64 output_tokens = 7;
+  // An estimate: tokens times the configured price per million.
+  double cost_usd = 8;
+  // 0 when no turn in the range produced a token.
+  double avg_first_token_ms = 9;
+  double avg_total_ms = 10;
+  int32 errors = 11;
+  // RFC 3339.
+  string last_active = 12;
+}
+
+message UsageReply {
+  string from_date = 1;
+  string to_date = 2;
+  string provider = 3;
+  string model = 4;
+  double price_input_per_mtok = 5;
+  double price_output_per_mtok = 6;
+  repeated UserUsage users = 7;
+  UserUsage totals = 8;
 }

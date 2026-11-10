@@ -2,27 +2,34 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, status
+import uuid
+
+from fastapi import APIRouter, Depends, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_rate_limiter, get_session
 from app.core.clock import Clock, get_clock
 from app.core.ratelimit import RateLimiter
 from app.modules.identity.deps import get_session_store, require_role
-from app.modules.identity.models import UserRole
+from app.modules.identity.models import User, UserRole
 from app.modules.identity.schemas import (
     JwksResponse,
     LoginRequest,
     LogoutResponse,
     RefreshRequest,
     TokenResponse,
+    UserDirectoryEntry,
 )
 from app.modules.identity.security import TokenClaims, public_jwk
 from app.modules.identity.service import authenticate, logout, logout_everywhere, refresh
 from app.modules.identity.sessions import SessionStore
+from app.modules.patients.public import names_for_users as patient_names
+from app.modules.providers.public import names_for_users as provider_names
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 jwks_router = APIRouter(tags=["auth"])
+users_router = APIRouter(prefix="/users", tags=["users"])
 
 ANY_ROLE = tuple(UserRole)
 
@@ -109,3 +116,27 @@ async def jwks(request: Request) -> JwksResponse:
     every request. Public by design: it can verify a signature and nothing else.
     """
     return JwksResponse(keys=[public_jwk(request.app.state.settings)])
+
+
+#: A directory lookup is bounded: a page of usage rows, not a dump of every login.
+MAX_LOOKUP = 200
+
+
+@users_router.get("", response_model=list[UserDirectoryEntry])
+async def lookup_users(
+    ids: list[uuid.UUID] = Query(min_length=1, max_length=MAX_LOOKUP),
+    session: AsyncSession = Depends(get_session),
+    _: TokenClaims = Depends(require_role(UserRole.ADMIN)),
+) -> list[UserDirectoryEntry]:
+    """Name, email and role for the given login ids -- admin only.
+
+    For pages that hold user ids from elsewhere, like the assistant's usage page (its
+    records carry only the token's subject): the admin's browser joins them, so the
+    assistant never reads Part A's users. Unknown ids are simply absent from the answer.
+    """
+    users = (await session.scalars(select(User).where(User.id.in_(ids)))).all()
+    found = [u.id for u in users]
+    names = {**await patient_names(session, found), **await provider_names(session, found)}
+    return [UserDirectoryEntry(id=u.id, email=u.email, role=u.role.value,
+                               is_active=u.is_active, name=names.get(u.id))
+            for u in users]

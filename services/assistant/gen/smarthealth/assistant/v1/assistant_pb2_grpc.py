@@ -69,6 +69,11 @@ class AssistantStub:
                 request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.SerializeToString,
                 response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.FromString,
                 _registered_method=True)
+        self.Usage = channel.unary_unary(
+                '/smarthealth.assistant.v1.Assistant/Usage',
+                request_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.SerializeToString,
+                response_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.FromString,
+                _registered_method=True)
 
 
 class AssistantServicer:
@@ -127,6 +132,15 @@ class AssistantServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Usage(self, request, context):
+        """LLM usage per user over a date range -- admin only (PERMISSION_DENIED otherwise).
+        Users are ids and roles: the admin's browser joins names and emails from Part A's
+        GET /users, so this service never holds Part A's user data.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AssistantServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -164,6 +178,11 @@ def add_AssistantServicer_to_server(servicer, server):
                     servicer.DeleteConversation,
                     request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.FromString,
                     response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.SerializeToString,
+            ),
+            'Usage': grpc.unary_unary_rpc_method_handler(
+                    servicer.Usage,
+                    request_deserializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.FromString,
+                    response_serializer=smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -355,6 +374,33 @@ class Assistant:
             '/smarthealth.assistant.v1.Assistant/DeleteConversation',
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationRequest.SerializeToString,
             smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.DeleteConversationReply.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Usage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/smarthealth.assistant.v1.Assistant/Usage',
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageRequest.SerializeToString,
+            smarthealth_dot_assistant_dot_v1_dot_assistant__pb2.UsageReply.FromString,
             options,
             channel_credentials,
             insecure,

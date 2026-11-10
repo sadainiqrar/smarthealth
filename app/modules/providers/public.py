@@ -50,3 +50,13 @@ async def provider_id_for_user(session: AsyncSession, user_id: uuid.UUID) -> uui
     """The provider record linked to a login, or None. How a provider's token becomes "which
     clinician is this" for per-object checks (PRD R-14)."""
     return await session.scalar(select(Provider.id).where(Provider.user_id == user_id))
+
+
+async def names_for_users(session: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """"Dr <first> <last>" for each login linked to a provider record."""
+    if not user_ids:
+        return {}
+    rows = await session.execute(
+        select(Provider.user_id, Provider.first_name, Provider.last_name)
+        .where(Provider.user_id.in_(user_ids)))
+    return {r.user_id: f"Dr {r.first_name} {r.last_name}" for r in rows}

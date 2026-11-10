@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -39,3 +41,14 @@ class Jwk(BaseModel):
 
 class JwksResponse(BaseModel):
     keys: list[Jwk]
+
+
+class UserDirectoryEntry(BaseModel):
+    """A login as an admin sees it in a directory: who, not credentials."""
+
+    id: uuid.UUID
+    email: str
+    role: str
+    is_active: bool
+    #: From the linked patient or provider record; None for staff with neither.
+    name: str | None

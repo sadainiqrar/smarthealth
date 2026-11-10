@@ -23,7 +23,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file smarthealth/assistant/v1/assistant.proto.
  */
 export const file_smarthealth_assistant_v1_assistant: GenFile = /*@__PURE__*/
-  fileDesc("CihzbWFydGhlYWx0aC9hc3Npc3RhbnQvdjEvYXNzaXN0YW50LnByb3RvEhhzbWFydGhlYWx0aC5hc3Npc3RhbnQudjEiqQEKC0NoYXRSZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEwoLcmVzdW1lX2Zyb20YBCABKAMSNgoGY2hvaWNlGAUgASgLMiYuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLk9wdGlvbkNob2ljZRISCgpzdGFydGVyX2lkGAYgASgJIjUKDE9wdGlvbkNob2ljZRISCgpvcHRpb25zX2lkGAEgASgJEhEKCW9wdGlvbl9pZBgCIAEoCSKABAoJQ2hhdEV2ZW50Eg8KB3R1cm5faWQYASABKAkSCwoDc2VxGAIgASgDEg8KBXRva2VuGAMgASgJSAASNgoIY2l0YXRpb24YBCABKAsyIi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2l0YXRpb25IABIuCgRkb25lGAUgASgLMh4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRvbmVIABIwCgVlcnJvchgGIAEoCzIfLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5FcnJvckgAEjYKBHRvb2wYByABKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuVG9vbEFjdGl2aXR5SAASNAoHb3B0aW9ucxgIIAEoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb25zSAASRgoMY29uZmlybWF0aW9uGAkgASgLMi4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1hdGlvblJlcXVpcmVkSAASLgoEY2FyZBgKIAEoCzIeLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYXJkSAASPAoLc3VnZ2VzdGlvbnMYCyABKAsyJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3VnZ2VzdGlvbnNIAEIGCgRraW5kIj0KCENpdGF0aW9uEhEKCXNvdXJjZV9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIPCgdzbmlwcGV0GAMgASgJIhYKBERvbmUSDgoGcmVhc29uGAEgASgJIiYKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSJdCgxUb29sQWN0aXZpdHkSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWxhYmVsGAMgASgJEg4KBnN0YXR1cxgEIAEoCRIPCgdzdW1tYXJ5GAUgASgJIm8KB09wdGlvbnMSEgoKb3B0aW9uc19pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSMQoHb3B0aW9ucxgDIAMoCzIgLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb24SDQoFc3R5bGUYBCABKAkiRwoGT3B0aW9uEgoKAmlkGAEgASgJEg0KBWxhYmVsGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg0KBWJhZGdlGAQgASgJIrkBChRDb25maXJtYXRpb25SZXF1aXJlZBIXCg9jb25maXJtYXRpb25faWQYASABKAkSDgoGYWN0aW9uGAIgASgJEg0KBXRpdGxlGAMgASgJEjAKB2RldGFpbHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSFQoNY29uZmlybV9sYWJlbBgFIAEoCRISCgpkZW55X2xhYmVsGAYgASgJEgwKBHRvbmUYByABKAkigwEKBENhcmQSDAoEa2luZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIQCghzdWJ0aXRsZRgDIAEoCRIvCgZmaWVsZHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSDQoFYmFkZ2UYBSABKAkSDAoEbGluaxgGIAEoCSIlCgVGaWVsZBINCgVsYWJlbBgBIAEoCRINCgV2YWx1ZRgCIAEoCSIcCgtTdWdnZXN0aW9ucxINCgVpdGVtcxgBIAMoCSJ6Cg5Db25maXJtUmVxdWVzdBIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDwoHdHVybl9pZBgCIAEoCRIXCg9jb25maXJtYXRpb25faWQYAyABKAkSEAoIYXBwcm92ZWQYBCABKAgSEwoLcmVzdW1lX2Zyb20YBSABKAMiIAoNQ2FuY2VsUmVxdWVzdBIPCgd0dXJuX2lkGAEgASgJIiAKC0NhbmNlbFJlcGx5EhEKCWNhbmNlbGxlZBgBIAEoCCIRCg9TdGFydGVyc1JlcXVlc3QiRwoNU3RhcnRlcnNSZXBseRI2CgZncm91cHMYASADKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlckdyb3VwIlIKDFN0YXJ0ZXJHcm91cBINCgV0aXRsZRgBIAEoCRIzCghzdGFydGVycxgCIAMoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyImUKB1N0YXJ0ZXISCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSDAoEaWNvbhgEIAEoCRIMCgRtb2RlGAUgASgJEg4KBnByb21wdBgGIAEoCSIpChhMaXN0Q29udmVyc2F0aW9uc1JlcXVlc3QSDQoFbGltaXQYASABKAUieAoTQ29udmVyc2F0aW9uU3VtbWFyeRIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDQoFdGl0bGUYAiABKAkSEgoKdXBkYXRlZF9hdBgDIAEoCRINCgV0dXJucxgEIAEoBRIWCg5hd2FpdGluZ19pbnB1dBgFIAEoCCJeChZMaXN0Q29udmVyc2F0aW9uc1JlcGx5EkQKDWNvbnZlcnNhdGlvbnMYASADKAsyLS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ29udmVyc2F0aW9uU3VtbWFyeSIxChZHZXRDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSJpCg5UcmFuc2NyaXB0VHVybhIPCgd0dXJuX2lkGAEgASgJEhEKCXVzZXJfdGV4dBgCIAEoCRIzCgZldmVudHMYAyADKAsyIy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdEV2ZW50InQKEUNvbnZlcnNhdGlvblJlcGx5EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRI3CgV0dXJucxgDIAMoCzIoLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5UcmFuc2NyaXB0VHVybiI0ChlEZWxldGVDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSIqChdEZWxldGVDb252ZXJzYXRpb25SZXBseRIPCgdkZWxldGVkGAEgASgIMuIFCglBc3Npc3RhbnQSVAoEQ2hhdBIlLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0UmVxdWVzdBojLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0RXZlbnQwARJaCgdDb25maXJtEiguc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1SZXF1ZXN0GiMuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNoYXRFdmVudDABElgKBkNhbmNlbBInLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYW5jZWxSZXF1ZXN0GiUuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNhbmNlbFJlcGx5El4KCFN0YXJ0ZXJzEikuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLlN0YXJ0ZXJzUmVxdWVzdBonLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyc1JlcGx5EnkKEUxpc3RDb252ZXJzYXRpb25zEjIuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkxpc3RDb252ZXJzYXRpb25zUmVxdWVzdBowLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5MaXN0Q29udmVyc2F0aW9uc1JlcGx5EnAKD0dldENvbnZlcnNhdGlvbhIwLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5HZXRDb252ZXJzYXRpb25SZXF1ZXN0Gisuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbnZlcnNhdGlvblJlcGx5EnwKEkRlbGV0ZUNvbnZlcnNhdGlvbhIzLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5EZWxldGVDb252ZXJzYXRpb25SZXF1ZXN0GjEuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRlbGV0ZUNvbnZlcnNhdGlvblJlcGx5YgZwcm90bzM");
+  fileDesc("CihzbWFydGhlYWx0aC9hc3Npc3RhbnQvdjEvYXNzaXN0YW50LnByb3RvEhhzbWFydGhlYWx0aC5hc3Npc3RhbnQudjEiqQEKC0NoYXRSZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRIPCgd0dXJuX2lkGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEwoLcmVzdW1lX2Zyb20YBCABKAMSNgoGY2hvaWNlGAUgASgLMiYuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLk9wdGlvbkNob2ljZRISCgpzdGFydGVyX2lkGAYgASgJIjUKDE9wdGlvbkNob2ljZRISCgpvcHRpb25zX2lkGAEgASgJEhEKCW9wdGlvbl9pZBgCIAEoCSKABAoJQ2hhdEV2ZW50Eg8KB3R1cm5faWQYASABKAkSCwoDc2VxGAIgASgDEg8KBXRva2VuGAMgASgJSAASNgoIY2l0YXRpb24YBCABKAsyIi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2l0YXRpb25IABIuCgRkb25lGAUgASgLMh4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkRvbmVIABIwCgVlcnJvchgGIAEoCzIfLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5FcnJvckgAEjYKBHRvb2wYByABKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuVG9vbEFjdGl2aXR5SAASNAoHb3B0aW9ucxgIIAEoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb25zSAASRgoMY29uZmlybWF0aW9uGAkgASgLMi4uc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLkNvbmZpcm1hdGlvblJlcXVpcmVkSAASLgoEY2FyZBgKIAEoCzIeLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYXJkSAASPAoLc3VnZ2VzdGlvbnMYCyABKAsyJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3VnZ2VzdGlvbnNIAEIGCgRraW5kIj0KCENpdGF0aW9uEhEKCXNvdXJjZV9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIPCgdzbmlwcGV0GAMgASgJIhYKBERvbmUSDgoGcmVhc29uGAEgASgJIiYKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSJdCgxUb29sQWN0aXZpdHkSDwoHY2FsbF9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEg0KBWxhYmVsGAMgASgJEg4KBnN0YXR1cxgEIAEoCRIPCgdzdW1tYXJ5GAUgASgJIm8KB09wdGlvbnMSEgoKb3B0aW9uc19pZBgBIAEoCRIOCgZwcm9tcHQYAiABKAkSMQoHb3B0aW9ucxgDIAMoCzIgLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5PcHRpb24SDQoFc3R5bGUYBCABKAkiRwoGT3B0aW9uEgoKAmlkGAEgASgJEg0KBWxhYmVsGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEg0KBWJhZGdlGAQgASgJIrkBChRDb25maXJtYXRpb25SZXF1aXJlZBIXCg9jb25maXJtYXRpb25faWQYASABKAkSDgoGYWN0aW9uGAIgASgJEg0KBXRpdGxlGAMgASgJEjAKB2RldGFpbHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSFQoNY29uZmlybV9sYWJlbBgFIAEoCRISCgpkZW55X2xhYmVsGAYgASgJEgwKBHRvbmUYByABKAkigwEKBENhcmQSDAoEa2luZBgBIAEoCRINCgV0aXRsZRgCIAEoCRIQCghzdWJ0aXRsZRgDIAEoCRIvCgZmaWVsZHMYBCADKAsyHy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRmllbGQSDQoFYmFkZ2UYBSABKAkSDAoEbGluaxgGIAEoCSIlCgVGaWVsZBINCgVsYWJlbBgBIAEoCRINCgV2YWx1ZRgCIAEoCSIcCgtTdWdnZXN0aW9ucxINCgVpdGVtcxgBIAMoCSJ6Cg5Db25maXJtUmVxdWVzdBIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDwoHdHVybl9pZBgCIAEoCRIXCg9jb25maXJtYXRpb25faWQYAyABKAkSEAoIYXBwcm92ZWQYBCABKAgSEwoLcmVzdW1lX2Zyb20YBSABKAMiIAoNQ2FuY2VsUmVxdWVzdBIPCgd0dXJuX2lkGAEgASgJIiAKC0NhbmNlbFJlcGx5EhEKCWNhbmNlbGxlZBgBIAEoCCIRCg9TdGFydGVyc1JlcXVlc3QiRwoNU3RhcnRlcnNSZXBseRI2CgZncm91cHMYASADKAsyJi5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlckdyb3VwIlIKDFN0YXJ0ZXJHcm91cBINCgV0aXRsZRgBIAEoCRIzCghzdGFydGVycxgCIAMoCzIhLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyImUKB1N0YXJ0ZXISCgoCaWQYASABKAkSDQoFdGl0bGUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSDAoEaWNvbhgEIAEoCRIMCgRtb2RlGAUgASgJEg4KBnByb21wdBgGIAEoCSIpChhMaXN0Q29udmVyc2F0aW9uc1JlcXVlc3QSDQoFbGltaXQYASABKAUieAoTQ29udmVyc2F0aW9uU3VtbWFyeRIXCg9jb252ZXJzYXRpb25faWQYASABKAkSDQoFdGl0bGUYAiABKAkSEgoKdXBkYXRlZF9hdBgDIAEoCRINCgV0dXJucxgEIAEoBRIWCg5hd2FpdGluZ19pbnB1dBgFIAEoCCJeChZMaXN0Q29udmVyc2F0aW9uc1JlcGx5EkQKDWNvbnZlcnNhdGlvbnMYASADKAsyLS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ29udmVyc2F0aW9uU3VtbWFyeSIxChZHZXRDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSJpCg5UcmFuc2NyaXB0VHVybhIPCgd0dXJuX2lkGAEgASgJEhEKCXVzZXJfdGV4dBgCIAEoCRIzCgZldmVudHMYAyADKAsyIy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdEV2ZW50InQKEUNvbnZlcnNhdGlvblJlcGx5EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCRINCgV0aXRsZRgCIAEoCRI3CgV0dXJucxgDIAMoCzIoLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5UcmFuc2NyaXB0VHVybiI0ChlEZWxldGVDb252ZXJzYXRpb25SZXF1ZXN0EhcKD2NvbnZlcnNhdGlvbl9pZBgBIAEoCSIqChdEZWxldGVDb252ZXJzYXRpb25SZXBseRIPCgdkZWxldGVkGAEgASgIIjIKDFVzYWdlUmVxdWVzdBIRCglmcm9tX2RhdGUYASABKAkSDwoHdG9fZGF0ZRgCIAEoCSL7AQoJVXNlclVzYWdlEg8KB3VzZXJfaWQYASABKAkSDAoEcm9sZRgCIAEoCRIVCg1jb252ZXJzYXRpb25zGAMgASgFEg0KBXR1cm5zGAQgASgFEhMKC21vZGVsX3R1cm5zGAUgASgFEhQKDGlucHV0X3Rva2VucxgGIAEoAxIVCg1vdXRwdXRfdG9rZW5zGAcgASgDEhAKCGNvc3RfdXNkGAggASgBEhoKEmF2Z19maXJzdF90b2tlbl9tcxgJIAEoARIUCgxhdmdfdG90YWxfbXMYCiABKAESDgoGZXJyb3JzGAsgASgFEhMKC2xhc3RfYWN0aXZlGAwgASgJIvcBCgpVc2FnZVJlcGx5EhEKCWZyb21fZGF0ZRgBIAEoCRIPCgd0b19kYXRlGAIgASgJEhAKCHByb3ZpZGVyGAMgASgJEg0KBW1vZGVsGAQgASgJEhwKFHByaWNlX2lucHV0X3Blcl9tdG9rGAUgASgBEh0KFXByaWNlX291dHB1dF9wZXJfbXRvaxgGIAEoARIyCgV1c2VycxgHIAMoCzIjLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5Vc2VyVXNhZ2USMwoGdG90YWxzGAggASgLMiMuc21hcnRoZWFsdGguYXNzaXN0YW50LnYxLlVzZXJVc2FnZTK5BgoJQXNzaXN0YW50ElQKBENoYXQSJS5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdFJlcXVlc3QaIy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2hhdEV2ZW50MAESWgoHQ29uZmlybRIoLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5Db25maXJtUmVxdWVzdBojLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DaGF0RXZlbnQwARJYCgZDYW5jZWwSJy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuQ2FuY2VsUmVxdWVzdBolLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5DYW5jZWxSZXBseRJeCghTdGFydGVycxIpLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5TdGFydGVyc1JlcXVlc3QaJy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuU3RhcnRlcnNSZXBseRJ5ChFMaXN0Q29udmVyc2F0aW9ucxIyLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5MaXN0Q29udmVyc2F0aW9uc1JlcXVlc3QaMC5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuTGlzdENvbnZlcnNhdGlvbnNSZXBseRJwCg9HZXRDb252ZXJzYXRpb24SMC5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuR2V0Q29udmVyc2F0aW9uUmVxdWVzdBorLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5Db252ZXJzYXRpb25SZXBseRJ8ChJEZWxldGVDb252ZXJzYXRpb24SMy5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuRGVsZXRlQ29udmVyc2F0aW9uUmVxdWVzdBoxLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5EZWxldGVDb252ZXJzYXRpb25SZXBseRJVCgVVc2FnZRImLnNtYXJ0aGVhbHRoLmFzc2lzdGFudC52MS5Vc2FnZVJlcXVlc3QaJC5zbWFydGhlYWx0aC5hc3Npc3RhbnQudjEuVXNhZ2VSZXBseWIGcHJvdG8z");
 
 /**
  * @generated from message smarthealth.assistant.v1.ChatRequest
@@ -860,6 +860,162 @@ export const DeleteConversationReplySchema: GenMessage<DeleteConversationReply> 
   messageDesc(file_smarthealth_assistant_v1_assistant, 27);
 
 /**
+ * @generated from message smarthealth.assistant.v1.UsageRequest
+ */
+export type UsageRequest = Message<"smarthealth.assistant.v1.UsageRequest"> & {
+  /**
+   * Inclusive dates, YYYY-MM-DD (UTC). Empty: the last seven days.
+   *
+   * @generated from field: string from_date = 1;
+   */
+  fromDate: string;
+
+  /**
+   * @generated from field: string to_date = 2;
+   */
+  toDate: string;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.UsageRequest.
+ * Use `create(UsageRequestSchema)` to create a new message.
+ */
+export const UsageRequestSchema: GenMessage<UsageRequest> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 28);
+
+/**
+ * @generated from message smarthealth.assistant.v1.UserUsage
+ */
+export type UserUsage = Message<"smarthealth.assistant.v1.UserUsage"> & {
+  /**
+   * @generated from field: string user_id = 1;
+   */
+  userId: string;
+
+  /**
+   * @generated from field: string role = 2;
+   */
+  role: string;
+
+  /**
+   * @generated from field: int32 conversations = 3;
+   */
+  conversations: number;
+
+  /**
+   * @generated from field: int32 turns = 4;
+   */
+  turns: number;
+
+  /**
+   * Turns that called the model at all (a guided flow alone calls none).
+   *
+   * @generated from field: int32 model_turns = 5;
+   */
+  modelTurns: number;
+
+  /**
+   * @generated from field: int64 input_tokens = 6;
+   */
+  inputTokens: bigint;
+
+  /**
+   * @generated from field: int64 output_tokens = 7;
+   */
+  outputTokens: bigint;
+
+  /**
+   * An estimate: tokens times the configured price per million.
+   *
+   * @generated from field: double cost_usd = 8;
+   */
+  costUsd: number;
+
+  /**
+   * 0 when no turn in the range produced a token.
+   *
+   * @generated from field: double avg_first_token_ms = 9;
+   */
+  avgFirstTokenMs: number;
+
+  /**
+   * @generated from field: double avg_total_ms = 10;
+   */
+  avgTotalMs: number;
+
+  /**
+   * @generated from field: int32 errors = 11;
+   */
+  errors: number;
+
+  /**
+   * RFC 3339.
+   *
+   * @generated from field: string last_active = 12;
+   */
+  lastActive: string;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.UserUsage.
+ * Use `create(UserUsageSchema)` to create a new message.
+ */
+export const UserUsageSchema: GenMessage<UserUsage> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 29);
+
+/**
+ * @generated from message smarthealth.assistant.v1.UsageReply
+ */
+export type UsageReply = Message<"smarthealth.assistant.v1.UsageReply"> & {
+  /**
+   * @generated from field: string from_date = 1;
+   */
+  fromDate: string;
+
+  /**
+   * @generated from field: string to_date = 2;
+   */
+  toDate: string;
+
+  /**
+   * @generated from field: string provider = 3;
+   */
+  provider: string;
+
+  /**
+   * @generated from field: string model = 4;
+   */
+  model: string;
+
+  /**
+   * @generated from field: double price_input_per_mtok = 5;
+   */
+  priceInputPerMtok: number;
+
+  /**
+   * @generated from field: double price_output_per_mtok = 6;
+   */
+  priceOutputPerMtok: number;
+
+  /**
+   * @generated from field: repeated smarthealth.assistant.v1.UserUsage users = 7;
+   */
+  users: UserUsage[];
+
+  /**
+   * @generated from field: smarthealth.assistant.v1.UserUsage totals = 8;
+   */
+  totals?: UserUsage | undefined;
+};
+
+/**
+ * Describes the message smarthealth.assistant.v1.UsageReply.
+ * Use `create(UsageReplySchema)` to create a new message.
+ */
+export const UsageReplySchema: GenMessage<UsageReply> = /*@__PURE__*/
+  messageDesc(file_smarthealth_assistant_v1_assistant, 30);
+
+/**
  * @generated from service smarthealth.assistant.v1.Assistant
  */
 export const Assistant: GenService<{
@@ -934,6 +1090,18 @@ export const Assistant: GenService<{
     methodKind: "unary";
     input: typeof DeleteConversationRequestSchema;
     output: typeof DeleteConversationReplySchema;
+  },
+  /**
+   * LLM usage per user over a date range -- admin only (PERMISSION_DENIED otherwise).
+   * Users are ids and roles: the admin's browser joins names and emails from Part A's
+   * GET /users, so this service never holds Part A's user data.
+   *
+   * @generated from rpc smarthealth.assistant.v1.Assistant.Usage
+   */
+  usage: {
+    methodKind: "unary";
+    input: typeof UsageRequestSchema;
+    output: typeof UsageReplySchema;
   },
 }> = /*@__PURE__*/
   serviceDesc(file_smarthealth_assistant_v1_assistant, 0);

@@ -265,6 +265,10 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("app.modules.analytics.router", "app.modules.identity.models"),
         ("app.modules.analytics.router", "app.modules.identity.security"),
         ("app.modules.analytics.router", "app.modules.patients.public"),
+        # Week 5: the admin user directory (GET /users) shows each login's name from the
+        # patient or provider record linked to it, through their published interfaces.
+        ("app.modules.identity.router", "app.modules.patients.public"),
+        ("app.modules.identity.router", "app.modules.providers.public"),
         # The nightly reconcile compares the rollup with scheduling's own counts, through
         # its published interface.
         ("app.modules.analytics.tasks", "app.modules.scheduling.public"),

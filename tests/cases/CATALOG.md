@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 87 |
-| contract | 18 |
-| integration | 49 |
+| Total cases | 92 |
+| contract | 22 |
+| integration | 50 |
 | unit | 8 |
 | workflow | 12 |
-| P0 | 51 |
-| P1 | 36 |
+| P0 | 52 |
+| P1 | 40 |
 | declarative | 1 |
-| impl-backed | 86 |
+| impl-backed | 91 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -57,6 +57,7 @@
 | evt-005-a-poison-event-is-dead-lettered | integration | P0 | impl | PART-A-FR-4, PART-A-OBS-2 | An event whose handler keeps failing goes to the dead-letter topic with its error, and the partition moves on |
 | evt-006-a-provider-write-publishes-its-state | integration | P1 | impl | PART-A-FR-4, PART-A-FR-1.2 | Registering and deactivating a provider each queue its whole state for the compacted providers.state topic |
 | evt-007-every-consumer-is-idempotent | unit | P0 | impl | PART-A-NFR-3 | Every registered Kafka consumer, given its event twice, starts its workflow once and does not fail |
+| id-010-admin-user-directory | integration | P1 | impl | PART-A-FR-1, PART-B-FR-5 | GET /users gives admin the name, email and role of the logins asked for, and refuses every other role |
 | kn-001-retrieval-meets-the-golden-set | contract | P0 | impl | PART-B-FR-1, PART-B-FR-2 | Hybrid retrieval over the ingested corpus meets the golden set: recall@5 >= 0.9, MRR >= 0.8, nothing for off-topic questions |
 | kn-002-the-audience-wall | contract | P0 | impl | PART-B-FR-2, PART-A-NFR-8 | A patient's token never retrieves a staff protocol, whatever the question; a clinician's does |
 | kn-003-ingestion-is-idempotent-and-versioned | contract | P1 | impl | PART-B-FR-1 | Ingesting the corpus again embeds nothing and duplicates nothing; a new version leaves no stale chunk |
@@ -78,6 +79,10 @@
 | pb-002-a-chat-turn-streams-and-resumes | contract | P1 | impl | PART-B-NFR-1, PART-B-FR-2 | A chat turn streams tokens, citations from knowledge, then Done; a reconnect resumes after its last seq; Cancel ends it |
 | pb-003-a-revoked-login-is-refused-by-part-b | contract | P0 | impl | PART-A-NFR-8 | The assistant refuses a validly signed token issued before its user's sessions were revoked |
 | pb-004-part-b-learns-from-part-a-over-kafka-only | integration | P0 | impl | PART-B-FR-1, PART-A-FR-4 | A provider registered in Part A appears in the knowledge service's directory, by Kafka alone |
+| pb-005-assistant-books-only-after-confirmation | contract | P0 | impl | PART-B-FR-2, PART-A-FR-3 | The assistant writes to Part A only after the user confirms, with the user's token, an idempotency key and the conversation ref |
+| pb-006-assistant-degrades-without-model-or-services | contract | P1 | impl | PART-B-FR-2, PART-B-NFR-1 | With no model, a failed model, Part A down or knowledge down, the assistant still answers what it can and says plainly what it cannot |
+| pb-007-assistant-keeps-threads-per-user | contract | P1 | impl | PART-B-FR-2, PART-B-FR-5 | A user keeps many assistant threads: listed newest first, reopened with every turn, a paused flow still answerable, invisible to other users, deletable |
+| pb-008-admin-sees-llm-usage-per-user | contract | P1 | impl | PART-B-FR-5 | Admin sees LLM usage per user -- turns, model turns, tokens, estimated cost -- and every other role is refused |
 | prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |

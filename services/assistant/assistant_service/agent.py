@@ -28,7 +28,7 @@ from __future__ import annotations
 import copy
 import logging
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any, TypedDict
 from zoneinfo import ZoneInfo
 
@@ -50,6 +50,7 @@ from assistant_service.guard import guidance, red_flag
 from assistant_service.llm import LLMUnavailable
 from assistant_service.offline import answer_from_documents, match_flow
 from assistant_service.parta import PartA, PartAError
+from assistant_service.usage import TurnUsage
 
 logger = logging.getLogger(__name__)
 HISTORY = 12
@@ -77,6 +78,8 @@ class TurnContext:
     conversation_id: str
     timezone: ZoneInfo
     model: BaseChatModel | None
+    #: The turn's model calls and tokens, read by the server when the turn ends.
+    usage: TurnUsage = field(default_factory=TurnUsage)
 
     def ctx(self) -> Ctx:
         return Ctx(
@@ -174,7 +177,7 @@ def system_prompt(ctx: Ctx) -> str:
 
 
 async def _model_turn(
-    ctx: Ctx, model: BaseChatModel, history: list[AnyMessage], text: str
+    ctx: Ctx, model: BaseChatModel, history: list[AnyMessage], text: str, usage: TurnUsage
 ) -> tuple[str, dict | None]:
     """The model's answer, streamed; returns (answer text, handoff or None)."""
     allowed = {f.id for f in flows_for(ctx.role)}
@@ -207,10 +210,12 @@ async def _model_turn(
         reply: AIMessage | None = None
         async for chunk in bound.astream(messages):
             if isinstance(chunk.content, str) and chunk.content:
+                usage.first_token()
                 ctx.emit({"kind": "token", "text": chunk.content})
             reply = chunk if reply is None else reply + chunk
         if reply is None:
             raise LLMUnavailable("empty response")
+        usage.add_call(getattr(reply, "usage_metadata", None))
         messages.append(reply)
         if not reply.tool_calls:
             return _text(reply), None
@@ -269,7 +274,8 @@ async def _chat(state: State, runtime: Runtime[TurnContext]) -> dict:
     if model is not None:
         history = list(state.get("messages") or [])[-HISTORY:]
         try:
-            answer, handoff = await _model_turn(ctx, model, history, text)
+            answer, handoff = await _model_turn(ctx, model, history, text,
+                                                 runtime.context.usage)
         except LLMUnavailable as exc:
             logger.info("model unavailable, answering offline", extra={"reason": str(exc)})
         except Exception:  # noqa: BLE001 - a provider failure degrades the turn, never fails it

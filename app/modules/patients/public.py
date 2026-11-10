@@ -60,3 +60,14 @@ async def count_patients(session: AsyncSession) -> int:
     from sqlalchemy import func
 
     return int(await session.scalar(select(func.count()).select_from(Patient)) or 0)
+
+
+async def names_for_users(session: AsyncSession, user_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """The full name of the patient record linked to each login that has one: how a user
+    directory shows a person rather than an address (the assistant's usage page)."""
+    if not user_ids:
+        return {}
+    rows = await session.execute(
+        select(Patient.user_id, Patient.first_name, Patient.last_name)
+        .where(Patient.user_id.in_(user_ids)))
+    return {r.user_id: f"{r.first_name} {r.last_name}" for r in rows}

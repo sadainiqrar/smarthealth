@@ -8,6 +8,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Appointments from "./pages/Appointments";
 import AssistantPage from "./pages/Assistant";
 import Book from "./pages/Book";
+import Usage from "./pages/Usage";
 import Booking from "./pages/Booking";
 import Login from "./pages/Login";
 import Patients from "./pages/Patients";
@@ -24,6 +25,7 @@ const NAV: { to: string; label: string; roles: Role[] }[] = [
   { to: "/appointments", label: "Appointments", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/book", label: "Book", roles: ["patient", "front_desk", "admin"] },
   { to: "/waitlist", label: "Waitlist", roles: ["patient", "front_desk", "admin"] },
+  { to: "/usage", label: "AI usage", roles: ["admin"] },
 ];
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -66,6 +68,7 @@ function App() {
         <Route path="/book" element={<Book />} />
         <Route path="/bookings/:id" element={<Booking />} />
         <Route path="/waitlist" element={<Waitlist />} />
+        <Route path="/usage" element={<Usage />} />
         {/* One route with an optional segment: opening a thread keeps the page mounted. */}
         <Route path="/assistant/:conversationId?" element={<AssistantPage />} />
       </Route>

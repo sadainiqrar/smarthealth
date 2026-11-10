@@ -17,6 +17,7 @@ The work itself is the LangGraph agent (agent.py).
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 import logging
 from zoneinfo import ZoneInfo
 
@@ -30,6 +31,15 @@ from assistant_service.agent import Agent, StaleAnswer, TurnContext
 from assistant_service.auth import Caller, TokenVerifier, Unauthenticated
 from assistant_service.conversations import ConversationStore, InMemoryConversations
 from assistant_service.flows import FLOWS
+from assistant_service.usage import (
+    InMemoryUsage,
+    TurnUsage,
+    UsageRow,
+    UsageStore,
+    UserTotals,
+    outcome_of,
+    window,
+)
 from assistant_service.parta import PartA
 from assistant_service.starters import starters_for
 from assistant_service.stores import Stores
@@ -89,9 +99,14 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
         self, stores: Stores, verifier: TokenVerifier,
         knowledge: knowledge_pb2_grpc.KnowledgeStub, agent: Agent, parta: PartA, *,
         model: BaseChatModel | None, timezone: ZoneInfo, conversations: ConversationStore,
+        usage: UsageStore, model_label: tuple[str, str] = ("none", "none"),
+        prices: tuple[float, float] = (0.0, 0.0),
         token_delay: float = TOKEN_DELAY_SECONDS,
     ) -> None:
         self._stores = stores
+        self._usage = usage
+        self._model_label = model_label
+        self._prices = prices
         self._conversations = conversations
         self._verifier = verifier
         self._knowledge = knowledge
@@ -122,13 +137,13 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                      "kind": h.kind, "score": h.score} for h in reply.hits]
         return search
 
-    def _context(self, caller: Caller, conversation_id: str) -> TurnContext:
+    def _context(self, caller: Caller, conversation_id: str, usage: TurnUsage) -> TurnContext:
         return TurnContext(caller=caller, parta=self._parta, search=self._search_as(caller),
                            conversation_id=conversation_id, timezone=self._timezone,
-                           model=self._model)
+                           model=self._model, usage=usage)
 
     async def _turn(self, turn: str, resume_from: int, events, *, caller: Caller,
-                    conversation_id: str, user_text: str):
+                    conversation_id: str, user_text: str, usage: TurnUsage):
         """Send a turn's events, appending each to its stream first; replay instead if the
         turn already exists. A finished turn goes into the conversation's transcript, even
         when the client went away before the end (shielded from the cancellation)."""
@@ -174,6 +189,8 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                     *sent, {"kind": "done", "reason": "complete"}]
                 await asyncio.shield(self._record(caller, conversation_id, turn, user_text,
                                                   record))
+                await asyncio.shield(self._record_usage(caller, conversation_id, turn, usage,
+                                                        record))
         if not ended:
             seq += 1
             done = {"kind": "done", "reason": "complete"}
@@ -187,6 +204,19 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                                              events)
         except Exception:  # noqa: BLE001 - a lost transcript row must not fail the answer
             logger.exception("could not record the turn", extra={"turn_id": turn})
+
+    async def _record_usage(self, caller: Caller, conversation_id: str, turn: str,
+                            usage: TurnUsage, events: list[dict]) -> None:
+        provider, model = self._model_label if usage.model_calls else ("none", "none")
+        try:
+            await self._usage.record(UsageRow(
+                user_id=caller.user_id, turn_id=turn, role=caller.role,
+                conversation_id=conversation_id, provider=provider, model=model,
+                model_calls=usage.model_calls, input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens, first_token_ms=usage.first_token_ms,
+                total_ms=usage.elapsed_ms(), outcome=outcome_of(events)))
+        except Exception:  # noqa: BLE001 - a lost usage row must not fail the answer
+            logger.exception("could not record usage", extra={"turn_id": turn})
 
     async def _user_text(self, caller: Caller, conversation_id: str, request) -> str:
         """What the user's bubble says, as the client showed it."""
@@ -207,20 +237,23 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                   if request.HasField("choice") else None)
         conversation_id = request.conversation_id or turn
         user_text = await self._user_text(caller, conversation_id, request)
-        events = self._agent.run(self._context(caller, conversation_id),
+        usage = TurnUsage()
+        events = self._agent.run(self._context(caller, conversation_id, usage),
                                  text=request.message, starter=request.starter_id, choice=choice)
         async for message in self._turn(turn, request.resume_from, events, caller=caller,
-                                        conversation_id=conversation_id, user_text=user_text):
+                                        conversation_id=conversation_id, user_text=user_text,
+                                        usage=usage):
             yield message
 
     async def Confirm(self, request, context):  # noqa: N802
         caller = await self._caller(context)
         turn = request.turn_id or "unnamed"
-        events = self._agent.run(self._context(caller, request.conversation_id),
+        usage = TurnUsage()
+        events = self._agent.run(self._context(caller, request.conversation_id, usage),
                                  decision=(request.confirmation_id, request.approved))
         async for message in self._turn(turn, request.resume_from, events, caller=caller,
                                         conversation_id=request.conversation_id,
-                                        user_text=DECIDED[request.approved]):
+                                        user_text=DECIDED[request.approved], usage=usage):
             yield message
 
     async def Cancel(self, request, context):  # noqa: N802
@@ -260,6 +293,52 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
                 events=[to_message(t.turn_id, i + 1, e) for i, e in enumerate(t.events)])
                 for t in turns])
 
+    async def Usage(self, request, context):  # noqa: N802
+        caller = await self._caller(context)
+        if caller.role != "admin":
+            await context.abort(grpc.StatusCode.PERMISSION_DENIED, "usage is for admins")
+        try:
+            start, end = window(request.from_date, request.to_date)
+        except ValueError:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "dates are YYYY-MM-DD")
+        if end <= start:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_date is before from_date")
+        rows = await self._usage.per_user(start, end)
+        price_in, price_out = self._prices
+
+        def message(t: UserTotals) -> assistant_pb2.UserUsage:
+            return assistant_pb2.UserUsage(
+                user_id=t.user_id, role=t.role, conversations=t.conversations, turns=t.turns,
+                model_turns=t.model_turns, input_tokens=t.input_tokens,
+                output_tokens=t.output_tokens,
+                cost_usd=(t.input_tokens * price_in + t.output_tokens * price_out) / 1e6,
+                avg_first_token_ms=t.avg_first_token_ms or 0, avg_total_ms=t.avg_total_ms or 0,
+                errors=t.errors, last_active=t.last_active.isoformat() if t.last_active else "")
+
+        def weighted(attr: str, weight: str) -> float:
+            pairs = [(getattr(r, attr), getattr(r, weight)) for r in rows
+                     if getattr(r, attr) is not None]
+            total = sum(w for _, w in pairs)
+            return sum(v * w for v, w in pairs) / total if total else 0.0
+
+        totals = UserTotals(
+            user_id="", role="",
+            conversations=sum(r.conversations for r in rows), turns=sum(r.turns for r in rows),
+            model_turns=sum(r.model_turns for r in rows),
+            input_tokens=sum(r.input_tokens for r in rows),
+            output_tokens=sum(r.output_tokens for r in rows),
+            avg_first_token_ms=weighted("avg_first_token_ms", "model_turns"),
+            avg_total_ms=weighted("avg_total_ms", "turns"),
+            errors=sum(r.errors for r in rows),
+            last_active=max((r.last_active for r in rows if r.last_active), default=None))
+        provider, model = self._model_label
+        return assistant_pb2.UsageReply(
+            from_date=start.date().isoformat(),
+            to_date=(end.date() - timedelta(days=1)).isoformat(),
+            provider=provider, model=model, price_input_per_mtok=price_in,
+            price_output_per_mtok=price_out, users=[message(r) for r in rows],
+            totals=message(totals))
+
     async def DeleteConversation(self, request, context):  # noqa: N802
         caller = await self._caller(context)
         deleted = await self._conversations.delete(caller.user_id, request.conversation_id)
@@ -275,12 +354,17 @@ def build_server(stores: Stores, verifier: TokenVerifier, knowledge_channel: grp
                  port: int, *, agent: Agent, parta: PartA, model: BaseChatModel | None,
                  timezone: ZoneInfo = UTC_ZONE,
                  conversations: ConversationStore | None = None,
+                 usage: UsageStore | None = None,
+                 model_label: tuple[str, str] = ("none", "none"),
+                 prices: tuple[float, float] = (0.0, 0.0),
                  token_delay: float = TOKEN_DELAY_SECONDS) -> grpc.aio.Server:
     server = grpc.aio.server()
     servicer = AssistantServicer(
         stores, verifier, knowledge_pb2_grpc.KnowledgeStub(knowledge_channel), agent, parta,
         model=model, timezone=timezone,
         conversations=conversations if conversations is not None else InMemoryConversations(),
+        usage=usage if usage is not None else InMemoryUsage(),
+        model_label=model_label, prices=prices,
         token_delay=token_delay,
     )
     assistant_pb2_grpc.add_AssistantServicer_to_server(servicer, server)

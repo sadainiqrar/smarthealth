@@ -131,6 +131,8 @@ class Harness:
             agent=Agent(MemorySaver()),
             parta=self.parta,
             model=self.model,
+            model_label=("groq", "test-model"),
+            prices=(0.15, 0.60),
             token_delay=0,
         )
         await self._server.start()
@@ -545,3 +547,45 @@ async def test_a_deleted_thread_is_gone_with_its_paused_flow():
     assert deleted.deleted
     assert last(after, "error").code == "stale"
     assert [t.conversation_id for t in threads] == ["gone"]  # the stale reply is a new turn
+
+
+# -- usage ----------------------------------------------------------------------------------
+
+
+async def test_admin_sees_llm_usage_per_user_and_nobody_else_does():
+    """Referenced by tests/cases/pb-008-admin-sees-llm-usage-per-user.yaml."""
+    model = Scripted(
+        script=[
+            AIMessage(
+                content="Only water beforehand.",
+                usage_metadata={"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200},
+            ),
+        ]
+    )
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        patient = _token()
+        await h.chat(patient, conversation="a", message="can I eat before a fasting blood test?")
+        await h.chat(patient, conversation="b", starter="my_appointments")  # a flow: no model
+        desk = _token(UserRole.FRONT_DESK, user="u-desk")
+        with pytest.raises(grpc.aio.AioRpcError) as refused:
+            await h.stub.Usage(assistant_pb2.UsageRequest(), metadata=_auth(desk))
+        reply = await h.stub.Usage(
+            assistant_pb2.UsageRequest(), metadata=_auth(_token(UserRole.ADMIN, user="u-admin"))
+        )
+    assert refused.value.code() is grpc.StatusCode.PERMISSION_DENIED
+    [row] = reply.users
+    assert (row.user_id, row.role) == ("u-patient", "patient")
+    assert (row.conversations, row.turns, row.model_turns) == (2, 2, 1)
+    assert (row.input_tokens, row.output_tokens) == (1000, 200)
+    assert row.cost_usd > 0 and row.errors == 0 and row.last_active
+    assert reply.totals.input_tokens == 1000
+
+
+async def test_usage_rejects_a_bad_date():
+    async with Harness(FakePartA.seeded()) as h:
+        with pytest.raises(grpc.aio.AioRpcError) as raised:
+            await h.stub.Usage(
+                assistant_pb2.UsageRequest(from_date="last week"),
+                metadata=_auth(_token(UserRole.ADMIN, user="u-admin")),
+            )
+    assert raised.value.code() is grpc.StatusCode.INVALID_ARGUMENT

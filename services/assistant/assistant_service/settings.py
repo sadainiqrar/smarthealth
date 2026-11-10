@@ -32,6 +32,10 @@ class AssistantSettings(BaseSettings):
     llm_provider: str = "groq"
     llm_model: str = ""
     llm_api_key: str = ""
+    #: USD per million tokens, for the usage page's cost *estimate* (usage.py). Defaults
+    #: are Groq's list price for openai/gpt-oss-120b; keep them in step with the provider.
+    llm_price_input_per_mtok: float = 0.15
+    llm_price_output_per_mtok: float = 0.60
     #: Part A's HTTP API, called with the user's own token (parta.py).
     parta_url: str = "http://localhost:8000"
     parta_timeout_seconds: float = 5.0

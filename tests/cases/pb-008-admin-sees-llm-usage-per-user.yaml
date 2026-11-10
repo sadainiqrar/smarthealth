@@ -1,0 +1,10 @@
+id: pb-008-admin-sees-llm-usage-per-user
+title: "Admin sees LLM usage per user -- turns, model turns, tokens, estimated cost -- and every other role is refused"
+requirement: [PART-B-FR-5]
+tier: contract
+priority: P1
+status: ready
+# usage.py records one row per finished turn from the model's own token counts; a turn a
+# guided flow answered alone has zero model calls. Names and emails are joined in the
+# admin's browser from Part A's GET /users (id-010), never stored in Part B.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_admin_sees_llm_usage_per_user_and_nobody_else_does"

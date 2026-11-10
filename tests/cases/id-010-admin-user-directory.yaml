@@ -1,0 +1,10 @@
+id: id-010-admin-user-directory
+title: "GET /users gives admin the name, email and role of the logins asked for, and refuses every other role"
+requirement: [PART-A-FR-1, PART-B-FR-5]
+tier: integration
+priority: P1
+status: ready
+# The assistant's usage records carry only the token's subject; the admin's browser joins
+# them with this directory, so Part B never reads Part A's users (spec D-19). Names come
+# from the linked patient or provider record through their published interfaces.
+impl: "tests/tiers/t3_integration/test_user_directory_api.py::test_admin_gets_name_email_and_role_for_the_ids_asked"
