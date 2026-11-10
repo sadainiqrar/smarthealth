@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 96 |
-| contract | 25 |
+| Total cases | 97 |
+| contract | 26 |
 | integration | 51 |
 | unit | 8 |
 | workflow | 12 |
 | P0 | 53 |
-| P1 | 43 |
+| P1 | 44 |
 | declarative | 1 |
-| impl-backed | 95 |
+| impl-backed | 96 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -87,6 +87,7 @@
 | pb-009-drafts-are-sent-only-after-approval | contract | P0 | impl | PART-B-FR-3, PART-B-FR-5 | A drafted notice is edited and sent only after the sender confirms, once per patient, through Part A; patient instructions go into the draft note only |
 | pb-010-reports-stream-from-the-background | contract | P1 | impl | PART-B-FR-4, PART-B-NFR-1 | An admin report starts at once, is written in the background with every figure from Part A, streams to any watcher and resumes from its record |
 | pb-011-booking-conversion-from-kafka | contract | P1 | impl | PART-B-FR-5 | Booking conversion after AI interaction is counted from appointments.booked: once per appointment, only for conversations the assistant had |
+| pb-012-the-real-models-behaviour-replays | contract | P1 | impl | PART-B-NFR-2, PART-B-FR-2 | The live model's behaviour, recorded once, replays offline: cited answers, hand-off to the right flow, no dose advice, an injected instruction writes nothing, no made-up answers |
 | prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |

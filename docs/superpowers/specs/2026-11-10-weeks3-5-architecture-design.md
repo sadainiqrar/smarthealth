@@ -902,7 +902,7 @@ checkpoints and transcripts in a new `assistant-db` Postgres rather than `assist
 assistant process, not an `assistant-worker` (D-36); per-user usage joined with Part A's new
 `GET /users` in the admin's browser (D-35). The proto grew `Confirm`, `Starters`,
 conversations, `Usage` and reports, every change additive. Not built: department utilisation,
-engagement campaigns, recorded LLM fixtures. Booking conversion is counted from `appointments.booked`, consumed by the assistant (added 2026-11-11).
+engagement campaigns, the offline judge. Recorded LLM fixtures replay a golden set (`test_assistant_golden.py`). Booking conversion is counted from `appointments.booked`, consumed by the assistant (added 2026-11-11).
 
 ---
 

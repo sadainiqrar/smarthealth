@@ -329,15 +329,15 @@ stages, and conflating them misleads — including in conversation with a review
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
 | **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1220 fast tests (plus 1 skip) in ~78s (78.16s on a run of `python -m pytest -m "not docker" -q`) and 255 docker-lane tests (`-m docker`, ~7 min with the full dev stack also running), measured 2026-11-10; 80 cases; the journey tier has no cases yet |
-| **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Built in part (Week 5).** The assistant's model factory (`services/assistant/assistant_service/llm.py`, `ASSISTANT_LLM_MODE`) has fixture, record and live modes, and the knowledge service replays recorded embeddings; tests script the model instead of recording it. No LLM fixture is recorded yet, and the offline judge is not built |
+| **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Built in part (Week 5).** The assistant's model factory (`services/assistant/assistant_service/llm.py`, `ASSISTANT_LLM_MODE`) has fixture, record and live modes, and the knowledge service replays recorded embeddings. Agent tests script the model; the golden set (`tests/tiers/t1_contract/test_assistant_golden.py`) replays Groq's recorded answers from `services/assistant/eval/fixtures/llm.jsonl` — re-record with `ASSISTANT_GOLDEN=record ASSISTANT_LLM_API_KEY=... python -m pytest tests/tiers/t1_contract/test_assistant_golden.py`. The offline judge is not built |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
 (`Settings.llm_mode`; the `ai` step kind and `judge` block in `tests/runner/schema.py`, with
 a cross-field rule binding each to the other). Week 5 built the part the assistant needs:
 its own model factory (`services/assistant/assistant_service/llm.py`, with LangChain and
 `langchain-groq` in that service's `requirements.txt`, not Part A's `pyproject.toml`). The
-case runner's `ai` steps and the offline judge are still not implemented, and no LLM fixture
-is recorded: do not describe those as working.
+case runner's `ai` steps and the offline judge are still not implemented: do not describe
+those as working. Recorded LLM fixtures exist for the assistant's golden set.
 
 **Harness requirements on application code** — these are *forward-looking constraints*, to
 honour as each module lands, not descriptions of code that exists. Each is tagged with the

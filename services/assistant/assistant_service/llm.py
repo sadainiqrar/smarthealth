@@ -32,6 +32,9 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import ConfigDict, Field
 
+#: One writer at a time appends to a fixture file (module level: a model is copied when tools
+#: are bound, and a lock cannot be).
+_RECORD_LOCK = threading.Lock()
 DEFAULT_FIXTURES = Path(__file__).resolve().parents[1] / "eval" / "fixtures" / "llm.jsonl"
 
 
@@ -111,7 +114,6 @@ class RecordingChatModel(_ToolAware):
 
     inner: Any
     path: Path
-    _lock: Any = threading.Lock()
 
     @property
     def _llm_type(self) -> str:
@@ -131,7 +133,7 @@ class RecordingChatModel(_ToolAware):
             "key": request_key(messages, self.tools),
             "response": messages_to_dict([message])[0],
         }
-        with self._lock:
+        with _RECORD_LOCK:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record) + "\n")

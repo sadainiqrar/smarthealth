@@ -1,0 +1,10 @@
+id: pb-012-the-real-models-behaviour-replays
+title: "The live model's behaviour, recorded once, replays offline: cited answers, hand-off to the right flow, no dose advice, an injected instruction writes nothing, no made-up answers"
+requirement: [PART-B-NFR-2, PART-B-FR-2]
+tier: contract
+priority: P1
+status: ready
+# The AI harness's record/replay (spec section 9): services/assistant/eval/fixtures/llm.jsonl
+# holds Groq's responses keyed by a hash of each request. A changed prompt, tool or passage
+# misses the replay, and the test names the command that re-records it.
+impl: "tests/tiers/t1_contract/test_assistant_golden.py::test_an_injected_instruction_cannot_write"
