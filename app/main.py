@@ -12,10 +12,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
 from app.api.error_handlers import register_error_handlers
 from app.api.router import api_router
 from app.core.logging import configure_logging
+from app.core.telemetry import instrument_engine, setup_telemetry
 from app.core.temporal import connect_client
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client
@@ -28,9 +30,11 @@ from app.settings import get_settings
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     configure_logging(settings.log_level)
+    app.state.telemetry = setup_telemetry(settings, "part-a-api")
 
     app.state.settings = settings
     app.state.engine = create_engine(settings)
+    instrument_engine(app.state.engine)
     app.state.session_factory = create_session_factory(app.state.engine)
     app.state.mongo = create_mongo_client(settings)
     app.state.redis = create_redis_client(settings)
@@ -41,6 +45,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        app.state.telemetry.flush()
         await app.state.engine.dispose()
         # `close()` is a coroutine on pymongo's async client, unlike Motor's.
         await app.state.mongo.close()
@@ -51,6 +56,11 @@ def create_app() -> FastAPI:
     application = FastAPI(title="SmartHealth", version="0.1.0", lifespan=lifespan)
     application.include_router(api_router)
     register_error_handlers(application)
+    # At creation, not in the lifespan: Starlette refuses new middleware once the app has
+    # started. The instrumentation binds to the global proxy providers, which resolve to
+    # the real ones as soon as the lifespan installs them. Probes are excluded: compose
+    # polls them every few seconds, and a trace per poll would bury the real traffic.
+    FastAPIInstrumentor.instrument_app(application, excluded_urls="/health$,/ready$")
     return application
 
 
