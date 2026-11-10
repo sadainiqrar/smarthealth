@@ -201,11 +201,12 @@ async def test_a_provider_may_not_cancel(api_client, temporal, world):
 
 
 @pytest.mark.parametrize("role", [UserRole.PATIENT, *STAFF])
-async def test_cancel_answers_200_commits_and_starts_the_follow_up(
+async def test_cancel_answers_200_and_commits_without_starting_anything(
     api_client, temporal, world, role
 ):
     """200, not 202: the cancellation is done, in this request's transaction, by the time
-    the response leaves -- and the follow-up is told which slot it freed."""
+    the response leaves. The follow-up is the `appointments.cancelled` consumer's to start
+    (Week 3 slice 4), from the event in this same transaction -- not the request's."""
     response = await api_client.post(
         f"/appointments/{APPOINTMENT}/cancel", json=CANCEL_BODY, headers=auth(role)
     )
@@ -215,10 +216,7 @@ async def test_cancel_answers_200_commits_and_starts_the_follow_up(
     assert world["cancels"][0]["reason"] == "cannot make it"
     assert world["cancels"][0]["actor_user_id"] == CALLER
     assert temporal.session.commits == 1
-    assert temporal.starts[0]["id"] == f"cancel-{APPOINTMENT}"
-    follow_up = temporal.requests[0]
-    assert follow_up.appointment_id == str(APPOINTMENT)
-    assert follow_up.slot_id == str(SLOT)
+    assert temporal.starts == []
 
 
 async def test_a_patient_cannot_cancel_someone_elses_appointment(api_client, temporal, world):
@@ -260,11 +258,12 @@ async def test_an_illegal_cancel_is_a_409_and_commits_and_starts_nothing(
     ],
     ids=["unavailable", "cannot-connect", "already-started"],
 )
-async def test_temporal_failing_after_the_commit_still_answers_200(
+async def test_a_cancel_never_touches_temporal_even_when_it_is_down(
     api_client, temporal, world, error
 ):
-    """The cancellation is committed before the follow-up starts. A 503 would tell the
-    caller a recorded cancellation failed, and their retry would be a 409."""
+    """Since Week 3 slice 4 the follow-up is started by the `appointments.cancelled`
+    consumer, from the event the cancel's own transaction writes (PRD R-17, closed). The
+    request itself makes no Temporal call at all, so a Temporal outage cannot touch it."""
     temporal.error = error
     response = await api_client.post(
         f"/appointments/{APPOINTMENT}/cancel", json=CANCEL_BODY, headers=auth(UserRole.ADMIN)
@@ -272,6 +271,7 @@ async def test_temporal_failing_after_the_commit_still_answers_200(
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
     assert temporal.session.commits == 1
+    assert temporal.starts == []
 
 
 @pytest.mark.parametrize("body", [{}, {"reason": ""}, {"reason": "x" * 2001}])

@@ -86,6 +86,8 @@ services:
       SMARTHEALTH_OTEL_ENDPOINT_GRPC: http://otel-collector:4317
       # The worker owns the no-show timer, so it is the process that reads the grace.
       SMARTHEALTH_NO_SHOW_GRACE_MINUTES: ${NO_SHOW_GRACE_MINUTES:-15}
+      # Billing activities call the payment gateway (spec D-27).
+      SMARTHEALTH_PAYMENTS_URL: http://payments-mock:8090
     depends_on:
       app:
         condition: service_healthy
@@ -127,6 +129,32 @@ services:
       kafka:
         condition: service_healthy
       schema-registry:
+        condition: service_healthy
+    stop_grace_period: 15s
+
+  consumers:
+    # The Kafka consumers (python -m app.consumers): domain events that start the workflows
+    # following them -- the cancel follow-up, provider deactivation, the post-visit charge
+    # (spec D-20). Its own process, so an event backlog never competes with requests.
+    profiles: ["app"]
+    build: .
+    command: ["python", "-m", "app.consumers"]
+    environment:
+      SMARTHEALTH_ENVIRONMENT: docker
+      SMARTHEALTH_POSTGRES_HOST: postgres
+      SMARTHEALTH_POSTGRES_PORT: 5432
+      SMARTHEALTH_POSTGRES_USER: ${POSTGRES_USER:-smarthealth}
+      SMARTHEALTH_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smarthealth}
+      SMARTHEALTH_POSTGRES_DB: ${POSTGRES_DB:-smarthealth}
+      SMARTHEALTH_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      SMARTHEALTH_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      SMARTHEALTH_TEMPORAL_HOST: temporal
+      SMARTHEALTH_TEMPORAL_PORT: 7233
+      SMARTHEALTH_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    depends_on:
+      relay:
+        condition: service_started
+      temporal:
         condition: service_healthy
     stop_grace_period: 15s
 
@@ -255,6 +283,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 18
+
+  payments-mock:
+    # A fake payment gateway standing in for an external provider (spec D-27): honours
+    # Idempotency-Key, misbehaves on request (POST /_chaos). It belongs to no service and
+    # shares no store; Part A reaches it over HTTP only. Not behind a profile: bookings
+    # in the integration tier call it.
+    build: ./services/payments_mock
+    ports: ["${PAYMENTS_PORT:-8090}:8090"]
 
   # --- Observability (Week 3 slice 1; Weeks 3-5 spec section 7) -----------------------
   # Not behind a profile: the test stack runs them too, so the docker lane can prove a

@@ -40,8 +40,8 @@ from app.modules.scheduling.booking import (
     reschedule_appointment_id_for,
     start_booking,
 )
-from app.modules.scheduling.contracts import BookingRequest, FollowUpRequest, RescheduleRequest
-from app.modules.scheduling.followups import start_cancel_follow_up, start_reschedule
+from app.modules.scheduling.contracts import BookingRequest, RescheduleRequest
+from app.modules.scheduling.followups import start_reschedule
 from app.modules.scheduling.models import AppointmentStatus
 from app.modules.scheduling.schemas import (
     AppointmentRead,
@@ -295,27 +295,20 @@ async def cancel_appointment(
     request: Request,
     session: AsyncSession = Depends(get_session),
     audit: AuditLog = Depends(get_audit_log),
-    temporal: Client = Depends(get_temporal),
     clock: Clock = Depends(get_clock),
     claims: TokenClaims = Depends(require_role(*CANCELLERS)),
 ) -> AppointmentRead:
+    """The paired write, and nothing else (D-16). The follow-up -- visit timer, refund,
+    waitlist -- is started by the `appointments.cancelled` consumer from the event this
+    transaction writes (Week 3 slice 4), so the request touches no Temporal at all and a
+    follow-up can no longer be lost (PRD R-17, closed)."""
     await _owned_or_404(session, claims, appointment_id)
     appointment = await service.cancel_appointment(
         session, audit, appointment_id=appointment_id, reason=body.reason,
         now=clock.now(), actor_user_id=claims.subject,
     )
     read = await _read(session, appointment)
-    follow_up = FollowUpRequest(
-        appointment_id=str(appointment_id),
-        slot_id=str(appointment.slot_id) if appointment.slot_id else None,
-        actor_user_id=claims.subject,
-    )
     await session.commit()
-    # After the commit, and never failing the request: the cancellation is recorded, and a
-    # lost start only delays the refund and the waitlist (a known gap, Week 3 outbox).
-    await start_cancel_follow_up(
-        temporal, follow_up, task_queue=request.app.state.settings.task_queue(TASK_QUEUE)
-    )
     return read
 
 

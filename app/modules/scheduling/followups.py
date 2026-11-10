@@ -1,14 +1,12 @@
-"""Starting the cancel follow-up and the reschedule workflow.
+"""Starting the reschedule workflow, and the cancel follow-up's workflow id.
 
-The two have opposite failure policies, and that is the point of this module:
+The cancel follow-up is no longer started here. Until Week 3 slice 4 the cancel request
+started it best-effort after its commit and lost it if Temporal was down (PRD R-17); now
+the cancel's own transaction writes `appointments.cancelled` and the scheduling consumer
+starts the follow-up from that event (`consumers.py`), under `cancel_workflow_id`.
 
-- A cancel is already committed when its follow-up starts (the database is the record,
-  spec §4.3). Starting the workflow is a hint that makes the rest happen *soon* -- the
-  refund, the waitlist -- so any Temporal failure is logged and swallowed: failing the
-  request would tell the caller a recorded cancellation failed, and their retry would be a
-  409. A lost start is a known gap, closed by the Week 3 outbox.
-- A reschedule has written nothing until its workflow runs, so a failed start is a 503 the
-  client simply retries.
+A reschedule has written nothing until its workflow runs, so a failed start is a 503 the
+client simply retries.
 
 Framework-free, like `booking` and `visits`, so the router stays thin and both policies are
 testable against the time-skipping server.
@@ -16,7 +14,6 @@ testable against the time-skipping server.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -29,48 +26,16 @@ from temporalio.service import RPCError
 from app.core.errors import ServiceUnavailable, Unprocessable
 from app.modules.scheduling.booking import FINGERPRINT_MEMO, started_fingerprint
 from app.modules.scheduling.contracts import (
-    FollowUpRequest,
     RescheduleRequest,
     reschedule_workflow_id,
 )
-from app.modules.scheduling.visits import NOTIFY_TIMEOUT
-from app.modules.scheduling.workflows import CancelFollowUpWorkflow, RescheduleWorkflow
+from app.modules.scheduling.workflows import RescheduleWorkflow
 
 logger = logging.getLogger(__name__)
 
 
 def cancel_workflow_id(appointment_id: object) -> str:
     return f"cancel-{appointment_id}"
-
-
-async def start_cancel_follow_up(
-    client: Client, request: FollowUpRequest, *, task_queue: str
-) -> None:
-    """Start `cancel-<appointment_id>`. Never raises.
-
-    REJECT_DUPLICATE: a cancelled appointment cannot be cancelled again (the service is
-    strict), so a second start can only be a retried request, and it must not refund or
-    promote twice. The wait is bounded by `visits.NOTIFY_TIMEOUT`, because connecting a
-    lazy client to an unreachable host takes tens of seconds in the SDK."""
-    try:
-        async with asyncio.timeout(NOTIFY_TIMEOUT.total_seconds()):
-            await client.start_workflow(
-                CancelFollowUpWorkflow.run, request,
-                id=cancel_workflow_id(request.appointment_id), task_queue=task_queue,
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-            )
-    except WorkflowAlreadyStartedError:
-        logger.info(
-            "cancel follow-up already started",
-            extra={"appointment_id": request.appointment_id},
-        )
-    except (RPCError, RuntimeError, TimeoutError) as exc:
-        # RuntimeError: a lazy client that cannot connect (verified on temporalio 1.34).
-        logger.warning(
-            "could not start the cancel follow-up; the refund and waitlist promotion for "
-            "this cancellation are lost until the Week 3 outbox",
-            extra={"appointment_id": request.appointment_id, "error": str(exc)},
-        )
 
 
 def reschedule_fingerprint(request: RescheduleRequest) -> str:

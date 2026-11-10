@@ -96,7 +96,7 @@ async def _effects(factory, name: str) -> int:
 
 
 def _recording(name: str, calls: list, *, fail_times: int = 0):
-    async def handler(session, event):
+    async def handler(session, event, context):
         calls.append(event.event_id)
         if len(calls) <= fail_times:
             raise RuntimeError("transient failure")

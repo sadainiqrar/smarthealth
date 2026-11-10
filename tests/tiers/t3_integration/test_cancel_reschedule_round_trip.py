@@ -28,6 +28,7 @@ from app.core.temporal import TASK_QUEUE, WORKFLOWS, build_worker, connect_clien
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
+from app.modules.billing.models import BillingRecord, BillingStatus
 from app.modules.identity.models import UserRole
 from app.modules.scheduling.contracts import reschedule_workflow_id, visit_workflow_id
 from app.modules.scheduling.followups import cancel_workflow_id
@@ -37,6 +38,22 @@ from tests.tiers.t3_integration import scheduling_helpers
 from tests.tiers.t3_integration.scheduling_helpers import add_slot, seed_bookable
 
 pytestmark = [pytest.mark.integration, pytest.mark.docker]
+
+
+async def _follow_up_result(client, appointment_id, timeout: float = 45.0) -> str:
+    """The cancel follow-up's result. It is started by the appointments.cancelled consumer
+    after the relay publishes the event, so it may not exist yet when the cancel returns:
+    wait for it to appear, then for it to finish."""
+    handle = client.get_workflow_handle(cancel_workflow_id(appointment_id))
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        try:
+            await handle.describe()
+            break
+        except RPCError:
+            assert asyncio.get_running_loop().time() < deadline, "the follow-up never started"
+            await asyncio.sleep(0.3)
+    return await asyncio.wait_for(handle.result(), timeout)
 
 
 @pytest.fixture
@@ -52,10 +69,14 @@ async def flow_stack(db_settings):
     client = await connect_client(db_settings, lazy=False)
     worker = build_worker(
         client, db_settings.task_queue(TASK_QUEUE), workflows=list(WORKFLOWS),
-        activities=build_activities(factory, audit, Clock(), timedelta(minutes=15)),
+        activities=build_activities(
+            factory, audit, Clock(), timedelta(minutes=15), settings=db_settings
+        ),
     )
     try:
-        async with worker:
+        # The relay and the consumers too: since Week 3 slice 4 the cancel follow-up is
+        # started by the appointments.cancelled consumer, not by the request.
+        async with worker, scheduling_helpers.event_pipeline(db_settings, factory, client):
             yield factory, client
             # Whatever visit timer is still running -- the test's own bookings, a
             # reschedule's new appointment, a promoted one -- is cancelled here, inside the
@@ -160,10 +181,16 @@ async def test_a_cancel_frees_the_slot_and_runs_its_follow_up(
     assert row.cancellation_reason == "cannot make it" and row.cancelled_at is not None
 
     # The follow-up ran: nobody was waiting, and the visit timer was stopped.
-    follow_up = client.get_workflow_handle(cancel_workflow_id(appointment_id))
-    assert await asyncio.wait_for(follow_up.result(), 20) == "released"
+    assert await _follow_up_result(client, appointment_id) == "released"
     visit = client.get_workflow_handle(visit_workflow_id(appointment_id))
     assert await asyncio.wait_for(visit.result(), 20) == "cancelled"
+
+    # The follow-up released the money: the booking's hold is voided (spec D-27).
+    async with factory() as session:
+        record = await session.scalar(
+            select(BillingRecord).where(BillingRecord.appointment_id == uuid.UUID(appointment_id))
+        )
+    assert record.status is BillingStatus.VOIDED
 
     # Strict: a second cancel is refused, not silently accepted.
     again = await api.post(
@@ -227,8 +254,7 @@ async def test_a_cancelled_slot_is_promoted_to_the_waitlist(api, token_for, flow
     )
     assert cancel.status_code == 200
 
-    follow_up = client.get_workflow_handle(cancel_workflow_id(appointment_id))
-    result = await asyncio.wait_for(follow_up.result(), 30)
+    result = await _follow_up_result(client, appointment_id)
     assert result.startswith("promoted:")
     promoted = result.removeprefix("promoted:")
 
@@ -400,3 +426,47 @@ async def test_two_concurrent_reschedules_of_one_appointment_confirm_one(
     assert await _slot_status(factory, b.slot_id) is SlotStatus.FREE
     assert await _slot_status(factory, slots[winner]) is SlotStatus.BOOKED
     assert await _slot_status(factory, slots[loser]) is SlotStatus.FREE
+
+
+
+async def test_deactivating_a_provider_cancels_their_future_appointments(
+    api, token_for, flow_stack
+):
+    """Referenced by tests/cases/prv-002-provider-deactivation-end-to-end.yaml (PRD R-25).
+
+    PATCH is_active=false writes providers.state; the relay publishes it; the scheduling
+    consumer starts ProviderDeactivationWorkflow, which cancels the appointment through the
+    ordinary paired write; that writes appointments.cancelled, whose consumer runs the
+    follow-up -- which voids the booking's hold. Five hops, two topics, two workflows."""
+    factory, client = flow_stack
+    async with factory() as session:
+        b = await seed_bookable(session)
+    desk = token_for(UserRole.FRONT_DESK)
+    admin = token_for(UserRole.ADMIN)
+    appointment_id = await _book(api, client, b.patient_id, b.slot_id, desk)
+
+    response = await api.patch(
+        f"/providers/{b.provider_id}", json={"is_active": False}, headers=admin
+    )
+    assert response.status_code == 200
+
+    async def cancelled() -> bool:
+        async with factory() as session:
+            row = await get_appointment(session, uuid.UUID(appointment_id))
+            return row.status is AppointmentStatus.CANCELLED
+
+    deadline = asyncio.get_running_loop().time() + 45
+    while not await cancelled():
+        assert asyncio.get_running_loop().time() < deadline, "the appointment was never cancelled"
+        await asyncio.sleep(0.5)
+    async with factory() as session:
+        row = await get_appointment(session, uuid.UUID(appointment_id))
+    assert row.cancellation_reason == "provider_unavailable"
+    assert await _slot_status(factory, b.slot_id) is SlotStatus.FREE
+
+    await _follow_up_result(client, appointment_id)
+    async with factory() as session:
+        record = await session.scalar(
+            select(BillingRecord).where(BillingRecord.appointment_id == uuid.UUID(appointment_id))
+        )
+    assert record.status is BillingStatus.VOIDED

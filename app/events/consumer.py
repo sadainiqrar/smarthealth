@@ -14,6 +14,10 @@ runtime gives every handler the same guarantees, so no handler re-implements the
 - **A poison message cannot stall a partition.** After `max_attempts` the message goes to
   `<topic>.dlt` with the error, and the offset moves on. `python -m app.cli dlt-replay`
   re-publishes dead letters once the cause is fixed.
+- **An outage is not poison.** `ServiceUnavailable` from a handler (Temporal is down), or
+  the database being unreachable, is retried without limit, backing off to 30 s:
+  dead-lettering every cancel during a Temporal restart would turn a blip into a pile of
+  manual replays.
 - **One trace.** The handler runs in a span whose parent is the trace context the relay
   put in the message headers.
 
@@ -39,8 +43,10 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.trace import SpanKind
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.errors import ServiceUnavailable
 from app.core.registry import Registry
 from app.events import kafka, schemas
 from app.events.models import ProcessedEvent
@@ -67,7 +73,19 @@ class Event:
     offset: int
 
 
-Handler = Callable[[AsyncSession, Event], Awaitable[None]]
+@dataclass(frozen=True)
+class ConsumerContext:
+    """What a handler may use besides its session: the process's Temporal client and
+    settings. Built once per consumer process."""
+
+    settings: Settings
+    temporal: Any = None
+
+
+Handler = Callable[[AsyncSession, Event, ConsumerContext], Awaitable[None]]
+
+#: Ceiling on the backoff between retries of an outage.
+MAX_OUTAGE_BACKOFF_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -99,6 +117,7 @@ class ConsumerRunner:
         dead_letters: Producer | None = None,
         max_attempts: int = 3,
         backoff_seconds: float = 0.5,
+        context: ConsumerContext | None = None,
     ) -> None:
         self._settings = settings
         self._sessions = session_factory
@@ -107,6 +126,7 @@ class ConsumerRunner:
         self._dead_letters = dead_letters or kafka.producer(settings)
         self._max_attempts = max_attempts
         self._backoff = backoff_seconds
+        self._context = context or ConsumerContext(settings=settings)
         self._logical = {kafka.broker_topic(settings, name): name for name in spec.topics}
 
     def kafka_consumer(self) -> Consumer:
@@ -141,7 +161,7 @@ class ConsumerRunner:
                 await session.rollback()
                 return Outcome.DUPLICATE
             try:
-                await self.spec.handler(session, event)
+                await self.spec.handler(session, event, self._context)
                 await session.commit()
             except BaseException:
                 await session.rollback()
@@ -163,12 +183,25 @@ class ConsumerRunner:
                 return self._dead_letter(message, None, exc, attempts=0)
             span.set_attribute("messaging.message.id", event.event_id)
             error: BaseException | None = None
-            for attempt in range(1, self._max_attempts + 1):
+            attempt = outage = 0
+            while attempt < self._max_attempts:
                 try:
                     outcome = await self.apply(event)
                     _outcomes.add(1, {"consumer": self.spec.name, "outcome": outcome.value})
                     return outcome
+                except (ServiceUnavailable, OperationalError, InterfaceError, OSError) as exc:
+                    outage += 1
+                    logger.warning(
+                        "consumer waiting out an outage",
+                        extra={"consumer": self.spec.name, "event_id": event.event_id,
+                               "retry": outage, "error": repr(exc)},
+                    )
+                    await asyncio.sleep(
+                        min(self._backoff * 2 ** min(outage, 10), MAX_OUTAGE_BACKOFF_SECONDS)
+                    )
+                    continue
                 except Exception as exc:  # noqa: BLE001 - retried, then dead-lettered
+                    attempt += 1
                     error = exc
                     logger.warning(
                         "consumer handler failed",

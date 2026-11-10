@@ -15,6 +15,7 @@ import uuid
 from datetime import timedelta
 
 import pytest
+from sqlalchemy import select
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.service import RPCError
 
@@ -26,6 +27,9 @@ from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
 from app.modules.identity.models import UserRole
+from app.modules.billing.models import BillingRecord, BillingStatus
+from app.modules.scheduling.models import Visit
+from app.modules.scheduling.contracts import post_visit_workflow_id
 from app.modules.scheduling.contracts import visit_workflow_id
 from app.modules.scheduling.models import AppointmentStatus, ProviderSlot, SlotStatus
 from app.modules.scheduling.service import get_appointment, get_visit
@@ -46,11 +50,15 @@ async def _visit_stack(db_settings, no_show_grace: timedelta):
     client = await connect_client(db_settings, lazy=False)
     worker = build_worker(
         client, db_settings.task_queue(TASK_QUEUE), workflows=list(WORKFLOWS),
-        activities=build_activities(factory, audit, Clock(), no_show_grace),
+        activities=build_activities(
+            factory, audit, Clock(), no_show_grace, settings=db_settings
+        ),
     )
     started: list[str] = []
     try:
-        async with worker:
+        # With the event pipeline: completing a visit writes visits.completed, whose
+        # consumer starts the post-visit charge (Week 3 slice 4).
+        async with worker, scheduling_helpers.event_pipeline(db_settings, factory, client):
             yield factory, client, started
             # Whatever a test did not finish: cancel it, inside the worker context so the
             # workflow can process the signal and end.
@@ -164,6 +172,21 @@ async def test_a_visit_runs_from_booking_to_completion(
         assert (await session.get(ProviderSlot, b.slot_id)).status is SlotStatus.BOOKED
     after = await api.post(f"/appointments/{appointment_id}/complete", headers=provider)
     assert after.status_code == 409
+
+    # Week 3 slice 4: completing wrote visits.completed; the relay published it, the
+    # consumer started post-visit-<visit>, and that captured the booking's authorisation.
+    async with factory() as session:
+        visit_id = await session.scalar(
+            select(Visit.id).where(Visit.appointment_id == uuid.UUID(appointment_id))
+        )
+    post_visit = client.get_workflow_handle(post_visit_workflow_id(visit_id))
+    await _until(_describe_status(post_visit), lambda s: s is not None)
+    assert await asyncio.wait_for(post_visit.result(), 30) == "captured"
+    async with factory() as session:
+        record = await session.scalar(
+            select(BillingRecord).where(BillingRecord.appointment_id == uuid.UUID(appointment_id))
+        )
+    assert record.status is BillingStatus.CAPTURED
 
     # `_id` breaks ties: Mongo keeps `at` to the millisecond, and two requests can share one.
     cursor = audit_documents.find({"entity_type": "visit"}).sort([("at", 1), ("_id", 1)])

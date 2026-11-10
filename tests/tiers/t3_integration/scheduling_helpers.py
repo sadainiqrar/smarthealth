@@ -3,14 +3,17 @@ from their own sessions."""
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.clock import Clock
+from app.modules.billing.models import BillingRecord
 from app.modules.patients.models import Patient
 from app.modules.providers.models import Clinic, Provider
 from app.modules.scheduling import service
@@ -152,6 +155,14 @@ async def purge(session: AsyncSession, bookables: list[Bookable]) -> None:
     the run and other tests (the seed's) assert on whole-table counts, so committed rows
     must not outlive the test that made them."""
     for b in bookables:
+        # Billing records first: their foreign key to appointments is RESTRICT.
+        await session.execute(
+            delete(BillingRecord).where(
+                BillingRecord.appointment_id.in_(
+                    select(Appointment.id).where(Appointment.patient_id == b.patient_id)
+                )
+            )
+        )
         await session.execute(delete(Appointment).where(Appointment.patient_id == b.patient_id))
         await session.execute(
             delete(ProviderSlot).where(ProviderSlot.provider_id == b.provider_id)
@@ -161,3 +172,37 @@ async def purge(session: AsyncSession, bookables: list[Bookable]) -> None:
         await session.execute(delete(Clinic).where(Clinic.id == b.clinic_id))
     await session.commit()
 
+
+
+@contextlib.asynccontextmanager
+async def event_pipeline(settings, factory, temporal):
+    """Run the outbox relay and every registered consumer in this process, as the `relay`
+    and `consumers` services do, so a test drives the whole path: a request's transaction
+    writes an event, the relay publishes it, a consumer starts the workflow that follows.
+
+    The consumers' groups carry this run's prefix (`kafka_group`), and they start from the
+    earliest offset; events other tests left on the run's topics are handled too, which is
+    harmless -- every handler is idempotent and keyed on ids those tests own."""
+    from app.components import register_all
+    from app.events import kafka
+    from app.events.consumer import CONSUMERS, ConsumerContext, ConsumerRunner
+    from app.events.relay import Relay
+
+    register_all()
+    kafka.ensure_topics(settings)
+    kafka.register_schemas(settings)
+    stop = asyncio.Event()
+    context = ConsumerContext(settings=settings, temporal=temporal)
+    tasks = [asyncio.create_task(Relay(settings, factory).run_forever(stop))]
+    tasks += [
+        asyncio.create_task(
+            ConsumerRunner(settings, factory, spec, context=context,
+                           backoff_seconds=0.05).run_forever(stop)
+        )
+        for spec in CONSUMERS
+    ]
+    try:
+        yield
+    finally:
+        stop.set()
+        await asyncio.wait(tasks, timeout=15)
