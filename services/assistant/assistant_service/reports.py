@@ -36,7 +36,7 @@ from assistant_service import metrics
 from assistant_service.auth import Caller
 from assistant_service.parta import PartA, PartAError, PartAUnavailable
 from assistant_service.stores import Stores
-from assistant_service.usage import TurnUsage
+from assistant_service.usage import TurnUsage, UsageStore
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +44,7 @@ KINDS = {
     "operations_7": ("Weekly operations report", 7),
     "operations_30": ("Monthly operations report", 30),
     "utilisation_30": ("Department utilisation report", 30),
+    "engagement_30": ("Engagement summary", 30),
 }
 METRICS = ("booked", "completed", "cancelled", "no_show")
 
@@ -54,6 +55,15 @@ NARRATIVE_INSTRUCTIONS = (
     "then 2-4 bullet points of things worth looking into. Use only the figures given: never "
     "invent a number, a cause you cannot see in the data, or a department. Say plainly when "
     "the data is too thin to draw a conclusion. Markdown, no headings, no tables."
+)
+
+ENGAGEMENT_INSTRUCTIONS = (
+    "You write the narrative of an engagement summary for MediNova's managers: how people "
+    "use the clinic's assistant, this period against the one before. In 2 short paragraphs "
+    "and 2-4 bullet points, say whether engagement is growing (active and returning users, "
+    "chats), how much of it leads to bookings, and how staff use drafted messages. Use only "
+    "the figures given -- never invent a number or a reason. Say plainly when the numbers are "
+    "too small to conclude. Markdown, no headings, no tables."
 )
 
 UTILISATION_INSTRUCTIONS = (
@@ -225,8 +235,11 @@ class ReportRunner:
         parta: PartA,
         model: BaseChatModel | None,
         on_usage: Callable[[Caller, str, TurnUsage, list[dict]], object] | None = None,
+        usage: UsageStore | None = None,
     ) -> None:
         self._stores = stores
+        #: The assistant's own records -- the engagement summary reads them, not Part A.
+        self._usage = usage
         self._reports = reports
         self._parta = parta
         self._model = model
@@ -300,6 +313,9 @@ class ReportRunner:
     async def _write(self, caller: Caller, report: Report, emit, usage: TurnUsage) -> None:
         if report.kind.startswith("utilisation"):
             await self._write_utilisation(caller, report, emit, usage)
+            return
+        if report.kind.startswith("engagement"):
+            await self._write_engagement(report, emit, usage)
             return
         token = caller.token
         days = (report.period_to - report.period_from).days + 1
@@ -388,6 +404,113 @@ class ReportRunner:
         )
         await self._narrative(emit, usage, material, figures, busiest)
 
+    async def _write_engagement(self, report: Report, emit, usage: TurnUsage) -> None:
+        """Engagement (PART-B-FR-4/5, spec 9.4): active and returning users, chats, how
+        many led to a booking, drafts -- this period against the one before."""
+        if self._usage is None:
+            raise RuntimeError("the engagement summary needs the usage store")
+        days = (report.period_to - report.period_from).days + 1
+
+        def window(first: date, last: date) -> tuple[datetime, datetime]:
+            return (
+                datetime(first.year, first.month, first.day, tzinfo=UTC),
+                datetime(last.year, last.month, last.day, tzinfo=UTC) + timedelta(days=1),
+            )
+
+        now = window(report.period_from, report.period_to)
+        before_to = report.period_from - timedelta(days=1)
+        before = window(before_to - timedelta(days=days - 1), before_to)
+        call = "engagement-1"
+        await emit(
+            {
+                "kind": "tool",
+                "call_id": call,
+                "name": "usage",
+                "label": "Counting the assistant's conversations",
+                "status": "running",
+                "summary": "",
+            }
+        )
+        users_now, users_before = (
+            await self._usage.per_user(*now),
+            await self._usage.per_user(*before),
+        )
+        booked_now, booked_before = (
+            await self._usage.booking_totals(*now),
+            await self._usage.booking_totals(*before),
+        )
+        drafts_now = await self._usage.draft_totals(*now)
+        await emit(
+            {
+                "kind": "tool",
+                "call_id": call,
+                "name": "usage",
+                "label": "Counting the assistant's conversations",
+                "status": "done",
+                "summary": f"{len(users_now)} active users",
+            }
+        )
+
+        returning = {u.user_id for u in users_now} & {u.user_id for u in users_before}
+        by_role: dict[str, int] = {}
+        for u in users_now:
+            by_role[u.role] = by_role.get(u.role, 0) + 1
+        turns = sum(u.turns for u in users_now)
+        errors = sum(u.errors for u in users_now)
+
+        def conversion(b) -> str:
+            if not b.conversations:
+                return "no chats"
+            return (
+                f"{b.conversations_with_booking} of {b.conversations} chats "
+                f"({b.conversations_with_booking / b.conversations * 100:.0f}%)"
+            )
+
+        def share(b) -> str:
+            if not b.total:
+                return "no bookings"
+            return f"{b.via_assistant} of {b.total} ({b.via_assistant / b.total * 100:.0f}%)"
+
+        figures = [
+            ("Active users", _pct(len(users_now), len(users_before))),
+            ("Returning users", f"{len(returning)} (used it in both periods)"),
+            (
+                "Active users by role",
+                ", ".join(f"{n} {r.replace('_', ' ')}" for r, n in sorted(by_role.items()))
+                or "none",
+            ),
+            ("Chats", _pct(booked_now.conversations, booked_before.conversations)),
+            (
+                "Turns answered without an error",
+                f"{turns - errors} of {turns}" if turns else "no turns",
+            ),
+            ("Chats that led to a booking", conversion(booked_now)),
+            ("Bookings made with the assistant", share(booked_now)),
+            (
+                "Drafted messages sent",
+                f"{drafts_now.sent} of {drafts_now.generated}, reaching {drafts_now.recipients} "
+                + ("patient" if drafts_now.recipients == 1 else "patients")
+                if drafts_now.generated
+                else "none drafted",
+            ),
+        ]
+        await emit(
+            {
+                "kind": "card",
+                "card_kind": "metrics",
+                "title": f"{report.period_from:%d %b} – {report.period_to:%d %b %Y}",
+                "subtitle": f"Compared with the {days} days before",
+                "fields": [{"label": n, "value": v} for n, v in figures],
+                "badge": f"{days} days",
+                "link": "",
+            }
+        )
+        material = "\n".join(f"{n}: {v}" for n, v in figures) + (
+            f"\nPeriod before: {len(users_before)} active users, {conversion(booked_before)}"
+            f" led to a booking, bookings with the assistant {share(booked_before)}."
+        )
+        await self._narrative(emit, usage, material, [], None, kind="engagement")
+
     async def _write_utilisation(
         self, caller: Caller, report: Report, emit, usage: TurnUsage
     ) -> None:
@@ -461,9 +584,10 @@ class ReportRunner:
         if self._model is not None:
             try:
                 whole = None
-                instructions = (
-                    UTILISATION_INSTRUCTIONS if kind == "utilisation" else NARRATIVE_INSTRUCTIONS
-                )
+                instructions = {
+                    "utilisation": UTILISATION_INSTRUCTIONS,
+                    "engagement": ENGAGEMENT_INSTRUCTIONS,
+                }.get(kind, NARRATIVE_INSTRUCTIONS)
                 async for chunk in self._model.astream(
                     [SystemMessage(instructions), HumanMessage(material)]
                 ):
@@ -477,6 +601,14 @@ class ReportRunner:
                     return
             except Exception:  # noqa: BLE001 - the report still states its figures
                 logger.info("report narrative failed; writing it plainly", exc_info=True)
+        if kind == "engagement":
+            text = (
+                "Every figure above is counted from the assistant's own records: its "
+                "conversations, turns, drafts, and the bookings Part A reported."
+            )
+            for word in text.split(" "):
+                await emit({"kind": "token", "text": word + " "})
+            return
         if kind == "utilisation":
             text = (
                 "Departments are listed busiest first above. Every figure is booked "

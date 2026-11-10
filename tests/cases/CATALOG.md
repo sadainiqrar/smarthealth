@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 103 |
-| contract | 31 |
+| Total cases | 104 |
+| contract | 32 |
 | integration | 52 |
 | unit | 8 |
 | workflow | 12 |
 | P0 | 57 |
-| P1 | 46 |
+| P1 | 47 |
 | declarative | 6 |
-| impl-backed | 97 |
+| impl-backed | 98 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -94,6 +94,7 @@
 | pb-010-reports-stream-from-the-background | contract | P1 | impl | PART-B-FR-4, PART-B-NFR-1 | An admin report starts at once, is written in the background with every figure from Part A, streams to any watcher and resumes from its record |
 | pb-011-booking-conversion-from-kafka | contract | P1 | impl | PART-B-FR-5 | Booking conversion after AI interaction is counted from appointments.booked: once per appointment, only for conversations the assistant had |
 | pb-012-the-real-models-behaviour-replays | contract | P1 | impl | PART-B-NFR-2, PART-B-FR-2 | The live model's behaviour, recorded once, replays offline: cited answers, hand-off to the right flow, no dose advice, an injected instruction writes nothing, no made-up answers |
+| pb-013-engagement-summary | contract | P1 | impl | PART-B-FR-4, PART-B-FR-5 | The engagement summary reports active and returning users, chats, chats that led to a booking, the assistant's share of bookings and drafts sent, from the assistant's own records |
 | prv-001-a-deactivated-providers-future-appointments-are-cancelled | workflow | P1 | impl | PART-A-FR-2 | The deactivation workflow cancels each of the provider's future appointments once, skipping ones that ended otherwise |
 | prv-001-admin-registers-a-provider | integration | P0 | impl | PART-A-FR-1 | An admin registers a provider and the change is audited |
 | prv-002-provider-deactivation-end-to-end | integration | P0 | impl | PART-A-FR-2, PART-A-FR-4 | Deactivating a provider cancels their booked appointment through Kafka and Temporal, frees the slot and voids the hold |

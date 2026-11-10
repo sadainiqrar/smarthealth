@@ -111,7 +111,7 @@ class AssistantServicer(assistant_pb2_grpc.AssistantServicer):
     ) -> None:
         self._stores = stores
         self.reports = ReportRunner(stores, reports or InMemoryReports(), parta, model,
-                                    on_usage=self._report_usage)
+                                    on_usage=self._report_usage, usage=usage)
         self._report_store = self.reports._reports
         self._usage = usage
         self._model_label = model_label

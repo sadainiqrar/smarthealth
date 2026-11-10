@@ -1,0 +1,10 @@
+id: pb-013-engagement-summary
+title: "The engagement summary reports active and returning users, chats, chats that led to a booking, the assistant's share of bookings and drafts sent, from the assistant's own records"
+requirement: [PART-B-FR-4, PART-B-FR-5]
+tier: contract
+priority: P1
+status: ready
+# Spec 9.4 "engagement improvement": returning users, and the share of bookings with
+# origin = assistant over time -- this period against the one before, written in the
+# background like every report.
+impl: "tests/tiers/t1_contract/test_assistant_agent.py::test_the_engagement_summary_counts_the_assistants_own_records"

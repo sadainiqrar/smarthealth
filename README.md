@@ -639,7 +639,7 @@ What it does, by role (the starters it offers come from the server, for the call
 | Patient | book, move, cancel, join a waitlist, my appointments, prepare for a test, my prescriptions (word for word), my last visit, my reports (never interpreted) | questions answered from the clinic's guides, with sources; red flags get urgent-care advice, never a booking |
 | Provider | my day, brief me on my next patient, results to review, write patient instructions (into the draft note) | clinic protocols |
 | Front desk | book a walk-in, who's free, today's no-shows, message a doctor's patients | policies for phone queries |
-| Admin | operations snapshot, reports (background, streamed), AI usage per user | trends, from the analytics figures |
+| Admin | operations snapshot; reports written in the background and streamed — weekly and monthly operations, department utilisation, engagement summary; AI usage per user | trends, from the analytics figures |
 
 **Nothing changes without a click on a confirmation**: the model never writes; it hands
 actions to a guided flow, and every write in a flow asks first. Bookings carry an

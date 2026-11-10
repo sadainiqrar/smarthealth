@@ -936,3 +936,31 @@ def test_only_the_passages_an_answer_uses_are_cited():
         "doc:specialties#orthopaedics"
     ]
     assert sources_used("I can't help with that.", [chest, knee]) == []
+
+
+async def test_the_engagement_summary_counts_the_assistants_own_records():
+    """Referenced by tests/cases/pb-013-engagement-summary.yaml."""
+    from assistant_service.main import apply_booking
+
+    async with Harness(FakePartA.seeded()) as h:
+        patient = _token()
+        await h.chat(patient, conversation="e-1", message="late cancellation fee")
+        await h.chat(patient, conversation="e-2", starter="my_appointments")
+        usage = h._server.servicer._usage
+        await apply_booking(usage, _booked_event(str(uuid.uuid4()), "assistant", "e-1"))
+        await apply_booking(usage, _booked_event(str(uuid.uuid4()), "front_desk", None))
+        await usage.draft("u-desk", "d1", "patient_notice", "generated", 0)
+        await usage.draft("u-desk", "d1", "patient_notice", "sent", 3)
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="engagement_30"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+    figures = {f.label: f.value for f in last(events, "card").fields}
+    assert figures["Active users"] == "1"
+    assert figures["Active users by role"] == "1 patient"
+    assert figures["Chats"] == "2"
+    assert figures["Chats that led to a booking"] == "1 of 2 chats (50%)"
+    assert figures["Bookings made with the assistant"] == "1 of 2 (50%)"
+    assert figures["Drafted messages sent"] == "1 of 1, reaching 3 patients"
+    assert events[-1].done.reason == "complete"
