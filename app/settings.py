@@ -11,10 +11,18 @@ from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LlmMode = Literal["fixture", "record", "live"]
+
+#: Development-only Ed25519 signing key. Public in the repository, so it signs nothing
+#: that matters: `app.main` refuses it in production (see `jwt_private_key`).
+DEV_SIGNING_KEY = (
+    "-----BEGIN PRIVATE KEY-----\n"
+    "MC4CAQAwBQYDK2VwBCIEIJBtwyV+dtqRwEGEfHDO2V04AQNLbrJqUX76MxgPRuE3\n"
+    "-----END PRIVATE KEY-----\n"
+)
 
 
 def _encode_credential(value: str) -> str:
@@ -93,14 +101,33 @@ class Settings(BaseSettings):
     #: their slot ended, so it is refused at startup.
     no_show_grace_minutes: int = Field(default=15, ge=0)
 
-    # --- Auth ---
-    # At least 32 bytes: below that PyJWT warns (InsecureKeyLengthWarning) on every
-    # sign and verify, because HMAC-SHA256's security argument assumes a key at least
-    # as long as the digest (RFC 7518 §3.2). Still obviously a development placeholder
-    # — deployments override it through SMARTHEALTH_JWT_SECRET.
-    jwt_secret: str = "dev-secret-change-me-before-deploying-anywhere"
-    jwt_algorithm: str = "HS256"
-    jwt_expiry_minutes: int = 60
+    # --- Auth (Week 3 slice 2; Weeks 3-5 spec D-25) ---
+    # Ed25519 private key, PEM. Asymmetric so the Part B services verify tokens with the
+    # public half (GET /.well-known/jwks.json) and never hold anything that can sign one.
+    # The default is a DEVELOPMENT key, committed on purpose like the HS256 secret it
+    # replaces; the API refuses to start with it when `environment` is "production".
+    # `python -m app.cli generate-signing-key` prints a fresh one.
+    jwt_private_key: str = DEV_SIGNING_KEY
+    jwt_issuer: str = "smarthealth-part-a"
+    #: Short, because revocation acts on the session, and a token whose session is gone is
+    #: refused by Part A at once -- but the Part B services verify the signature alone, so
+    #: this is their worst-case revocation lag if the revocation event never arrives.
+    access_token_minutes: int = Field(default=10, ge=1)
+    #: Absolute: refreshing does not extend a session.
+    session_hours: int = Field(default=12, ge=1)
+    # Login throttling (PART-A-NFR-8): per address, and a looser one per client IP.
+    login_max_failures: int = Field(default=5, ge=1)
+    login_ip_max_failures: int = Field(default=50, ge=1)
+    login_window_minutes: int = Field(default=15, ge=1)
+    #: Per user, on POST /appointments and POST /appointments/{id}/reschedule.
+    booking_rate_limit_per_minute: int = Field(default=10, ge=1)
+
+    @field_validator("jwt_private_key", mode="before")
+    @classmethod
+    def _empty_key_means_the_development_key(cls, value: object) -> object:
+        """Compose passes `SMARTHEALTH_JWT_PRIVATE_KEY=` (empty) when nothing is set, and
+        an empty string must mean "not configured", not "a key that fails to parse"."""
+        return DEV_SIGNING_KEY if value in ("", None) else value
 
     def topic(self, name: str) -> str:
         """Kafka topic name, namespaced by the active resource prefix."""

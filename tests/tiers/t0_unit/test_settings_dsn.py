@@ -99,7 +99,10 @@ def test_isolation_env_names_match_settings_fields(monkeypatch):
     assert settings.redis_db == isolation.redis_db
 
 
-def test_jwt_defaults_are_present():
-    settings = Settings()
-    assert settings.jwt_algorithm == "HS256"
-    assert settings.jwt_expiry_minutes > 0
+def test_token_defaults_are_short_lived_and_signed_with_the_development_key():
+    from app.settings import DEV_SIGNING_KEY
+
+    settings = Settings(_env_file=None)
+    assert settings.jwt_private_key == DEV_SIGNING_KEY
+    assert 0 < settings.access_token_minutes <= 15
+    assert settings.session_hours > 0

@@ -78,3 +78,11 @@ def test_telemetry_export_is_off_unless_an_endpoint_is_configured(monkeypatch):
     settings = Settings(_env_file=None)
     assert settings.otel_endpoint_http == ""
     assert settings.otel_endpoint_grpc == ""
+
+
+def test_an_empty_signing_key_means_the_development_key(monkeypatch):
+    """Compose passes the variable empty when it is unset."""
+    from app.settings import DEV_SIGNING_KEY
+
+    monkeypatch.setenv("SMARTHEALTH_JWT_PRIVATE_KEY", "")
+    assert Settings(_env_file=None).jwt_private_key == DEV_SIGNING_KEY
