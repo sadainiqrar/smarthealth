@@ -31,6 +31,7 @@ from app.modules.identity.models import User, UserRole
 from app.modules.identity.security import generate_signing_key, hash_password
 from app.modules.identity.sessions import RedisSessionStore
 from app.modules.patients import service as patients_service
+from app.modules.providers import service as providers_service
 from app.seed import USERS as SEED_USERS
 from app.seed import clear as seed_clear
 from app.seed import seed as seed_data
@@ -163,13 +164,31 @@ async def deactivate_login(*, settings: Settings, email: str) -> None:
         async with factory() as session:
             try:
                 user, revoked = await identity_service.deactivate_user(
-                    session, email=email, sessions=RedisSessionStore(redis, settings)
+                    session, email=email, sessions=RedisSessionStore(redis, settings),
+                    now=Clock().now(),
                 )
             except DomainError as exc:
                 raise _fail(exc.detail) from None
         print(f"deactivated user id={user.id}; ended {revoked} session(s)")
     finally:
         await redis.aclose()
+        await engine.dispose()
+
+
+async def republish(*, settings: Settings) -> dict[str, int]:
+    """Write one state event per clinic, department and provider to the outbox.
+
+    For rows that existed before their producer did (Weeks 1-2), and for rebuilding a
+    downstream copy. Harmless to repeat: compaction keeps the latest value per key.
+    """
+    engine = create_engine(settings)
+    try:
+        async with create_session_factory(engine)() as session:
+            counts = await providers_service.republish_all(session)
+            await session.commit()
+        print("queued state events: " + ", ".join(f"{k}={v}" for k, v in counts.items()))
+        return counts
+    finally:
         await engine.dispose()
 
 
@@ -269,6 +288,20 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     deactivate_parser.add_argument("--email", required=True)
 
+    replay_parser = subparsers.add_parser(
+        "dlt-replay",
+        help="Re-publish a topic's dead letters to the topic, once their cause is fixed.",
+    )
+    replay_parser.add_argument(
+        "--topic", required=True, help="logical name, e.g. appointments.booked"
+    )
+    replay_parser.add_argument("--limit", type=int, default=None)
+
+    subparsers.add_parser(
+        "republish",
+        help="Queue a state event for every clinic, department and provider (backfill).",
+    )
+
     subparsers.add_parser(
         "generate-signing-key",
         help="Print a new Ed25519 private key (PEM) for SMARTHEALTH_JWT_PRIVATE_KEY.",
@@ -290,6 +323,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
     elif args.command == "deactivate-user":
         asyncio.run(deactivate_login(settings=Settings(), email=args.email))
+    elif args.command == "dlt-replay":
+        from app.events.deadletters import replay
+
+        print(f"replayed {replay(Settings(), args.topic, limit=args.limit)} dead letter(s)")
+    elif args.command == "republish":
+        asyncio.run(republish(settings=Settings()))
     elif args.command == "generate-signing-key":
         print(generate_signing_key(), end="")
     elif args.command == "link-patient":
