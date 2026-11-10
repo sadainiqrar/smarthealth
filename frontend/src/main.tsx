@@ -4,17 +4,21 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import type { Role } from "./auth";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import Appointments from "./pages/Appointments";
+import AssistantPage from "./pages/Assistant";
 import Book from "./pages/Book";
 import Booking from "./pages/Booking";
 import Login from "./pages/Login";
 import Patients from "./pages/Patients";
 import Providers from "./pages/Providers";
 import Waitlist from "./pages/Waitlist";
+import "./index.css";
 import "./styles.css";
 
 // Navigation shows only what the role may do; the API still enforces it.
 const NAV: { to: string; label: string; roles: Role[] }[] = [
+  { to: "/assistant", label: "Assistant", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/patients", label: "Patients", roles: ["front_desk", "admin", "provider"] },
   { to: "/providers", label: "Providers", roles: ["patient", "provider", "front_desk", "admin"] },
   { to: "/appointments", label: "Appointments", roles: ["patient", "provider", "front_desk", "admin"] },
@@ -62,6 +66,7 @@ function App() {
         <Route path="/book" element={<Book />} />
         <Route path="/bookings/:id" element={<Booking />} />
         <Route path="/waitlist" element={<Waitlist />} />
+        <Route path="/assistant" element={<AssistantPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
@@ -72,9 +77,11 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
+        <TooltipProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </TooltipProvider>
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,

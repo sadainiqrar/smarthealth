@@ -1,0 +1,10 @@
+# The demo client's typed gRPC-Web bindings, from the same contracts the services use
+# (contracts/proto). Regenerate with `npm run gen:proto`; the output is committed.
+version: v2
+inputs:
+  - directory: ../contracts/proto
+    paths: [../contracts/proto/smarthealth/assistant/v1/assistant.proto]
+plugins:
+  - local: protoc-gen-es
+    out: src/gen
+    opt: target=ts

@@ -2,19 +2,31 @@
 // gRPC-Web through Envoy (spec D-30). Server-streaming only -- the shape gRPC-Web supports,
 // and the shape of a chat turn.
 //
-// Week 3 slice 7 ships the skeleton: Chat echoes the message, word by word, with
-// citations from knowledge.Search. Week 5 puts the LangGraph agent behind the same call.
+// A turn is free text *or* a structured answer to something the assistant offered:
+// a choice from an Options list, or a decision on a ConfirmationRequired. The assistant
+// answers with a stream that mixes prose (token) with interactive parts the client renders
+// as controls -- choices, confirmation cards, result cards, follow-up suggestions -- so a
+// use case can be driven by clicks, by typing, or by both.
+//
+// Compatibility: fields are only ever added (buf breaking, spec 9.3). Week 3's echo
+// clients still work: they ignore the kinds they do not know.
 syntax = "proto3";
 
 package smarthealth.assistant.v1;
 
 service Assistant {
-  // One turn: the user's message in, a stream of events out. A reconnect sends the same
+  // One turn: the user's input in, a stream of events out. A reconnect sends the same
   // turn_id with resume_from = the last seq it saw, and the stream replays after it.
   rpc Chat(ChatRequest) returns (stream ChatEvent);
+  // Answers a ConfirmationRequired and resumes the paused turn. Its events continue the
+  // same conversation under the new turn_id the client chose.
+  rpc Confirm(ConfirmRequest) returns (stream ChatEvent);
   // "Stop generating": the browser cannot send on an open server stream, so this is a
   // separate call. The turn's stream ends with Done.
   rpc Cancel(CancelRequest) returns (CancelReply);
+  // What this caller can start with: use cases for their role, grouped. The server picks
+  // them from the token's role; the client never sends a role.
+  rpc Starters(StartersRequest) returns (StartersReply);
 }
 
 message ChatRequest {
@@ -24,6 +36,15 @@ message ChatRequest {
   string message = 3;
   // Replay only events with seq greater than this (0: from the start).
   int64 resume_from = 4;
+  // Set instead of (or with) message when the user picked from an Options list.
+  OptionChoice choice = 5;
+  // Set when the user started from a Starter: begins that use case's flow directly.
+  string starter_id = 6;
+}
+
+message OptionChoice {
+  string options_id = 1;
+  string option_id = 2;
 }
 
 message ChatEvent {
@@ -35,16 +56,23 @@ message ChatEvent {
     Citation citation = 4;
     Done done = 5;
     Error error = 6;
+    ToolActivity tool = 7;
+    Options options = 8;
+    ConfirmationRequired confirmation = 9;
+    Card card = 10;
+    Suggestions suggestions = 11;
   }
 }
 
 message Citation {
   string source_id = 1;
   string title = 2;
+  string snippet = 3;
 }
 
 message Done {
-  // "complete" or "cancelled".
+  // "complete", "cancelled", or "awaiting_input" (the turn paused on Options or a
+  // ConfirmationRequired; the conversation continues with the user's answer).
   string reason = 1;
 }
 
@@ -53,10 +81,105 @@ message Error {
   string message = 2;
 }
 
+// A step the assistant took on the user's behalf: a lookup in Part A, a search in
+// knowledge. Sent twice per call -- running, then done or failed -- under one call_id.
+message ToolActivity {
+  string call_id = 1;
+  string name = 2;
+  // Human words: "Looking up free cardiology slots".
+  string label = 3;
+  // "running" | "done" | "failed"
+  string status = 4;
+  string summary = 5;
+}
+
+// A choice the user answers with a click (or by typing). The turn ends awaiting input.
+message Options {
+  string options_id = 1;
+  string prompt = 2;
+  repeated Option options = 3;
+  // How the client should lay them out: "list" (rich rows) or "chips" (short labels).
+  string style = 4;
+}
+
+message Option {
+  string id = 1;
+  string label = 2;
+  string description = 3;
+  // Optional small tag: "Earliest", "Same doctor as last time".
+  string badge = 4;
+}
+
+// A write the assistant will make only with the user's yes (spec 9.2): booking, cancel,
+// reschedule, waitlist, sending a message. Nothing has happened yet when this is sent.
+message ConfirmationRequired {
+  string confirmation_id = 1;
+  // "book_appointment", "cancel_appointment", ...
+  string action = 2;
+  string title = 3;
+  repeated Field details = 4;
+  string confirm_label = 5;
+  string deny_label = 6;
+  // "normal" | "destructive" -- a cancel is styled differently from a booking.
+  string tone = 7;
+}
+
+// A structured result: an appointment, a slot, a prescription, a test order.
+message Card {
+  string kind = 1;
+  string title = 2;
+  string subtitle = 3;
+  repeated Field fields = 4;
+  string badge = 5;
+  // Where the demo client can show the record (e.g. "/bookings/<id>"); may be empty.
+  string link = 6;
+}
+
+message Field {
+  string label = 1;
+  string value = 2;
+}
+
+// Follow-ups offered at the end of a turn; clicking one sends it as the next message.
+message Suggestions {
+  repeated string items = 1;
+}
+
+message ConfirmRequest {
+  string conversation_id = 1;
+  // The new turn the decision starts (chosen by the client, like ChatRequest.turn_id).
+  string turn_id = 2;
+  string confirmation_id = 3;
+  bool approved = 4;
+  int64 resume_from = 5;
+}
+
 message CancelRequest {
   string turn_id = 1;
 }
 
 message CancelReply {
   bool cancelled = 1;
+}
+
+message StartersRequest {}
+
+message StartersReply {
+  repeated StarterGroup groups = 1;
+}
+
+message StarterGroup {
+  string title = 1;
+  repeated Starter starters = 2;
+}
+
+message Starter {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  // A lucide icon name the client maps to a glyph ("calendar-plus", "pill", ...).
+  string icon = 4;
+  // "flow": a guided, click-driven use case; "prompt": sends `prompt` as a chat message.
+  string mode = 5;
+  string prompt = 6;
 }

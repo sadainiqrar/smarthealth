@@ -66,7 +66,9 @@ async function refreshTokens(): Promise<boolean> {
   return true;
 }
 
-function refreshOnce(): Promise<boolean> {
+/** Refresh the access token once (shared with in-flight refreshes); false if the session is over.
+ * Used by the gRPC-Web client too, which sees an expired token as UNAUTHENTICATED. */
+export function refreshOnce(): Promise<boolean> {
   refreshing ??= refreshTokens()
     .catch(() => false)
     .finally(() => {
@@ -109,4 +111,9 @@ export async function api<T>(path: string, options: Options = {}, retried = fals
     throw new ApiError(response.status, error, detail);
   }
   return (response.status === 204 ? undefined : await response.json()) as T;
+}
+
+/** The session is over (a refresh failed): log the user out, as a 401 from `api` does. */
+export function sessionEnded(): void {
+  onUnauthorised();
 }

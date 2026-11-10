@@ -24,27 +24,53 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n(smarthealth/assistant/v1/assistant.proto\x12\x18smarthealth.assistant.v1\"]\n\x0b\x43hatRequest\x12\x17\n\x0f\x63onversation_id\x18\x01 \x01(\t\x12\x0f\n\x07turn_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x13\n\x0bresume_from\x18\x04 \x01(\x03\"\xdc\x01\n\tChatEvent\x12\x0f\n\x07turn_id\x18\x01 \x01(\t\x12\x0b\n\x03seq\x18\x02 \x01(\x03\x12\x0f\n\x05token\x18\x03 \x01(\tH\x00\x12\x36\n\x08\x63itation\x18\x04 \x01(\x0b\x32\".smarthealth.assistant.v1.CitationH\x00\x12.\n\x04\x64one\x18\x05 \x01(\x0b\x32\x1e.smarthealth.assistant.v1.DoneH\x00\x12\x30\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x1f.smarthealth.assistant.v1.ErrorH\x00\x42\x06\n\x04kind\",\n\x08\x43itation\x12\x11\n\tsource_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\"\x16\n\x04\x44one\x12\x0e\n\x06reason\x18\x01 \x01(\t\"&\n\x05\x45rror\x12\x0c\n\x04\x63ode\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\" \n\rCancelRequest\x12\x0f\n\x07turn_id\x18\x01 \x01(\t\" \n\x0b\x43\x61ncelReply\x12\x11\n\tcancelled\x18\x01 \x01(\x08\x32\xbb\x01\n\tAssistant\x12T\n\x04\x43hat\x12%.smarthealth.assistant.v1.ChatRequest\x1a#.smarthealth.assistant.v1.ChatEvent0\x01\x12X\n\x06\x43\x61ncel\x12\'.smarthealth.assistant.v1.CancelRequest\x1a%.smarthealth.assistant.v1.CancelReplyb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n(smarthealth/assistant/v1/assistant.proto\x12\x18smarthealth.assistant.v1\"\xa9\x01\n\x0b\x43hatRequest\x12\x17\n\x0f\x63onversation_id\x18\x01 \x01(\t\x12\x0f\n\x07turn_id\x18\x02 \x01(\t\x12\x0f\n\x07message\x18\x03 \x01(\t\x12\x13\n\x0bresume_from\x18\x04 \x01(\x03\x12\x36\n\x06\x63hoice\x18\x05 \x01(\x0b\x32&.smarthealth.assistant.v1.OptionChoice\x12\x12\n\nstarter_id\x18\x06 \x01(\t\"5\n\x0cOptionChoice\x12\x12\n\noptions_id\x18\x01 \x01(\t\x12\x11\n\toption_id\x18\x02 \x01(\t\"\x80\x04\n\tChatEvent\x12\x0f\n\x07turn_id\x18\x01 \x01(\t\x12\x0b\n\x03seq\x18\x02 \x01(\x03\x12\x0f\n\x05token\x18\x03 \x01(\tH\x00\x12\x36\n\x08\x63itation\x18\x04 \x01(\x0b\x32\".smarthealth.assistant.v1.CitationH\x00\x12.\n\x04\x64one\x18\x05 \x01(\x0b\x32\x1e.smarthealth.assistant.v1.DoneH\x00\x12\x30\n\x05\x65rror\x18\x06 \x01(\x0b\x32\x1f.smarthealth.assistant.v1.ErrorH\x00\x12\x36\n\x04tool\x18\x07 \x01(\x0b\x32&.smarthealth.assistant.v1.ToolActivityH\x00\x12\x34\n\x07options\x18\x08 \x01(\x0b\x32!.smarthealth.assistant.v1.OptionsH\x00\x12\x46\n\x0c\x63onfirmation\x18\t \x01(\x0b\x32..smarthealth.assistant.v1.ConfirmationRequiredH\x00\x12.\n\x04\x63\x61rd\x18\n \x01(\x0b\x32\x1e.smarthealth.assistant.v1.CardH\x00\x12<\n\x0bsuggestions\x18\x0b \x01(\x0b\x32%.smarthealth.assistant.v1.SuggestionsH\x00\x42\x06\n\x04kind\"=\n\x08\x43itation\x12\x11\n\tsource_id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x0f\n\x07snippet\x18\x03 \x01(\t\"\x16\n\x04\x44one\x12\x0e\n\x06reason\x18\x01 \x01(\t\"&\n\x05\x45rror\x12\x0c\n\x04\x63ode\x18\x01 \x01(\t\x12\x0f\n\x07message\x18\x02 \x01(\t\"]\n\x0cToolActivity\x12\x0f\n\x07\x63\x61ll_id\x18\x01 \x01(\t\x12\x0c\n\x04name\x18\x02 \x01(\t\x12\r\n\x05label\x18\x03 \x01(\t\x12\x0e\n\x06status\x18\x04 \x01(\t\x12\x0f\n\x07summary\x18\x05 \x01(\t\"o\n\x07Options\x12\x12\n\noptions_id\x18\x01 \x01(\t\x12\x0e\n\x06prompt\x18\x02 \x01(\t\x12\x31\n\x07options\x18\x03 \x03(\x0b\x32 .smarthealth.assistant.v1.Option\x12\r\n\x05style\x18\x04 \x01(\t\"G\n\x06Option\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05label\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\r\n\x05\x62\x61\x64ge\x18\x04 \x01(\t\"\xb9\x01\n\x14\x43onfirmationRequired\x12\x17\n\x0f\x63onfirmation_id\x18\x01 \x01(\t\x12\x0e\n\x06\x61\x63tion\x18\x02 \x01(\t\x12\r\n\x05title\x18\x03 \x01(\t\x12\x30\n\x07\x64\x65tails\x18\x04 \x03(\x0b\x32\x1f.smarthealth.assistant.v1.Field\x12\x15\n\rconfirm_label\x18\x05 \x01(\t\x12\x12\n\ndeny_label\x18\x06 \x01(\t\x12\x0c\n\x04tone\x18\x07 \x01(\t\"\x83\x01\n\x04\x43\x61rd\x12\x0c\n\x04kind\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x10\n\x08subtitle\x18\x03 \x01(\t\x12/\n\x06\x66ields\x18\x04 \x03(\x0b\x32\x1f.smarthealth.assistant.v1.Field\x12\r\n\x05\x62\x61\x64ge\x18\x05 \x01(\t\x12\x0c\n\x04link\x18\x06 \x01(\t\"%\n\x05\x46ield\x12\r\n\x05label\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\t\"\x1c\n\x0bSuggestions\x12\r\n\x05items\x18\x01 \x03(\t\"z\n\x0e\x43onfirmRequest\x12\x17\n\x0f\x63onversation_id\x18\x01 \x01(\t\x12\x0f\n\x07turn_id\x18\x02 \x01(\t\x12\x17\n\x0f\x63onfirmation_id\x18\x03 \x01(\t\x12\x10\n\x08\x61pproved\x18\x04 \x01(\x08\x12\x13\n\x0bresume_from\x18\x05 \x01(\x03\" \n\rCancelRequest\x12\x0f\n\x07turn_id\x18\x01 \x01(\t\" \n\x0b\x43\x61ncelReply\x12\x11\n\tcancelled\x18\x01 \x01(\x08\"\x11\n\x0fStartersRequest\"G\n\rStartersReply\x12\x36\n\x06groups\x18\x01 \x03(\x0b\x32&.smarthealth.assistant.v1.StarterGroup\"R\n\x0cStarterGroup\x12\r\n\x05title\x18\x01 \x01(\t\x12\x33\n\x08starters\x18\x02 \x03(\x0b\x32!.smarthealth.assistant.v1.Starter\"e\n\x07Starter\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\x0c\n\x04icon\x18\x04 \x01(\t\x12\x0c\n\x04mode\x18\x05 \x01(\t\x12\x0e\n\x06prompt\x18\x06 \x01(\t2\xf7\x02\n\tAssistant\x12T\n\x04\x43hat\x12%.smarthealth.assistant.v1.ChatRequest\x1a#.smarthealth.assistant.v1.ChatEvent0\x01\x12Z\n\x07\x43onfirm\x12(.smarthealth.assistant.v1.ConfirmRequest\x1a#.smarthealth.assistant.v1.ChatEvent0\x01\x12X\n\x06\x43\x61ncel\x12\'.smarthealth.assistant.v1.CancelRequest\x1a%.smarthealth.assistant.v1.CancelReply\x12^\n\x08Starters\x12).smarthealth.assistant.v1.StartersRequest\x1a\'.smarthealth.assistant.v1.StartersReplyb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'smarthealth.assistant.v1.assistant_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_CHATREQUEST']._serialized_start=70
-  _globals['_CHATREQUEST']._serialized_end=163
-  _globals['_CHATEVENT']._serialized_start=166
-  _globals['_CHATEVENT']._serialized_end=386
-  _globals['_CITATION']._serialized_start=388
-  _globals['_CITATION']._serialized_end=432
-  _globals['_DONE']._serialized_start=434
-  _globals['_DONE']._serialized_end=456
-  _globals['_ERROR']._serialized_start=458
-  _globals['_ERROR']._serialized_end=496
-  _globals['_CANCELREQUEST']._serialized_start=498
-  _globals['_CANCELREQUEST']._serialized_end=530
-  _globals['_CANCELREPLY']._serialized_start=532
-  _globals['_CANCELREPLY']._serialized_end=564
-  _globals['_ASSISTANT']._serialized_start=567
-  _globals['_ASSISTANT']._serialized_end=754
+  _globals['_CHATREQUEST']._serialized_start=71
+  _globals['_CHATREQUEST']._serialized_end=240
+  _globals['_OPTIONCHOICE']._serialized_start=242
+  _globals['_OPTIONCHOICE']._serialized_end=295
+  _globals['_CHATEVENT']._serialized_start=298
+  _globals['_CHATEVENT']._serialized_end=810
+  _globals['_CITATION']._serialized_start=812
+  _globals['_CITATION']._serialized_end=873
+  _globals['_DONE']._serialized_start=875
+  _globals['_DONE']._serialized_end=897
+  _globals['_ERROR']._serialized_start=899
+  _globals['_ERROR']._serialized_end=937
+  _globals['_TOOLACTIVITY']._serialized_start=939
+  _globals['_TOOLACTIVITY']._serialized_end=1032
+  _globals['_OPTIONS']._serialized_start=1034
+  _globals['_OPTIONS']._serialized_end=1145
+  _globals['_OPTION']._serialized_start=1147
+  _globals['_OPTION']._serialized_end=1218
+  _globals['_CONFIRMATIONREQUIRED']._serialized_start=1221
+  _globals['_CONFIRMATIONREQUIRED']._serialized_end=1406
+  _globals['_CARD']._serialized_start=1409
+  _globals['_CARD']._serialized_end=1540
+  _globals['_FIELD']._serialized_start=1542
+  _globals['_FIELD']._serialized_end=1579
+  _globals['_SUGGESTIONS']._serialized_start=1581
+  _globals['_SUGGESTIONS']._serialized_end=1609
+  _globals['_CONFIRMREQUEST']._serialized_start=1611
+  _globals['_CONFIRMREQUEST']._serialized_end=1733
+  _globals['_CANCELREQUEST']._serialized_start=1735
+  _globals['_CANCELREQUEST']._serialized_end=1767
+  _globals['_CANCELREPLY']._serialized_start=1769
+  _globals['_CANCELREPLY']._serialized_end=1801
+  _globals['_STARTERSREQUEST']._serialized_start=1803
+  _globals['_STARTERSREQUEST']._serialized_end=1820
+  _globals['_STARTERSREPLY']._serialized_start=1822
+  _globals['_STARTERSREPLY']._serialized_end=1893
+  _globals['_STARTERGROUP']._serialized_start=1895
+  _globals['_STARTERGROUP']._serialized_end=1977
+  _globals['_STARTER']._serialized_start=1979
+  _globals['_STARTER']._serialized_end=2080
+  _globals['_ASSISTANT']._serialized_start=2083
+  _globals['_ASSISTANT']._serialized_end=2458
 # @@protoc_insertion_point(module_scope)
