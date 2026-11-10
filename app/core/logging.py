@@ -1,7 +1,8 @@
 """Structured logging.
 
-JSON lines so that a log aggregator can index fields rather than regex them. The
-OpenTelemetry trace/span ids join this record in Week 3.
+JSON lines so that a log aggregator can index fields rather than regex them. A record
+written inside an OpenTelemetry span carries that span's `trace_id` and `span_id`, so a
+log line leads straight to its trace in Jaeger.
 
 Installing a formatter on the root logger is not on its own enough to make a *process*
 emit structured logs, which is the only claim worth making. uvicorn's `LOGGING_CONFIG`
@@ -18,6 +19,8 @@ import logging
 import sys
 from datetime import UTC, datetime
 
+from opentelemetry import trace
+
 _RESERVED = frozenset(
     logging.LogRecord("", 0, "", 0, "", (), None).__dict__
 ) | {"asctime", "message"}
@@ -33,6 +36,10 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
         }
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            payload["trace_id"] = format(context.trace_id, "032x")
+            payload["span_id"] = format(context.span_id, "016x")
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         if record.stack_info:
