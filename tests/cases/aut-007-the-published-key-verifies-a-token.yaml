@@ -1,0 +1,11 @@
+id: aut-007-the-published-key-verifies-a-token
+title: "GET /.well-known/jwks.json publishes an Ed25519 key that verifies an issued token, and nothing that can sign one"
+requirement: [PART-A-NFR-8]
+tier: contract
+priority: P1
+status: ready
+# What the Part B services will do (Weeks 3-5 spec D-25): fetch the key once and verify
+# tokens locally, holding nothing that could mint one. The token's `kid` header names the
+# key; an HS256 token keyed with the public key is refused (algorithm confusion,
+# test_security.py::test_an_hs256_token_is_rejected_even_when_keyed_with_the_public_key).
+impl: "tests/tiers/t1_contract/test_sessions_contract.py::test_the_published_key_verifies_an_issued_token"

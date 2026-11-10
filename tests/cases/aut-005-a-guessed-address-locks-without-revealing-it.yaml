@@ -1,0 +1,12 @@
+id: aut-005-a-guessed-address-locks-without-revealing-it
+title: "After five failed logins an address is locked, and the lock answers exactly like a wrong password"
+requirement: [PART-A-NFR-8]
+tier: integration
+priority: P0
+status: ready
+# Throttling must not undo the no-enumeration guarantee: a distinct 429 would tell an
+# attacker only real addresses lock, and a fast refusal would tell them by timing. So an
+# unknown address locks too, and a locked login -- even with the right password -- still
+# pays the argon2 verify and answers the identical 401. The timing half is pinned in T0
+# (test_identity_service.py::test_an_address_is_locked_after_too_many_failures_even_with_the_right_password).
+impl: "tests/tiers/t3_integration/test_sessions_api.py::test_an_address_is_locked_after_five_failures_and_says_nothing_new"

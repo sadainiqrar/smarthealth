@@ -1,0 +1,11 @@
+id: aut-006-a-replayed-refresh-token-ends-the-session
+title: "Presenting a spent refresh token is refused and ends the session, killing the newer token too"
+requirement: [PART-A-NFR-8]
+tier: contract
+priority: P0
+status: ready
+# A refresh token is single use. Its previous secret coming back means a copy was stolen
+# and replayed; the session is revoked so the thief's and the victim's tokens both die,
+# and the victim's next login is the only live session. Rotation is atomic in Redis (one
+# Lua script) -- test_session_store_redis.py::test_two_concurrent_refreshes_with_one_token_cannot_both_win.
+impl: "tests/tiers/t1_contract/test_sessions_contract.py::test_replaying_a_spent_refresh_token_is_refused_and_ends_the_session"

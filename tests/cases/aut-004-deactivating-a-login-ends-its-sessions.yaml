@@ -1,0 +1,11 @@
+id: aut-004-deactivating-a-login-ends-its-sessions
+title: "Deactivating a login ends its live sessions immediately, not when its token expires"
+requirement: [PART-A-NFR-8, PART-A-FR-1.3]
+tier: integration
+priority: P0
+status: ready
+# Closes the gap the Week 1 API spec deferred (section 11): `is_active` was read only at
+# login, so a deactivated account kept access for the token's whole lifetime.
+# `deactivate_user` writes the row, then revokes every session of the user; the CLI
+# command is proven by test_cli.py::test_deactivate_user_stops_login_and_ends_live_sessions.
+impl: "tests/tiers/t3_integration/test_sessions_api.py::test_deactivating_a_login_ends_its_live_sessions"

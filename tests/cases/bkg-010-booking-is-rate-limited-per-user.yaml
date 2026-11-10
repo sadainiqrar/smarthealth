@@ -1,0 +1,11 @@
+id: bkg-010-booking-is-rate-limited-per-user
+title: "A user over the booking rate limit gets 429 with Retry-After, before any workflow starts"
+requirement: [PART-A-NFR-5]
+tier: contract
+priority: P1
+status: ready
+# Per user, shared by POST /appointments and POST /appointments/{id}/reschedule (both
+# start a workflow and claim a slot), counted in Redis in fixed one-minute windows. The
+# test fills the window and shows the next request refused with no Temporal call -- the
+# shared app's Temporal client would fail if one were made.
+impl: "tests/tiers/t1_contract/test_sessions_contract.py::test_the_booking_rate_limit_answers_429_with_retry_after"

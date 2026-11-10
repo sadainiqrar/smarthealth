@@ -1,0 +1,11 @@
+id: aut-003-a-session-ends-when-it-is-logged-out
+title: "Logging out ends the session at once: every access token of it and its refresh token stop working"
+requirement: [PART-A-NFR-8]
+tier: integration
+priority: P0
+status: ready
+# Week 3 slice 2 (Weeks 3-5 spec D-25). Before it, a JWT stayed valid until it expired
+# (60 minutes) whatever the user did. Now a token is honoured only while the session it
+# names exists in Redis; the test logs in, refreshes, logs out, and shows both access
+# tokens and the spent refresh token refused -- not at expiry, on the next request.
+impl: "tests/tiers/t3_integration/test_sessions_api.py::test_login_refresh_and_logout_round_trip"

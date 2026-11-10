@@ -6,15 +6,15 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 48 |
-| contract | 7 |
-| integration | 26 |
+| Total cases | 54 |
+| contract | 10 |
+| integration | 29 |
 | unit | 5 |
 | workflow | 10 |
-| P0 | 27 |
-| P1 | 21 |
+| P0 | 31 |
+| P1 | 23 |
 | declarative | 1 |
-| impl-backed | 47 |
+| impl-backed | 53 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -24,6 +24,11 @@
 | --- | --- | --- | --- | --- | --- |
 | aut-001-login-issues-a-token | integration | P0 | impl | PART-A-FR-1 | A valid email and password exchange for a bearer token |
 | aut-002-login-does-not-block-the-event-loop | unit | P1 | impl | PART-A-NFR-5 | Password verification runs off the event loop, so one login cannot stall the worker |
+| aut-003-a-session-ends-when-it-is-logged-out | integration | P0 | impl | PART-A-NFR-8 | Logging out ends the session at once: every access token of it and its refresh token stop working |
+| aut-004-deactivating-a-login-ends-its-sessions | integration | P0 | impl | PART-A-NFR-8, PART-A-FR-1.3 | Deactivating a login ends its live sessions immediately, not when its token expires |
+| aut-005-a-guessed-address-locks-without-revealing-it | integration | P0 | impl | PART-A-NFR-8 | After five failed logins an address is locked, and the lock answers exactly like a wrong password |
+| aut-006-a-replayed-refresh-token-ends-the-session | contract | P0 | impl | PART-A-NFR-8 | Presenting a spent refresh token is refused and ends the session, killing the newer token too |
+| aut-007-the-published-key-verifies-a-token | contract | P1 | impl | PART-A-NFR-8 | GET /.well-known/jwks.json publishes an Ed25519 key that verifies an issued token, and nothing that can sign one |
 | bkg-001-confirmed-only-after-every-step | workflow | P0 | impl | PART-A-FR-2 | A booking is confirmed only after every workflow step has succeeded, in order |
 | bkg-002-a-failed-step-compensates | workflow | P0 | impl | PART-A-NFR-2 | Any failing booking step runs compensation, is not retried, and never confirms |
 | bkg-003-one-slot-one-winner | integration | P0 | impl | PART-A-NFR-1 | A claim blocked behind a winning claim on the same slot loses on the conditional UPDATE |
@@ -33,6 +38,7 @@
 | bkg-007-a-booking-that-failed-before-its-row-reads-as-failed | contract | P1 | impl | PART-A-FR-2 | GET of a booking whose workflow closed before writing its row reads failed, not pending forever |
 | bkg-008-a-patient-cannot-hold-two-overlapping-appointments | integration | P0 | impl | PART-A-FR-2, PART-A-NFR-1 | Two concurrent claims for one patient at overlapping slots of different providers admit exactly one |
 | bkg-009-a-deactivated-provider-takes-no-new-bookings | integration | P0 | impl | PART-A-FR-2 | A booking for a deactivated provider's slot ends failed with the slot still free |
+| bkg-010-booking-is-rate-limited-per-user | contract | P1 | impl | PART-A-NFR-5 | A user over the booking rate limit gets 429 with Retry-After, before any workflow starts |
 | cnl-001-a-cancel-frees-the-slot-in-one-write | integration | P0 | impl | PART-A-FR-2 | Cancelling a confirmed appointment moves the appointment and its slot together, or neither |
 | obs-001-every-request-is-traced-and-measured | contract | P1 | impl | PART-A-OBS-2, PART-A-OBS-3 | Every API request produces a SERVER span named by its route and a duration measurement; health probes produce neither |
 | obs-002-a-workflow-run-joins-the-trace-that-started-it | workflow | P0 | impl | PART-A-OBS-2 | A workflow's run span belongs to the same trace as the client span that started it |
