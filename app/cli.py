@@ -24,9 +24,12 @@ from app.core.errors import DomainError
 from app.db.constraints import violated_constraint
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
+from app.db.redis import create_redis_client
 from app.db.session import create_session_factory
+from app.modules.identity import service as identity_service
 from app.modules.identity.models import User, UserRole
-from app.modules.identity.security import hash_password
+from app.modules.identity.security import generate_signing_key, hash_password
+from app.modules.identity.sessions import RedisSessionStore
 from app.modules.patients import service as patients_service
 from app.seed import USERS as SEED_USERS
 from app.seed import clear as seed_clear
@@ -147,6 +150,29 @@ async def link_patient(*, settings: Settings, email: str, mrn: str) -> None:
         await engine.dispose()
 
 
+async def deactivate_login(*, settings: Settings, email: str) -> None:
+    """Stop a login from authenticating and end every session it has, or exit(1).
+
+    The Week 1 gap this closes: deactivating an account used to stop the next login but
+    not the token already issued, for up to its whole lifetime.
+    """
+    engine = create_engine(settings)
+    redis = create_redis_client(settings)
+    try:
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            try:
+                user, revoked = await identity_service.deactivate_user(
+                    session, email=email, sessions=RedisSessionStore(redis, settings)
+                )
+            except DomainError as exc:
+                raise _fail(exc.detail) from None
+        print(f"deactivated user id={user.id}; ended {revoked} session(s)")
+    finally:
+        await redis.aclose()
+        await engine.dispose()
+
+
 async def run_seed(
     *, settings: Settings, password: str, patient_count: int, clear: bool
 ) -> None:
@@ -237,6 +263,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     link_parser.add_argument("--email", required=True)
     link_parser.add_argument("--mrn", required=True)
 
+    deactivate_parser = subparsers.add_parser(
+        "deactivate-user",
+        help="Stop a login from authenticating and end all of its sessions now.",
+    )
+    deactivate_parser.add_argument("--email", required=True)
+
+    subparsers.add_parser(
+        "generate-signing-key",
+        help="Print a new Ed25519 private key (PEM) for SMARTHEALTH_JWT_PRIVATE_KEY.",
+    )
+
     return parser.parse_args(argv)
 
 
@@ -251,6 +288,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 role=args.role,
             )
         )
+    elif args.command == "deactivate-user":
+        asyncio.run(deactivate_login(settings=Settings(), email=args.email))
+    elif args.command == "generate-signing-key":
+        print(generate_signing_key(), end="")
     elif args.command == "link-patient":
         asyncio.run(link_patient(settings=Settings(), email=args.email, mrn=args.mrn))
     elif args.command == "seed":

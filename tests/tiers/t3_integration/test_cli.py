@@ -6,6 +6,7 @@ to the test suite.
 """
 
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -210,3 +211,33 @@ async def test_a_user_already_linked_to_another_patient_is_refused(
     assert first.mrn in err
     assert await _linked_user(factory, second.id) is None
     assert await audit_documents.count_documents({}) == 0
+
+
+async def test_deactivate_user_stops_login_and_ends_live_sessions(db_settings, db_session):
+    """`deactivate-user`: the row and the sessions, both. A live session left behind is
+    the Week 1 gap -- access until the token expired."""
+    from app.cli import deactivate_login
+    from app.db.redis import create_redis_client
+    from app.modules.identity.sessions import RedisSessionStore
+
+    email = f"cli-{uuid.uuid4().hex[:8]}@example.com"
+    await create_user(settings=db_settings, email=email, password="x1", role="admin")
+    user = await db_session.scalar(select(User).where(User.email == email))
+    redis = create_redis_client(db_settings)
+    store = RedisSessionStore(redis, db_settings)
+    try:
+        issued = await store.issue(user_id=str(user.id), role="admin", lifetime=timedelta(hours=1))
+        await deactivate_login(settings=db_settings, email=email)
+        assert not await store.is_active(issued.session_id)
+    finally:
+        await redis.aclose()
+    await db_session.refresh(user)
+    assert user.is_active is False
+
+
+async def test_deactivate_user_refuses_an_unknown_email(db_settings, capsys):
+    from app.cli import deactivate_login
+
+    with pytest.raises(SystemExit):
+        await deactivate_login(settings=db_settings, email="nobody-at-all@example.com")
+    assert "no login with email" in capsys.readouterr().err
