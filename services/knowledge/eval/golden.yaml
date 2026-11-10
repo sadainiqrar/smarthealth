@@ -1,0 +1,122 @@
+# The golden set: questions and the passages that should answer them (spec section 8.5).
+#
+# `expect` lists acceptable source ids; a question is a hit at k when any of them is in the
+# top k. `expect: []` means nothing in the corpus is relevant and the right answer is an
+# empty result -- the assistant then says it does not know. `audience` is the caller's.
+# Phrased the way patients and staff actually ask: vague, with symptoms instead of
+# specialties, and rarely in the corpus's own words.
+
+- q: Who should I see for chest tightness when I climb stairs?
+  audience: patient
+  expect: [doc:specialties#cardiology, doc:urgent-care#chest-pain]
+- q: I have a rash that keeps coming back, which doctor?
+  audience: patient
+  expect: [doc:specialties#dermatology]
+- q: my thyroid might be underactive who treats that
+  audience: patient
+  expect: [doc:specialties#endocrinology, doc:prep-blood-tests#thyroid-function-test]
+- q: constant heartburn and stomach pain
+  audience: patient
+  expect: [doc:specialties#gastroenterology]
+- q: I keep getting bad migraines
+  audience: patient
+  expect: [doc:specialties#neurology]
+- q: knee pain from arthritis
+  audience: patient
+  expect: [doc:specialties#orthopaedics]
+- q: my child has asthma, who can see her?
+  audience: patient
+  expect: [doc:specialties#paediatrics]
+- q: ringing in my ears
+  audience: patient
+  expect: [doc:specialties#ear-nose-and-throat-ent]
+- q: I'm not sure who to book with
+  audience: patient
+  expect: [doc:specialties#general-practice, doc:specialties#medinova-specialties]
+- q: What do I do before my fasting blood test on Friday?
+  audience: patient
+  expect: [doc:prep-blood-tests#fasting-blood-test]
+- q: can I drink coffee before a fasting test
+  audience: patient
+  expect: [doc:prep-blood-tests#fasting-blood-test]
+- q: Do I need to fast for HbA1c?
+  audience: patient
+  expect: [doc:prep-blood-tests#hba1c]
+- q: I take levothyroxine, when should I have my thyroid blood test?
+  audience: patient
+  expect: [doc:prep-blood-tests#thyroid-function-test]
+- q: what should I wear for a blood test
+  audience: patient
+  expect: [doc:prep-blood-tests#on-the-day]
+- q: I have a pacemaker, can I have an MRI?
+  audience: patient
+  expect: [doc:prep-imaging#mri-scan]
+- q: MRI with contrast kidney test
+  audience: patient
+  expect: [doc:prep-imaging#mri-with-contrast]
+- q: should I eat before an abdominal ultrasound
+  audience: patient
+  expect: [doc:prep-imaging#abdominal-ultrasound]
+- q: full bladder for pelvic scan
+  audience: patient
+  expect: [doc:prep-imaging#abdominal-ultrasound]
+- q: what can I eat the day before a colonoscopy
+  audience: patient
+  expect: [doc:colonoscopy-preparation#preparing-for-a-colonoscopy]
+- q: do I need someone to take me home after the colonoscopy sedation
+  audience: patient
+  expect: [doc:colonoscopy-preparation#preparing-for-a-colonoscopy]
+- q: How do I move my appointment to another day?
+  audience: patient
+  expect: [doc:faq#how-do-i-reschedule-or-move-my-appointment]
+- q: what happens on the waitlist
+  audience: patient
+  expect: [doc:faq#what-is-the-waitlist]
+- q: what documents should I bring
+  audience: patient
+  expect: [doc:faq#what-should-i-bring-to-my-appointment]
+- q: I need a Polish interpreter
+  audience: patient
+  expect: [doc:faq#can-i-get-an-interpreter]
+- q: is parking free
+  audience: patient
+  expect: [doc:faq#is-there-parking]
+- q: Is there a fee if I cancel late?
+  audience: patient
+  expect: [doc:policies#cancellation-policy-and-late-cancellation-fee]
+- q: what happens if I miss my appointment
+  audience: patient
+  expect: [doc:policies#missed-appointments-no-shows]
+- q: why is there a hold on my card
+  audience: patient
+  expect: [doc:policies#payment-and-the-card-hold]
+- q: when will my refund arrive
+  audience: patient
+  expect: [doc:policies#payment-and-the-card-hold]
+- q: my face is drooping and I can't lift my arm
+  audience: patient
+  expect: [doc:urgent-care#signs-of-a-stroke]
+- q: Who can see my diagnosis?
+  audience: patient
+  expect: [doc:policies#privacy]
+- q: What's our referral process for physiotherapy?
+  audience: staff
+  expect: [doc:protocol-referrals#physiotherapy-referral-process]
+- q: how quickly must an urgent cancer referral be booked
+  audience: staff
+  expect: [doc:protocol-referrals#specialist-referral]
+- q: who reviews lab results and how fast
+  audience: staff
+  expect: [doc:protocol-referrals#reviewing-results]
+- q: registering a walk-in without an account
+  audience: staff
+  expect: [doc:protocol-front-desk#registering-a-walk-in-patient]
+- q: a clinician called in sick, what do I tell their patients
+  audience: staff
+  expect: [doc:protocol-front-desk#when-a-clinician-is-unavailable]
+- q: What is the capital of France?
+  audience: patient
+  expect: []
+- q: give me a lasagne recipe
+  audience: patient
+  expect: []

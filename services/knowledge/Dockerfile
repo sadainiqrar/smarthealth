@@ -6,6 +6,10 @@ COPY services/knowledge/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY services/knowledge/gen ./gen
 COPY services/knowledge/knowledge_service ./knowledge_service
+# The corpus is ingested at start-up; the eval files let `python -m knowledge_service.eval`
+# run inside the container.
+COPY services/knowledge/corpus ./corpus
+COPY services/knowledge/eval ./eval
 EXPOSE 50052
 HEALTHCHECK --interval=10s --timeout=5s --retries=12   CMD python -c "import grpc; from grpc_health.v1 import health_pb2 as h, health_pb2_grpc as g; c=grpc.insecure_channel('localhost:50052'); r=g.HealthStub(c).Check(h.HealthCheckRequest(), timeout=3); raise SystemExit(0 if r.status==1 else 1)"
 CMD ["python", "-m", "knowledge_service.main"]

@@ -241,10 +241,14 @@ services:
       KNOWLEDGE_ENVIRONMENT: docker
       KNOWLEDGE_DATABASE_URL: postgresql+asyncpg://knowledge:knowledge@knowledge-db:5432/knowledge
       KNOWLEDGE_QDRANT_URL: http://qdrant:6333
+      # Real embeddings in the running system; tests replay the recorded ones (fixture).
+      KNOWLEDGE_EMBEDDING_MODE: live
+      FASTEMBED_CACHE_PATH: /models
       KNOWLEDGE_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       KNOWLEDGE_SCHEMA_REGISTRY_URL: http://schema-registry:8081
       KNOWLEDGE_JWKS_URL: http://app:8000/.well-known/jwks.json
       KNOWLEDGE_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    volumes: ["knowledge-models:/models"]
     depends_on:
       knowledge-db: { condition: service_healthy }
       qdrant: { condition: service_started }
@@ -532,5 +536,6 @@ volumes:
   postgres-data:
   knowledge-data:
   qdrant-data:
+  knowledge-models:
   mongo-data:
   kafka-data:

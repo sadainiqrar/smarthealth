@@ -17,6 +17,8 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import MessageField, SerializationContext
 
+from knowledge_service.chunking import chunk_provider
+from knowledge_service.index import Index
 from knowledge_service.settings import KnowledgeSettings
 from knowledge_service.store import Directory, entry_from_state
 
@@ -31,15 +33,30 @@ def _plain(value):
     return str(value) if value.__class__.__name__ == "UUID" else value
 
 
-async def apply(directory: Directory, key: str, value: dict | None) -> None:
+async def apply(directory: Directory, key: str, value: dict | None,
+                index: Index | None = None) -> None:
+    """One state value into the directory and, when there is an index, into search: an
+    active provider is one chunk, an inactive one or a tombstone is removed from both."""
     if value is None:
         await directory.remove(key)
+        if index is not None:
+            await index.remove_document(f"provider:{key}")
         return
     payload = _plain(value["payload"])
-    await directory.upsert(entry_from_state(payload), list(payload.get("department_ids", [])))
+    entry = entry_from_state(payload)
+    await directory.upsert(entry, list(payload.get("department_ids", [])))
+    if index is not None:
+        if entry.is_active:
+            await index.replace_document(
+                f"provider:{entry.provider_id}",
+                [chunk_provider(entry.provider_id, entry.name, entry.specialty)],
+            )
+        else:
+            await index.remove_document(f"provider:{entry.provider_id}")
 
 
-async def run(settings: KnowledgeSettings, directory: Directory, stop: asyncio.Event) -> None:
+async def run(settings: KnowledgeSettings, directory: Directory, stop: asyncio.Event,
+              index: Index | None = None) -> None:
     topic = settings.topic("providers.state")
     consumer = Consumer({
         "bootstrap.servers": settings.kafka_bootstrap_servers,
@@ -55,7 +72,7 @@ async def run(settings: KnowledgeSettings, directory: Directory, stop: asyncio.E
             if message is None or message.error():
                 continue
             value = decode(message.value(), context) if message.value() else None
-            await apply(directory, (message.key() or b"").decode(), value)
+            await apply(directory, (message.key() or b"").decode(), value, index)
             await asyncio.to_thread(consumer.commit, message=message, asynchronous=False)
     finally:
         await asyncio.to_thread(consumer.close)

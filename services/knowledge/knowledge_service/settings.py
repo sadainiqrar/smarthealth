@@ -15,6 +15,9 @@ class KnowledgeSettings(BaseSettings):
     database_url: str = "postgresql+asyncpg://knowledge:knowledge@localhost:5442/knowledge"
     #: The vector database (Week 4); part of readiness from the start.
     qdrant_url: str = "http://localhost:6333"
+    #: Where embeddings come from (harness requirement 2): fixture (the recorded vectors --
+    #: every test), record (compute and save), live (compute).
+    embedding_mode: str = "fixture"
     kafka_bootstrap_servers: str = "localhost:9092"
     schema_registry_url: str = "http://localhost:8081"
     #: Part A's topics carry its resource prefix; this names the same prefix.

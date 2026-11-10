@@ -12,8 +12,13 @@ import signal
 import httpx
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from qdrant_client import AsyncQdrantClient
+
 from knowledge_service.auth import TokenVerifier
 from knowledge_service.consumer import run as run_consumer
+from knowledge_service.embeddings import embedder_for
+from knowledge_service.index import Index
+from knowledge_service.ingest import ingest_corpus
 from knowledge_service.server import SERVING, build_server
 from knowledge_service.settings import KnowledgeSettings
 from knowledge_service.store import PostgresDirectory
@@ -29,12 +34,19 @@ async def main() -> None:
     engine = create_async_engine(settings.database_url)
     directory = PostgresDirectory(engine)
     await directory.create()
-    server = build_server(directory, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
-                          settings.grpc_port)
-    await server.start()
-    # Ready only once the vector database answers too: Week 4 depends on it.
+    # Ready only once the vector database answers: search depends on it.
     async with httpx.AsyncClient() as client:
         (await client.get(f"{settings.qdrant_url}/readyz", timeout=5)).raise_for_status()
+    qdrant = AsyncQdrantClient(url=settings.qdrant_url)
+    index = Index(qdrant, embedder_for(settings.embedding_mode))
+    await index.ensure()
+    # Idempotent (unchanged chunks are not re-embedded), so every start brings the index up
+    # to the corpus the image carries.
+    report = await ingest_corpus(index)
+    logger.info("corpus ingested: %s", report)
+    server = build_server(directory, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
+                          settings.grpc_port, index)
+    await server.start()
     await server.health.set("", SERVING)
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
@@ -43,11 +55,12 @@ async def main() -> None:
         except NotImplementedError:
             break
     logger.info("knowledge serving on %s", settings.grpc_port)
-    consumer = asyncio.create_task(run_consumer(settings, directory, stop))
+    consumer = asyncio.create_task(run_consumer(settings, directory, stop, index))
     await stop.wait()
     await server.stop(5)
     await consumer
     await engine.dispose()
+    await qdrant.close()
     if tracing:
         tracing.shutdown()
 
