@@ -209,7 +209,10 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 
 | Method | Path | Roles |
 | --- | --- | --- |
-| POST | `/auth/login` | public |
+| POST | `/auth/login` | public — returns an access token (10 min) and a single-use refresh token |
+| POST | `/auth/refresh` | public — spends a refresh token for a new pair; a spent one ends the session |
+| POST | `/auth/logout`, `/auth/logout-all` | any role — end this session, or every session of the login |
+| GET | `/.well-known/jwks.json` | public — the Ed25519 key that verifies access tokens |
 | POST | `/patients` | `front_desk`, `admin` |
 | GET | `/patients`, `/patients/{id}` | `front_desk`, `admin`, `provider` |
 | PATCH | `/patients/{id}` | `front_desk`, `admin` |
@@ -310,6 +313,16 @@ curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json
 ```
 
 `--build` matters: without it compose reuses an existing image and runs old code.
+
+**Sessions.** An access token lives ten minutes and is honoured only while its session
+exists in Redis; refresh it with the `refresh_token` from the login
+(`POST /auth/refresh -d '{"refresh_token": "..."}'`), which returns a new pair and spends the
+old refresh token. `POST /auth/logout` ends the session at once.
+`python -m app.cli deactivate-user --email …` stops a login *and* ends its live sessions.
+Five failed logins lock an address for fifteen minutes, and the lock answers exactly like
+a wrong password. Tokens are signed with a committed development key unless
+`SMARTHEALTH_JWT_PRIVATE_KEY` is set (`python -m app.cli generate-signing-key`); the API
+refuses that key when `SMARTHEALTH_ENVIRONMENT=production`.
 
 **Or run the API and worker on the host** against the infrastructure containers alone —
 handy for a debugger. `Settings` defaults to the dev stack's ports on `localhost` and its

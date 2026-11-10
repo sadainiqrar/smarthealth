@@ -35,7 +35,7 @@ What is *not* built, stated plainly so a reviewer does not have to discover it:
 | --- | --- | --- | --- |
 | PostgreSQL | yes | yes (`sqlalchemy`, `asyncpg`) | **yes** |
 | MongoDB | yes | yes (`pymongo`) | **yes** — audit trail only |
-| Redis | yes | yes (`redis`) | client constructed and health-checked, **used by no feature** (PRD R-7) |
+| Redis | yes — the *state* instance, `noeviction` + AOF | yes (`redis`) | **yes** — sessions and refresh-token rotation (`app/modules/identity/sessions.py`), login throttling and the booking rate limit (`app/core/ratelimit.py`); no cache yet (PRD R-7, slice 5) |
 | Temporal | yes (`temporal`), plus a `worker` service under `--profile app` | yes (`temporalio`) | **yes** — client, worker process, registries, a canary workflow, and four business workflows: booking (§3.2), the visit no-show timer (§3.2a), the cancel follow-up and reschedule (§3.3) |
 | Kafka + Schema Registry | yes (`kafka`, `schema-registry`) | **no** | **no** |
 | Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
@@ -480,6 +480,20 @@ is the one Temporal sees.
 
 ### 2.2 POST /auth/login
 
+> **Changed in Week 3 slice 2** (Weeks 3–5 spec D-25). The diagram below is still the
+> credential check. What surrounds it now: before the lookup, the login throttle asks
+> Redis whether the address has `login_max_failures` failures in the window or the client
+> IP `login_ip_max_failures` — if so the attempt still runs `verify_password` and still
+> answers the identical 401, so a lock reveals neither itself nor which addresses exist;
+> every failure counts against both keys, and a success clears the address. On success a
+> **session** is opened in Redis (`app/modules/identity/sessions.py`) and the response
+> carries an EdDSA access token naming it (`sid`, ten minutes) and a single-use
+> **refresh token**. `require_role` then checks the session on every request, so logout
+> (`POST /auth/logout`, `/auth/logout-all`) and deactivation (`python -m app.cli
+> deactivate-user`) take effect on the next request. `POST /auth/refresh` rotates the
+> refresh token in one Lua script; a spent one presented again revokes the session.
+> `GET /.well-known/jwks.json` publishes the verification key.
+
 ```mermaid
 sequenceDiagram
     autonumber
@@ -530,10 +544,11 @@ Two supporting details:
   `iat` against the wall clock with zero leeway, and a few seconds of clock skew between
   issuer and validator would reject a good token. `exp` is still fully enforced.
 
-`is_active` is read once, at login (`service.py:62`). A deactivated user therefore keeps
-access until their token expires — up to `jwt_expiry_minutes`, currently 60. That is a
-deliberate deferral, recorded in the management-APIs spec §11: closing it means a database
-lookup on every request, which trades away exactly the statelessness the JWT was chosen for.
+`is_active` is still read only at login, and that is no longer a gap: deactivating a
+login (`identity.service.deactivate_user`, the `deactivate-user` command) also ends every
+session it has, and a token without a live session is refused. The cost is one Redis
+lookup per request, not the per-request database query the Week 1 spec rejected
+(management-APIs spec §11, closed in Week 3 slice 2).
 
 ### 2.3 POST /patients
 

@@ -294,7 +294,7 @@ evicted under memory pressure (`allkeys-lru`). One instance has one policy, and
 | Instance | Use | Keys (all through `app/db/redis.py:key()`) |
 | --- | --- | --- |
 | `redis` (state, `noeviction`, AOF on) | sessions; refresh-token families; login throttling; API rate limits; Celery beat lock | `session:<sid>`, `user-sessions:<user_id>`, `refresh:<family>`, `throttle:login:<email>`, `rl:<route>:<user>` |
-| `redis-cache` (`allkeys-lru`, no persistence) | `GET /slots` cache; Celery result backend for the few tasks that return a result | `slots:<provider>:<version>:<query-hash>`, `celery-result:*` |
+| `redis-cache` (`allkeys-lru`, no persistence) — *arrives with its first user, the slot cache (slice 5)* | `GET /slots` cache; Celery result backend for the few tasks that return a result | `slots:<provider>:<version>:<query-hash>`, `celery-result:*` |
 
 ### 4.2 Sessions — the case Week 1 deferred
 
@@ -323,8 +323,11 @@ tokens.**
   existing guarantee of no account enumeration (PART-A-NFR-8): a throttled login answers the
   same 401, in the same time, as a wrong password.
 
-The demo frontend keeps the access token in memory and the refresh token in an `HttpOnly`
-cookie scoped to `/auth/refresh`.
+*As built (slice 2):* the demo frontend keeps both tokens in `sessionStorage`, and the
+refresh token travels in request and response bodies. An `HttpOnly` cookie scoped to
+`/auth/refresh` is the production choice and is deferred: it needs CSRF handling across
+the Vite dev proxy. The client refreshes once on a 401, single-flight, because a refresh
+token spent twice reads as a replay and ends the session.
 
 ### 4.3 Other Part A uses
 
@@ -860,8 +863,8 @@ New core paths (`tests/core-paths.txt`) for the `Stop` hook: `services/*/src/**`
 
 | # | Slice | Closes |
 | --- | --- | --- |
-| 1 | **Observability base** — Collector, Jaeger, Prometheus, Grafana (provisioned); OTel in API and Temporal worker; trace ids in logs | PART-A-OBS-2/3 (base) |
-| 2 | **Sessions** — EdDSA + JWKS, Redis sessions, refresh rotation, logout, revoke-on-deactivate, login throttling, rate limits; two Redis instances | Week 1 §11 deferral, R-7 (part) |
+| 1 | **Observability base** — **built** — Collector, Jaeger, Prometheus, Grafana (provisioned); OTel in API and Temporal worker; trace ids in logs | PART-A-OBS-2/3 (base) |
+| 2 | **Sessions** — EdDSA + JWKS, Redis sessions, refresh rotation, logout, revoke-on-deactivate, login throttling, rate limits; `redis` configured as the state instance (`redis-cache` moved to slice 5) | Week 1 §11 deferral (PRD R-26), R-7 (part) — **built** |
 | 3 | **Event backbone** — outbox, relay, Schema Registry, `contracts/events/`, topic creation, consumer runtime with dedupe and DLT, all producers, `republish` | PART-A-FR-4, NFR-3 |
 | 4 | **Kafka → Temporal** — cancel follow-up via event, `ProviderDeactivationWorkflow`, `PostVisitWorkflow`; `billing` module and `payments-mock` | R-17, R-25, FR-3 |
 | 5 | **Notifications** — Celery app on RabbitMQ, `notifications` module, Mailpit, reminder timer in `VisitWorkflow`, beat jobs (incl. stale-pending reconciler), `/slots` cache | R-9, R-7, the reminder stand-in |

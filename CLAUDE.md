@@ -56,8 +56,18 @@ Temporal client carries `TracingInterceptor`, so a workflow's run and activities
 trace that started it; the worker exports Temporal SDK metrics over OTLP/gRPC; JSON log
 lines carry `trace_id`/`span_id`; compose runs `otel-collector` → `jaeger` / `prometheus`,
 and `grafana` with provisioned datasources and a *Service overview* dashboard (`ops/`).
-Export is off unless `SMARTHEALTH_OTEL_ENDPOINT_HTTP` (and `_GRPC`) are set. Next is slice
-2 (sessions in Redis). Kafka, Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
+Export is off unless `SMARTHEALTH_OTEL_ENDPOINT_HTTP` (and `_GRPC`) are set.
+**Slice 2, sessions, is built:** access tokens are ten-minute **Ed25519** JWTs naming a
+server-side session in Redis (`app/modules/identity/sessions.py`); `require_role` refuses a
+token whose session is gone; `POST /auth/refresh` rotates a single-use refresh token (a
+spent one presented again ends the session), `/auth/logout` and `/auth/logout-all` end
+sessions, `GET /.well-known/jwks.json` publishes the public key for the Part B services;
+login throttling (`app/core/ratelimit.py`) locks an address after five failures while
+answering exactly like a wrong password; booking and reschedule share a per-user limit
+(429). **Every test token needs a session**: mint with `tests/harness/auth.py:issue_token`
+(contract tier, in-memory store) or the T3 `token_for` fixture (real Redis) — never bare
+`create_access_token`. Next is slice 3, the event backbone (outbox, Kafka, Schema
+Registry). Kafka, Celery, notifications and analytics do not exist yet, and the Week 2 stand-ins (billing pre-check,
 reminder scheduling, refund) and the missing cancel/reschedule events are its first inputs.
 Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
 `PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
@@ -94,6 +104,8 @@ Commands that work today:
 | `python -m ruff check app tests` | lint |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
+| `python -m app.cli deactivate-user --email …` | stop a login authenticating and end every live session it has |
+| `python -m app.cli generate-signing-key` | print a fresh Ed25519 key for `SMARTHEALTH_JWT_PRIVATE_KEY` (the committed default is a development key, refused when `SMARTHEALTH_ENVIRONMENT=production`) |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
 | `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
@@ -235,7 +247,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 950 fast tests (plus 1 skip) in ~40s (39.80s on a run of `python -m pytest -m "not docker" -q`) and 205 docker-lane tests (`-m docker`, 92s), measured 2026-11-10; 48 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 992 fast tests (plus 1 skip) in ~37s (36.84s on a run of `python -m pytest -m "not docker" -q`) and 223 docker-lane tests (`-m docker`, 98s), measured 2026-11-10; 54 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Designed, not built.** Phase P5 — it ships with the Part B features it tests (Weeks 4–5) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
