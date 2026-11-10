@@ -903,7 +903,7 @@ assistant process, not an `assistant-worker` (D-36); per-user usage joined with 
 `GET /users` in the admin's browser (D-35); department utilisation from the slot inventory
 (`GET /analytics/utilisation`, a third report). The proto grew `Confirm`, `Starters`,
 conversations, `Usage` and reports, every change additive. Not built:
-engagement campaigns, the offline judge. Recorded LLM fixtures replay a golden set (`test_assistant_golden.py`). Booking conversion is counted from `appointments.booked`, consumed by the assistant (added 2026-11-11).
+engagement campaigns. The offline judge runs over the `ai` cases (`tests/judge/run_judge.py`). Recorded LLM fixtures replay a golden set (`test_assistant_golden.py`). Booking conversion is counted from `appointments.booked`, consumed by the assistant (added 2026-11-11).
 
 ---
 

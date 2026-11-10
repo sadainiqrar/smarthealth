@@ -5,6 +5,13 @@ description: "Offline semantic judge over a recorded AI run (tests/reports/ai-ru
 
 # ai-judge — offline verdicts over a recorded AI run
 
+**An automated judge exists:** `python -m tests.judge.run_judge` (needs `ASSISTANT_LLM_API_KEY`
+or `JUDGE_LLM_API_KEY`; Qwen on Groq by default, `JUDGE_LLM_MODEL` to change). Produce the
+run first with `python -m pytest tests/tiers/test_catalog.py -k ai-`. This skill is the
+second opinion: use it to review that judge's verdicts (or to judge when no key is set), and
+log what you checked in `tests/judge/calibration.md`. The report's rows are keyed by case
+id under `cases`; each has `judge_prompt`, `rubrics`, `transcript` and `retrieved`.
+
 Structural assertions already ran inside pytest. This skill evaluates the *semantic* property each case's author put in `judge.prompt` — the thing assertions cannot check: groundedness, safety, correctness, coherence.
 
 **Contract (locked): this skill only reports and triages. A verdict never changes a test's pass/fail status and never gates CI.** Promoting a judge failure to a hard failure is a future step, gated on calibration (§4) — not something this skill does.

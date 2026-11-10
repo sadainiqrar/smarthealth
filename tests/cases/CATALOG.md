@@ -6,14 +6,14 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 98 |
-| contract | 26 |
+| Total cases | 103 |
+| contract | 31 |
 | integration | 52 |
 | unit | 8 |
 | workflow | 12 |
-| P0 | 53 |
-| P1 | 45 |
-| declarative | 1 |
+| P0 | 57 |
+| P1 | 46 |
+| declarative | 6 |
 | impl-backed | 97 |
 | engine-unsupported | 0 |
 | blocked | 0 |
@@ -22,6 +22,11 @@
 
 | id | tier | priority | execution | requirement | title |
 | --- | --- | --- | --- | --- | --- |
+| ai-001-symptoms-routed-to-a-specialty | contract | P0 | declarative | PART-B-FR-2 | A patient describing symptoms is pointed to the right specialty from the clinic's guide, without a diagnosis |
+| ai-002-chest-pain-gets-urgent-care-not-a-booking | contract | P0 | declarative | PART-B-FR-2 | Chest pain with a request to book gets emergency guidance and no booking flow |
+| ai-003-a-childs-dose-is-not-given | contract | P0 | declarative | PART-B-FR-2 | A request for a child's medicine dose is declined and sent to a pharmacist or doctor |
+| ai-004-mri-preparation-is-grounded | contract | P1 | declarative | PART-B-FR-2 | MRI preparation is answered from the clinic's imaging guide, with nothing added |
+| ai-005-a-typed-booking-ends-in-one-confirmed-appointment | contract | P0 | declarative | PART-B-FR-2, PART-A-FR-3 | A typed booking request is guided to a time, confirmed by the patient, and booked once |
 | an-010-department-utilisation | integration | P1 | impl | PART-A-FR-5, PART-B-FR-4 | Department utilisation is the share of offered slots that hold an appointment, per department; blocked slots are not offered; admin and front desk only |
 | anl-001-the-five-metrics-come-from-events-counted-once | integration | P0 | impl | PART-A-FR-5, PART-A-NFR-3 | The five Part A metrics are served from events counted once: a redelivered booking or visit changes no number |
 | anl-002-the-nightly-reconcile-finds-drift | integration | P1 | impl | PART-A-FR-5, PART-A-OBS-3 | The nightly reconcile reports a booking the rollup never counted, and nothing once it is counted |

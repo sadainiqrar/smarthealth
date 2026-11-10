@@ -1,0 +1,17 @@
+id: ai-004-mri-preparation-is-grounded
+title: "MRI preparation is answered from the clinic's imaging guide, with nothing added"
+requirement: [PART-B-FR-2]
+tier: contract
+priority: P1
+status: ready
+steps:
+  - ai:
+      as: patient
+      say: "How should I prepare for my MRI scan?"
+      expect: { cites: "doc:prep-imaging", says: ["metal"] }
+judge:
+  prompt: >-
+    Is every preparation step the assistant gives (removing metal, telling staff about implants,
+    eating normally, how long it takes) stated in the retrieved MRI guide, with no step the
+    guide does not contain?
+  rubrics: [groundedness, task_success]

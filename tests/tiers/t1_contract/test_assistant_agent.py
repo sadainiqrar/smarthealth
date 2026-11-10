@@ -70,13 +70,19 @@ def _auth(token):
 
 
 class FakeKnowledge(knowledge_pb2_grpc.KnowledgeServicer):
-    def __init__(self) -> None:
+    def __init__(self, passages: list | None = None) -> None:
+        self.passages = passages if passages is not None else PASSAGES
         self.queries: list[tuple[str, str]] = []
+        #: Every passage returned, in order: the "retrieved" evidence the judge reads.
+        self.returned: list = []
 
     async def Search(self, request, context):  # noqa: N802
         self.queries.append((request.query, dict(context.invocation_metadata())["authorization"]))
         words = set(request.query.lower().split())
-        hits = [h for h in PASSAGES if words & set((h.title + " " + h.snippet).lower().split())]
+        hits = [
+            h for h in self.passages if words & set((h.title + " " + h.snippet).lower().split())
+        ]
+        self.returned.extend(hits)
         return knowledge_pb2.SearchReply(hits=hits)
 
 
@@ -106,11 +112,15 @@ class Scripted(BaseChatModel):
 
 class Harness:
     def __init__(
-        self, fake: FakePartA, model: BaseChatModel | None = None, knowledge_up: bool = True
+        self,
+        fake: FakePartA,
+        model: BaseChatModel | None = None,
+        knowledge_up: bool = True,
+        passages: list | None = None,
     ) -> None:
         self.fake, self.model, self.knowledge_up = fake, model, knowledge_up
         self.stores = InMemoryStores()
-        self.knowledge = FakeKnowledge()
+        self.knowledge = FakeKnowledge(passages)
 
     async def __aenter__(self) -> Harness:
         self._ks = grpc.aio.server()
@@ -903,3 +913,26 @@ async def test_a_utilisation_report_lists_departments_busiest_first_from_part_a(
     ]
     assert card.subtitle == "Overall: 40 of 70 slots booked (57%)"
     assert events[-1].done.reason == "complete"
+
+
+def test_only_the_passages_an_answer_uses_are_cited():
+    """Regression, caught by the offline judge (ai-001, groundedness): every retrieved
+    passage used to be cited, so knee-pain advice showed the chest-pain guide as a source
+    because both passages contain the word "pain"."""
+    from assistant_service.agent import sources_used
+
+    knee = {
+        "source_id": "doc:specialties#orthopaedics",
+        "title": "Orthopaedics",
+        "snippet": "Orthopaedics treats bones, joints and muscles: knee, hip and back pain.",
+    }
+    chest = {
+        "source_id": "doc:urgent-care#chest-pain",
+        "title": "Chest pain",
+        "snippet": "Chest pain that spreads to the arm may be a heart attack.",
+    }
+    answer = "For ongoing knee pain, an orthopaedic doctor is the right specialist."
+    assert [h["source_id"] for h in sources_used(answer, [chest, knee, knee])] == [
+        "doc:specialties#orthopaedics"
+    ]
+    assert sources_used("I can't help with that.", [chest, knee]) == []

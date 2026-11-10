@@ -45,20 +45,35 @@ async def _run_api_step(step: Step, ctx: CaseContext, where: str) -> None:
         _assert_api(spec.expect, response, where)
 
 
-STEP_HANDLERS: dict[str, StepHandler] = {"api": _run_api_step}
+async def _run_ai_step(step: Step, ctx: CaseContext, where: str) -> None:
+    # Imported here, not at the top: the assistant's harness pulls in gRPC and LangGraph,
+    # which the dry-run (route_check, the Stop hook's authority) must never need.
+    from tests.runner import ai
+
+    await ai.run_ai_step(step, ctx, where)
+
+
+STEP_HANDLERS: dict[str, StepHandler] = {"api": _run_api_step, "ai": _run_ai_step}
 
 
 async def run_case(case: Case, ctx: CaseContext) -> None:
     """Execute every step, then assert the case-level expectations."""
-    for index, step in enumerate(case.steps, start=1):
-        where = f"case '{case.id}' step {index} ({step.kind})"
-        handler = STEP_HANDLERS.get(step.kind)
-        if handler is None:
-            raise NotImplementedError(
-                f"{where}: step kind '{step.kind}' has no engine handler yet. "
-                f"Implement it, or mark the case status: blocked with a blocked_on reason."
-            )
-        await handler(step, ctx, where)
+    ctx.notes["case"] = case
+    try:
+        for index, step in enumerate(case.steps, start=1):
+            where = f"case '{case.id}' step {index} ({step.kind})"
+            handler = STEP_HANDLERS.get(step.kind)
+            if handler is None:
+                raise NotImplementedError(
+                    f"{where}: step kind '{step.kind}' has no engine handler yet. "
+                    f"Implement it, or mark the case status: blocked with a blocked_on reason."
+                )
+            await handler(step, ctx, where)
+    finally:
+        if "ai" in ctx.notes:  # the transcript is written even when an assertion failed
+            from tests.runner import ai
+
+            await ai.close(ctx)
 
     if case.expect is None:
         return

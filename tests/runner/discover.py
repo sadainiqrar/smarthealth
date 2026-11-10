@@ -15,7 +15,7 @@ CASES_DIR = Path(__file__).resolve().parents[1] / "cases"
 
 #: Step kinds the engine can execute today. Everything else is authorable but will
 #: fail loudly when run — see `engine.run_case`. Extend this as phases land.
-SUPPORTED_STEP_KINDS: set[str] = {"api"}
+SUPPORTED_STEP_KINDS: set[str] = {"api", "ai"}
 
 #: Expectation kinds the engine can assert today.
 SUPPORTED_EXPECT_KINDS: set[str] = {"api"}

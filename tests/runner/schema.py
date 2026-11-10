@@ -247,6 +247,11 @@ class Case(BaseModel):
                 and step.api.expect.asserts_something()
             ):
                 return True
+            # An `ai` step's structural checks (tests/runner/ai.py: cites, says, never_says,
+            # offers, asks_to_confirm, writes). Its judge block does not count: a verdict
+            # never fails a test, so it is not an assertion.
+            if step.kind == "ai" and isinstance(step.ai, dict) and step.ai.get("expect"):
+                return True
         return False
 
     @classmethod

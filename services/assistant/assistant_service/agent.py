@@ -26,6 +26,7 @@ by user *and* conversation id, so one user can never resume another's conversati
 from __future__ import annotations
 
 import copy
+import re
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -87,8 +88,7 @@ class TurnContext:
         if self.model is None:
             return None
         try:
-            reply = await self.model.ainvoke(
-                [SystemMessage(instructions), HumanMessage(material)])
+            reply = await self.model.ainvoke([SystemMessage(instructions), HumanMessage(material)])
         except Exception:  # noqa: BLE001 - a draft falls back to the template
             logger.info("drafting with the model failed; using the template", exc_info=True)
             return None
@@ -202,6 +202,7 @@ async def _model_turn(
 ) -> tuple[str, dict | None]:
     """The model's answer, streamed; returns (answer text, handoff or None)."""
     allowed = {f.id for f in flows_for(ctx.role)}
+    retrieved: list[dict] = []  # every passage searched this turn; cited only if used
 
     async def search_knowledge(query: str) -> str:
         return ""  # executed below, where events can be emitted
@@ -239,7 +240,10 @@ async def _model_turn(
         usage.add_call(getattr(reply, "usage_metadata", None))
         messages.append(reply)
         if not reply.tool_calls:
-            return _text(reply), None
+            answer = _text(reply)
+            for hit in sources_used(answer, retrieved):
+                ctx.cite(hit["source_id"], hit["title"], hit["snippet"][:240])
+            return answer, None
         for call in reply.tool_calls:
             if call["name"] == "start_flow" and call["args"].get("flow_id") in allowed:
                 prefill = {
@@ -256,8 +260,7 @@ async def _model_turn(
                 async with ctx.tool("search_knowledge", "Searching the clinic's guides") as step:
                     hits = await ctx.search(call["args"]["query"], 4)
                     step["summary"] = f"{len(hits)} passages"
-                for hit in hits[:3]:
-                    ctx.cite(hit["source_id"], hit["title"], hit["snippet"][:240])
+                retrieved.extend(hits)
                 content = (
                     "\n\n".join(f"[{h['source_id']}] {h['title']}: {h['snippet']}" for h in hits)
                     or "No relevant passages."
@@ -266,6 +269,40 @@ async def _model_turn(
                 content = "That flow is not available to this user."
             messages.append(ToolMessage(content=content, tool_call_id=call["id"]))
     return "", None
+
+
+_STOP = frozenset(
+    """about after again also before been being below book could does doing done during
+each every first from have having help here into just like make more most need only other
+over same should since some such than that their them then there these they this those
+through time under until very want what when where which while will with would your yours
+please thank thanks clinic medinova appointment""".split()
+)
+
+
+def _terms(text: str) -> set[str]:
+    """Distinctive words (four letters or more, common ones dropped), by their first six
+    letters (so "cancel" meets "cancelling", "knee" meets "knee")."""
+    return {w[:6] for w in re.findall(r"[a-z]{4,}", text.lower()) if w not in _STOP}
+
+
+def sources_used(answer: str, hits: list[dict], *, limit: int = 3) -> list[dict]:
+    """The passages an answer actually draws on: at least two distinctive words shared.
+
+    A search returns passages that merely mention a query word -- knee pain fetches the
+    chest-pain guide, both say "pain". Citing everything retrieved would show the user a
+    source the answer never used (the offline judge caught exactly this, ai-001); citing
+    only what the answer shares words with keeps every source honest.
+    """
+    words = _terms(answer)
+    used, seen = [], set()
+    for hit in hits:
+        if hit["source_id"] in seen:
+            continue
+        if len(words & _terms(hit["title"] + " " + hit["snippet"])) >= 2:
+            used.append(hit)
+            seen.add(hit["source_id"])
+    return used[:limit]
 
 
 def _text(message: AIMessage) -> str:
@@ -296,8 +333,7 @@ async def _chat(state: State, runtime: Runtime[TurnContext]) -> dict:
     if model is not None:
         history = list(state.get("messages") or [])[-HISTORY:]
         try:
-            answer, handoff = await _model_turn(ctx, model, history, text,
-                                                 runtime.context.usage)
+            answer, handoff = await _model_turn(ctx, model, history, text, runtime.context.usage)
         except LLMUnavailable as exc:
             logger.info("model unavailable, answering offline", extra={"reason": str(exc)})
         except Exception:  # noqa: BLE001 - a provider failure degrades the turn, never fails it
