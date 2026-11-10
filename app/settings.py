@@ -117,6 +117,11 @@ class Settings(BaseSettings):
     #: How long before an appointment its reminder goes out (spec O-1).
     reminder_lead_hours: int = Field(default=24, ge=1)
 
+    # --- Document store: uploaded reports (Week 4 slice 2, spec 9.6) ---
+    #: A directory every Part A process that reads documents shares (compose: the
+    #: part-a-documents volume, in the API and the Celery worker). Part A's alone.
+    documents_path: str = "var/documents"
+
     # --- Billing (Week 3 slice 4, spec D-27) ---
     #: The payment gateway: the payments-mock service, standing in for a real provider.
     payments_url: str = "http://localhost:8090"

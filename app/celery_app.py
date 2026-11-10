@@ -45,6 +45,7 @@ TASK_MODULES = (
     "app.modules.scheduling.tasks",
     "app.events.maintenance",
     "app.modules.analytics.tasks",
+    "app.modules.clinical.tasks",
 )
 
 
@@ -66,6 +67,11 @@ def queues(settings: Settings) -> dict[str, Queue]:
             settings.queue("maintenance"), Exchange(settings.queue("maintenance"), type="direct"),
             routing_key=settings.queue("maintenance"),
         ),
+        # Text extraction from uploaded reports (Week 4 slice 2).
+        "documents": Queue(
+            settings.queue("documents"), Exchange(settings.queue("documents"), type="direct"),
+            routing_key=settings.queue("documents"),
+        ),
     }
 
 
@@ -84,7 +90,7 @@ def configure(settings: Settings) -> Celery:
     celery.conf.update(
         broker_url=settings.rabbitmq_url,
         broker_connection_retry_on_startup=True,
-        task_queues=[named["notifications"], named["maintenance"]],
+        task_queues=[named["notifications"], named["maintenance"], named["documents"]],
         task_default_queue=named["notifications"].name,
         task_routes={
             "notifications.send": {"queue": named["notifications"].name},
@@ -92,6 +98,7 @@ def configure(settings: Settings) -> Celery:
             "scheduling.reconcile_stale_pending": {"queue": named["maintenance"].name},
             "events.purge_published": {"queue": named["maintenance"].name},
             "analytics.reconcile": {"queue": named["maintenance"].name},
+            "clinical.extract_document": {"queue": named["documents"].name},
         },
         task_acks_late=True,
         task_reject_on_worker_lost=True,

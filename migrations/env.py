@@ -47,6 +47,9 @@ UNMANAGED_CHECK_CONSTRAINTS = frozenset(
         "ck_billing_records_billingstatus",
         "ck_notifications_channel",
         "ck_notifications_notificationstatus",
+        "ck_clinical_notes_notestatus",
+        "ck_prescriptions_prescriptionstatus",
+        "ck_test_orders_orderstatus",
     }
 )
 

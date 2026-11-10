@@ -20,12 +20,14 @@ from app.modules.notifications import service
 from app.modules.notifications.public import recipient_for
 
 #: topic -> (message kind, payload field holding the appointment, field holding the time).
-MESSAGES: dict[str, tuple[str, str, str | None]] = {
+MESSAGES: dict[str, tuple[str, str | None, str | None]] = {
     "appointments.booked": ("booking_confirmed", "appointment_id", "starts_at"),
     "appointments.cancelled": ("appointment_cancelled", "appointment_id", "starts_at"),
     "appointments.rescheduled": ("appointment_rescheduled", "new_appointment_id", "new_starts_at"),
     "appointments.no_show": ("appointment_missed", "appointment_id", "starts_at"),
     "billing.status_updated": ("refund_issued", "appointment_id", None),
+    "clinical.note_signed": ("visit_summary_ready", "appointment_id", None),
+    "clinical.test_ordered": ("test_ordered", None, None),
 }
 
 
@@ -42,7 +44,8 @@ async def on_patient_event(session: AsyncSession, event: Event, context: Consume
     await service.queue(
         session, key=f"{event.topic}:{event.event_id}", kind=kind,
         recipient=await recipient_for(session, patient_id),
-        appointment_id=uuid.UUID(payload[appointment_field]), context=message_context,
+        appointment_id=uuid.UUID(payload[appointment_field]) if appointment_field else None,
+        context=message_context,
         enqueue=enqueue_send,
     )
 

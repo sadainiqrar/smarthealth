@@ -50,3 +50,6 @@ tests/reports/*
 
 # Frontend demo client
 frontend/node_modules/
+
+# Local document store (uploaded reports when running on the host)
+var/

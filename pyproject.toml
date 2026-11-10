@@ -22,6 +22,8 @@ dependencies = [
     # Runtime, not only dev: the billing gateway client (app/modules/billing/gateway.py)
     # speaks HTTP to the payment gateway. Missing, the image fails on import.
     "httpx>=0.27",
+    # Uploaded reports: text extraction from PDFs (spec 9.6).
+    "pypdf>=5",
     "opentelemetry-instrumentation-celery>=0.48b0",
     "opentelemetry-api>=1.27,<2",
     "opentelemetry-sdk>=1.27,<2",

@@ -14,6 +14,7 @@ from app.db.base import Base
 from app.events import models as event_models  # noqa: F401
 from app.modules.analytics import models as analytics_models  # noqa: F401
 from app.modules.billing import models as billing_models  # noqa: F401
+from app.modules.clinical import models as clinical_models  # noqa: F401
 from app.modules.notifications import models as notification_models  # noqa: F401
 from app.modules.identity import models as identity_models  # noqa: F401
 from app.modules.patients import models as patient_models  # noqa: F401

@@ -47,6 +47,10 @@ TOPICS: dict[str, Topic] = {
         Topic("visits.completed", TopicKind.EVENT),
         Topic("identity.sessions_revoked", TopicKind.EVENT),
         Topic("billing.status_updated", TopicKind.EVENT),
+        # Week 4 slice 2: the clinical record. Ids and statuses only (D-31).
+        Topic("clinical.note_signed", TopicKind.EVENT),
+        Topic("clinical.test_ordered", TopicKind.EVENT),
+        Topic("documents.uploaded", TopicKind.EVENT),
         Topic("providers.state", TopicKind.STATE),
         Topic("clinics.state", TopicKind.STATE),
         Topic("departments.state", TopicKind.STATE),

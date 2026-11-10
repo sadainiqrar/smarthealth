@@ -36,6 +36,17 @@ TEMPLATES: dict[str, tuple[str, str]] = {
         "Hello {name},\n\nA reminder of your appointment on {when}.\n\n"
         "If you cannot come, please cancel so someone else can have the time.\n\nMediNova",
     ),
+    "visit_summary_ready": (
+        "Your visit summary is ready",
+        "Hello {name},\n\nYour clinician has written up your visit, including any "
+        "prescriptions. You can read it in the patient portal or ask the assistant.\n\nMediNova",
+    ),
+    "test_ordered": (
+        "Your clinician has ordered a test",
+        "Hello {name},\n\nYour clinician has asked for a test. The portal shows which one and how "
+        "to prepare; please book it, and upload the result if you have it done elsewhere."
+        "\n\nMediNova",
+    ),
     "refund_issued": (
         "Your refund is on its way",
         "Hello {name},\n\nThe charge for your appointment has been refunded.\n\nMediNova",
