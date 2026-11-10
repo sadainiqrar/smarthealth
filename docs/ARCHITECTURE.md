@@ -14,41 +14,31 @@ how the asynchronous half of Part A is designed to work before any of it is writ
 
 ## Status and scope
 
-**Weeks 1 and 2 of 5 are complete**, Week 2 in five slices: the Temporal worker (slice 1),
-the booking workflow (slice 2), the visit lifecycle (slice 3), cancel/reschedule with the
-waitlist (slice 4) and patient self-service (slice 5: `GET /appointments`, and the
-`link-patient` command that makes `GET /patients/me` reachable). **Week 3 is in progress**,
-designed in `docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md`: slice 1,
-the observability base, is built (OpenTelemetry in the API and the Temporal worker, one
-collector, Jaeger, Prometheus, a provisioned Grafana); Kafka, Celery, notifications and
-analytics are not.
-Everything in §1 and §2 describes code that exists and is exercised by tests, with one
+**All five weeks are complete** (2026-11-11). This document was written alongside Weeks 1-2,
+and its §1-§3 describe Part A's monolith in that depth; Weeks 3-5 are designed in
+`docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md` (decisions D-17 ... D-31,
+each section annotated *as built*), and **§6 below describes the Part B services as built**.
+`docs/PRD.md` is the status of record, requirement by requirement.
+
+Everything in §1, §2 and §6 describes code that exists and is exercised by tests, with one
 exception: the worker's signal handling depends on POSIX signals and is not exercised by
-tests (verified manually with `docker stop`). In §3, the Temporal plumbing, the booking
-workflow (§3.2), the visit lifecycle (§3.2a) and cancellation, reschedule and the waitlist
-(§3.3) are **built**; everything else in §3 is
-**design, not code** — each subsection is labelled at its top.
+tests (verified manually with `docker stop`). In §3, sections marked BUILT are code; the
+rest of §3 predates Week 3 and is kept as the design it was, labelled at its top.
 
-What is *not* built, stated plainly so a reviewer does not have to discover it:
+What runs, and where its code is:
 
-| Thing | Container in compose? | Client library in `pyproject.toml`? | Code in `app/`? |
-| --- | --- | --- | --- |
-| PostgreSQL | yes | yes (`sqlalchemy`, `asyncpg`) | **yes** |
-| MongoDB | yes | yes (`pymongo`) | **yes** — audit trail only |
-| Redis | yes — the *state* instance, `noeviction` + AOF | yes (`redis`) | **yes** — sessions and refresh-token rotation (`app/modules/identity/sessions.py`), login throttling and the booking rate limit (`app/core/ratelimit.py`); no cache yet (PRD R-7, slice 5) |
-| Temporal | yes (`temporal`), plus a `worker` service under `--profile app` | yes (`temporalio`) | **yes** — client, worker process, registries, a canary workflow, and four business workflows: booking (§3.2), the visit no-show timer (§3.2a), the cancel follow-up and reschedule (§3.3) |
-| Kafka + Schema Registry | yes (`kafka` with topic auto-creation off, `schema-registry`), plus `relay` under `--profile app` | yes (`confluent-kafka[avro,schemaregistry]`, `fastavro`) | **yes** — `app/events/`: the outbox and its producers, the relay, the consumer runtime with dead letters; **no consumer registered yet** (slice 4) |
-| Celery + RabbitMQ | `rabbitmq` only | **no** | **no** |
-| OpenTelemetry Collector, Jaeger, Prometheus, Grafana | yes (`otel-collector`, `jaeger`, `prometheus`, `grafana`; config under `ops/`) | yes (`opentelemetry-sdk`, OTLP/HTTP exporter, FastAPI and SQLAlchemy instrumentation; Temporal's `contrib.opentelemetry`) | **yes** — `app/core/telemetry.py` (providers, first install wins), trace ids in `app/core/logging.py`, FastAPI instrumentation in `app/main.py`, `tracing_interceptors()` / `telemetry_runtime()` in `app/core/temporal.py`; Redis, Mongo, Kafka and Celery are not instrumented yet |
-
-Verified by `grep -rni --include="*.py" "kafka\|rabbitmq\|celery" app/` — the only occurrences are in
-prose comments and docstrings, plus `Settings.topic()` / `queue()` (`app/settings.py:99-105`),
-the naming helpers Kafka and RabbitMQ will use when they arrive. Temporal code lives in
-`app/core/temporal.py`, `app/core/temporal_canary.py`, `app/components.py`,
-`app/worker.py` and, for booking, visits, cancel and reschedule,
-`app/modules/scheduling/{booking,visits,followups,workflows,activities}.py`;
-`Settings.task_queue()` (`app/settings.py:107`) is called from `app/worker.py` and
-`app/modules/scheduling/router.py`.
+| Thing | Container in compose | Code |
+| --- | --- | --- |
+| PostgreSQL | `postgres` (Part A), `knowledge-db`, `assistant-db` | Part A: `app/db`, every module's `models.py`, migrations `0001`-`0009`; Part B: each service's own tables |
+| MongoDB | `mongo` | the audit trail (`app/core/audit.py`) |
+| Redis | `redis` (Part A state: sessions, throttles), `assistant-redis` (turn and report streams, the revoked-session deny-list) | `app/modules/identity/sessions.py`, `app/core/ratelimit.py`; `services/assistant/assistant_service/stores.py` |
+| Temporal | `temporal`, `worker` | `app/core/temporal.py`, `app/worker.py`, `app/modules/scheduling/{booking,visits,followups,workflows,activities}.py` |
+| Kafka + Schema Registry | `kafka`, `schema-registry`, `relay`, `consumers` | `app/events/` (outbox, relay, consumer runtime, catalogue), `contracts/events/`; Part B consumes `providers.state` and `identity.sessions_revoked` |
+| Celery + RabbitMQ | `rabbitmq`, `celery-worker`, `celery-beat` | `app/celery_app.py`, `app/modules/notifications/`, `app/modules/clinical/tasks.py`, maintenance tasks |
+| Qdrant | `qdrant` | `services/knowledge/knowledge_service/index.py` |
+| The LLM (Groq) | none — an external API | `services/assistant/assistant_service/llm.py` |
+| Envoy (gRPC-Web edge) | `envoy` | `ops/envoy/envoy.yaml` |
+| OpenTelemetry, Jaeger, Prometheus, Grafana | `otel-collector`, `jaeger`, `prometheus`, `grafana`, `kafka-exporter` | `app/core/telemetry.py`, each service's `telemetry.py`, `ops/` (four dashboards, eight alert rules) |
 
 Of the four scheduling tables, slices 2–4 read and write all four: `appointments` (created
 `pending`, then `confirmed` or `failed`; a confirmed one moves to `completed` or `no_show`
@@ -88,6 +78,7 @@ and set `fulfilled` by a promotion; no code sets `expired` or `cancelled`, PRD R
   - [3.6 Open inconsistencies](#36-open-inconsistencies)
 - [4. Key design decisions](#4-key-design-decisions)
 - [5. Assumptions and tradeoffs](#5-assumptions-and-tradeoffs)
+- [6. Part B — `knowledge` and `assistant`, as built](#6-part-b--knowledge-and-assistant-as-built)
 
 ---
 
@@ -1851,3 +1842,95 @@ rather than `/ready`, and the absence of a dependency lock file — are each wri
 their reasoning in
 [`2026-09-03-week1-management-apis-design.md`](superpowers/specs/2026-09-03-week1-management-apis-design.md)
 §11.
+
+---
+
+## 6. Part B — `knowledge` and `assistant`, as built
+
+Two services beside the monolith, each with its own process, image, dependencies and
+stores (spec D-17, D-19); `tests/meta/test_service_independence.py` fails on any import,
+setting or compose variable that crosses between them. They reach Part A only through its
+HTTP API with **the user's own token**, and Kafka; the browser reaches them only through
+Envoy (gRPC-Web). Contracts are files: `contracts/proto/` (generated per service by
+`scripts/gen_proto.py`, and for the browser by `npm run gen:proto`).
+
+### 6.1 `knowledge` (`services/knowledge/knowledge_service`)
+
+| Module | Does |
+| --- | --- |
+| `documents.py`, `chunking.py` | the corpus (`corpus/`, Markdown and PDF, each with an `audience`) split by heading, then size; chunk ids are uuid5 of source and position, with a content hash |
+| `embeddings.py` | fastembed BGE-small (dense) + BM25 (sparse); modes fixture / record / live, tests replay `eval/fixtures/embeddings.jsonl` |
+| `index.py` | Qdrant; hybrid search fused by RRF, filtered by the caller's audience, with a relevance floor |
+| `ingest.py`, `consumer.py` | idempotent, versioned ingestion; providers indexed from `providers.state` |
+| `eval.py` | the golden set (`eval/golden.yaml`): recall@5, MRR, empty-for-off-topic |
+| `server.py` | gRPC `Search`, verifying Part A's JWT against its JWKS |
+
+### 6.2 `assistant` (`services/assistant/assistant_service`)
+
+| Module | Does |
+| --- | --- |
+| `server.py` | the gRPC service: `Chat`, `Confirm`, `Cancel`, `Starters`, conversations, `Usage`, reports; every event appended to the turn's Redis Stream before it is sent |
+| `agent.py` | the LangGraph graph per conversation, checkpointed in `assistant-db` |
+| `flows/` | guided flows: `scheduling.py`, `record.py`, `operations.py`, `drafts.py`; `staged.py` is the stage machine they share |
+| `guard.py` | red-flag phrases, answered with urgent-care guidance before anything else |
+| `llm.py`, `offline.py` | the model factory; the no-model brain (route to a flow, or quote the documents) |
+| `parta.py` | Part A's API with the user's token, timeouts and a circuit breaker |
+| `conversations.py`, `usage.py`, `reports.py` | threads; per-turn usage and drafts; background reports |
+| `metrics.py`, `telemetry.py` | OTel metrics (the Assistant dashboard) and traces |
+
+### 6.3 One chat turn
+
+```
+browser ──gRPC-Web──▶ envoy ──gRPC──▶ assistant.Chat(conversation, turn, message | choice | starter)
+                                        │ verify JWT (JWKS) · refuse a revoked session (deny-list from Kafka)
+                                        │ turn already recorded? replay it from its Redis Stream (resume)
+                                        ▼
+                     LangGraph, thread = user:conversation (checkpoint in assistant-db)
+   begin ── starter ──▶ flow ⇄ ask (interrupt: Options | ConfirmationRequired | a typed answer)
+     │                    ▲
+     └── text ──▶ chat ───┘ start_flow (the model hands over; it never writes)
+                   │ red flag? urgent-care guidance, done
+                   │ model: search_knowledge (knowledge.Search with the user's token) → answer + sources
+                   │ no model / failure: offline brain
+                   ▼
+   every event → Redis Stream → the client: token · tool · citation · options · confirmation · card · suggestions · done
+   on done: transcript row (conversations) · usage row (usage) · metrics
+```
+
+**A write** — a booking, a cancel, a message to patients, instructions saved into a note —
+happens only in a flow, after an `AskConfirm` the user answers through `Confirm`. Writes carry
+`Idempotency-Key`s minted when the confirmation is asked, so a retried or replayed "yes"
+changes nothing twice; Part A's authorisation decides whether the user may do it at all.
+
+**A paused flow resumes anywhere**: the question is a LangGraph interrupt and the flow's
+memory is in the checkpoint, so the answer may come in a later request, a reopened thread,
+or after a restart. Typed text that does not answer the question drops the flow and is
+handled as a new request.
+
+### 6.4 Reports
+
+`StartReport` (admin) creates a record and starts a task; the task fetches every figure from
+Part A's `/analytics` (this period, the one before, daily series), emits them as a card, then
+streams the model's narrative of those figures, appending each event to `report-<id>` in Redis.
+`WatchReport` replays that stream and follows it until done; a finished report is served
+from its row in `assistant-db`. A restart marks a running report failed (PRD D-36).
+
+### 6.5 Usage and observability
+
+Each finished turn writes `turn_usage` (subject, role, model, calls, tokens from the
+provider's own count, first-token and total time, outcome); drafts write `drafts`. `Usage`
+totals them per user for admin; the AI usage page joins names and emails from Part A's
+`GET /users` in the browser (PRD D-35). The same numbers feed OTel metrics with
+low-cardinality labels only, scraped as `job="smarthealth/assistant"` into the **SmartHealth —
+Assistant** dashboard, with alerts on error share and first-token latency.
+
+### 6.6 Degradation
+
+| What fails | What the user gets |
+| --- | --- |
+| the model (no key, timeout, error, no recording) | the offline brain: a flow if the message names one, else the clinic's documents quoted with sources |
+| `knowledge` | "I can't reach the clinic's guides"; flows still work |
+| Part A | "I can't reach the booking system"; questions are still answered; the breaker fails fast after repeated failures |
+| the connection, mid-answer | the client resumes from the last event seen; the server replays, never regenerates |
+| the access token expires | the client refreshes once and replays the call |
+

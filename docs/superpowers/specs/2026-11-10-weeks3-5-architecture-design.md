@@ -893,6 +893,17 @@ resume and cancel, drafts and approval, streamed reports, Part B analytics, Assi
 dashboard; the frontend Assistant page. **Stretch:** engagement campaigns; structured
 extraction of lab values from reports (so a provider can ask for a trend across years).
 
+*As built (2026-11-11):* guided flows plus a model that only searches and hands off (PRD
+D-32); Groq `openai/gpt-oss-120b` behind provider-neutral settings (D-33, closing O-4);
+checkpoints and transcripts in a new `assistant-db` Postgres rather than `assistant-redis`
+(D-34); drafts as two flows (notices to a doctor's patients through Part A's new
+`POST /notifications`, and patient instructions saved into a draft note), not a
+`ListDrafts`/`ApproveDraft` RPC set — approval is the flow's confirmation; reports in the
+assistant process, not an `assistant-worker` (D-36); per-user usage joined with Part A's new
+`GET /users` in the admin's browser (D-35). The proto grew `Confirm`, `Starters`,
+conversations, `Usage` and reports, every change additive. Not built: department utilisation,
+engagement campaigns, a booking-conversion panel, recorded LLM fixtures.
+
 ---
 
 ## 12. Open questions, with the default this design assumes
@@ -906,7 +917,7 @@ extraction of lab values from reports (so a provider can ask for a trend across 
 | ~~O-7~~ | Can a patient see a result before the ordering doctor reviews it? | **Decided 2026-11-10:** yes — it is their own upload — and the assistant may explain it, marking it not yet `reviewed` and always ending with "your doctor will review it" |
 | ~~O-8~~ | Notification channels | **Decided 2026-11-10:** email over SMTP to Mailpit, SMS through a logging fake |
 | ~~O-9~~ | LLM API key | **Decided 2026-11-10:** the project owner supplies it when Week 5 starts; until then nothing may need `record` or `live` mode — `fixture` mode and local embeddings only |
-| O-4 | Week 5 LLM provider and model | **decided in the Week 5 design** (confirmed 2026-11-10), behind the factory |
+| ~~O-4~~ | Week 5 LLM provider and model | **Decided 2026-11-11:** Groq, `openai/gpt-oss-120b`, behind `ASSISTANT_LLM_PROVIDER` / `_MODEL` / `_API_KEY` (PRD D-33) |
 | O-5 | Re-ranking | off by default; turned on if the golden set shows it earns its latency |
 
 ## 13. Risks this design accepts

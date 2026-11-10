@@ -12,18 +12,24 @@ The project is delivered in two parts:
 
 ## Status
 
-**Weeks 1 and 2 complete.** Auth, patient and provider management, an
-audited mutation path, a CLI to create the first user, and the application containerised
-behind a compose profile. Week 2 has landed a Temporal worker, the **booking workflow**
-(an appointment is confirmed only after every step succeeds, and compensated to `failed`
-otherwise) and the **visit lifecycle**: check-in, seen and complete are synchronous writes,
-and a durable workflow marks an appointment `no_show` if nobody checks in by the slot's end
-plus a grace period. It has also landed **cancel, reschedule and the waitlist**: a cancel frees the
-slot in the same transaction that cancels the appointment, a reschedule books the new slot
-before it releases the old one, and a freed slot is offered to waiting patients. Patient
-self-service closes Week 2: a patient lists their own appointments (`GET /appointments`),
-staff list them with filters, and `python -m app.cli link-patient` connects a patient login
-to its record. Week 3 (Kafka, Celery, notifications, analytics, observability) is next. A demo web client ([Frontend](#frontend)) sits on top of the API. See [API surface](#api-surface) for what is callable today.
+**All five weeks are complete.** Three services share Kafka, Envoy and one observability
+stack, and never a store:
+
+- **Part A** (`app/`, a modular monolith): patients, providers, scheduling on Temporal
+  (booking, visits, cancel, reschedule, the waitlist), the clinical record (versioned notes,
+  prescriptions, test orders, uploaded reports), billing against a fake gateway, events
+  through a transactional outbox to Kafka with Avro in Schema Registry, Celery notifications
+  over RabbitMQ (email to Mailpit), analytics, Redis sessions, and OpenTelemetry into
+  Jaeger, Prometheus and Grafana.
+- **`knowledge`** (`services/knowledge`): ingestion of the clinic's documents (Markdown and
+  PDF) and hybrid retrieval over Qdrant, filtered by the caller's audience, measured by a
+  golden set.
+- **`assistant`** (`services/assistant`): a LangGraph agent on Groq. Guided, click-driven
+  use cases for every role, grounded chat with sources, human-confirmed writes, threads,
+  drafts staff approve, background reports, and per-user usage — see [The assistant](#the-assistant-part-b).
+
+A demo web client ([Frontend](#frontend)) sits on top. See [API surface](#api-surface) for
+Part A's endpoints.
 
 ## Architecture
 
@@ -231,6 +237,15 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/appointments/{id}/reschedule` | the owning `patient`, `front_desk`, `admin` — body `{new_slot_id, reason?}`; answers **202** with the new appointment's id; only a `confirmed` appointment (no visit); 409 otherwise; optional `Idempotency-Key` header |
 | POST | `/waitlist` | `patient` (for themselves only), `front_desk`, `admin` — answers **201** |
 | GET | `/waitlist` | `patient` (their own entries, whatever `patient_id` they send), `front_desk`, `admin` |
+| PUT, GET | `/appointments/{id}/note` | `provider` (the appointment's own) — the visit's draft note; `GET` also the patient (no clinician-only section) |
+| POST | `/appointments/{id}/note/sign`, `/note/amend` | `provider` (the appointment's own) — sign the draft (creates its prescriptions and test orders); amend starts a new draft version |
+| GET | `/patients/me/record`, `/patients/{id}/record` | `patient` (own, no clinician-only notes); `provider` with a care relationship; `front_desk` sees test-order status only — every read audited |
+| POST | `/patients/{id}/documents` | `patient` (own), `front_desk`, the treating `provider` — body is the file (PDF, PNG, JPEG, ≤ 10 MB); text is extracted in the background |
+| GET | `/patients/{id}/documents/{doc}` | as the record — with the extracted text |
+| POST | `/test-orders/{id}/review` | `provider` (who ordered it) |
+| GET | `/analytics/summary`, `/analytics/timeseries` | `admin` — the five Part A metrics over `from`/`to` |
+| GET | `/users?ids=…` | `admin` — name, email and role for given login ids (the AI usage page) |
+| POST | `/notifications` | `front_desk`, `admin`, a `provider` for a patient they treat — send a message a person approved; `Idempotency-Key` required; answers **202** `queued` / `duplicate` / `unreachable` |
 
 `GET /health` and `GET /ready` are public.
 
@@ -294,8 +309,9 @@ or complete — PRD R-14).
 **Patient self-service.** A patient reads their own record (`GET /patients/me`), an
 appointment they own, and their own list (`GET /appointments`), which is forced to their
 record server-side. All of it needs the login to be linked to a patient record
-(`link-patient`, below). Provider per-object scoping is still not built: a provider's list
-is every appointment (PRD R-14).
+(`link-patient`, below). A provider's list is still every appointment; the clinical
+record and the visit actions are scoped to the provider's own patients (PRD R-14, closed
+in Week 4).
 
 ### Running it
 
@@ -596,6 +612,42 @@ allocated`:
 TEMPORAL_PORT=7234 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
 ```
 
+## The assistant (Part B)
+
+```bash
+# everything, Part B included (knowledge, assistant, their stores, Envoy on :8088)
+docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait
+```
+
+**The model** is chosen by three settings, read from a git-ignored `.env` beside the compose
+file (see `.env.example`); switching provider is these three lines:
+
+```bash
+ASSISTANT_LLM_PROVIDER=groq            # groq | anthropic | openai
+ASSISTANT_LLM_MODEL=openai/gpt-oss-120b  # empty: the provider's default
+ASSISTANT_LLM_API_KEY=...              # never in a tracked file
+```
+
+`ASSISTANT_LLM_MODE=auto` (the default) is live when a key is set. With no key the assistant
+still runs every guided flow and answers questions by quoting the clinic's documents.
+
+What it does, by role (the starters it offers come from the server, for the caller's role):
+
+| Role | Guided (click-driven) | Typed |
+| --- | --- | --- |
+| Patient | book, move, cancel, join a waitlist, my appointments, prepare for a test, my prescriptions (word for word), my last visit, my reports (never interpreted) | questions answered from the clinic's guides, with sources; red flags get urgent-care advice, never a booking |
+| Provider | my day, brief me on my next patient, results to review, write patient instructions (into the draft note) | clinic protocols |
+| Front desk | book a walk-in, who's free, today's no-shows, message a doctor's patients | policies for phone queries |
+| Admin | operations snapshot, reports (background, streamed), AI usage per user | trends, from the analytics figures |
+
+**Nothing changes without a click on a confirmation**: the model never writes; it hands
+actions to a guided flow, and every write in a flow asks first. Bookings carry an
+`Idempotency-Key` and the conversation's id.
+
+How to see it: the Assistant page of the demo client; Grafana's **SmartHealth — Assistant**
+dashboard (<http://localhost:3000>); traces in Jaeger (<http://localhost:16686>).
+`python scripts/grpcweb_smoke.py` speaks gRPC-Web to it through Envoy without a browser.
+
 ## Frontend
 
 `frontend/` is a small React + TypeScript demo client for the API. It is **not part of the
@@ -617,13 +669,20 @@ patient, an optional provider, and a window. The navigation shows only what the
 login's role may use; the API still enforces it. Known demo-client limitation: the staff
 Appointments table shows no patient name, because the API returns only `patient_id`.
 
+Week 5 added **Assistant** (every role: chats in a sidebar, starters, the prompt input with
+attachments and stop, choices, confirmations, result cards and sources), **Reports** and
+**AI usage** (admin). They are built from shadcn's AI Elements patterns on Tailwind v4 and
+React 19, and reach the assistant over gRPC-Web through Envoy with a typed Connect client
+generated from `contracts/proto` (`npm run gen:proto`).
+
 **Dev mode** — the backend on `:8000`, then:
 
 ```bash
 cd frontend && npm install && npm run dev     # http://localhost:5173
 ```
 
-Vite proxies `/api` to `http://localhost:8000`; set `SMARTHEALTH_API` to point it elsewhere.
+Vite proxies `/api` to `http://localhost:8000` and the assistant's gRPC-Web path to Envoy on
+`http://localhost:8088`; set `SMARTHEALTH_API` / `SMARTHEALTH_ENVOY` to point them elsewhere.
 
 **Compose mode** — the `frontend` service is in the `app` profile, so the command above
 that starts the system also serves the client, at <http://localhost:5173>: nginx serves the
