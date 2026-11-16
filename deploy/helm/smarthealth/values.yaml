@@ -124,3 +124,23 @@ frontend:
   workloads:
     main:
       resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 32Mi}}
+
+# The shared Secret (spec section 5). create=true renders it from `secrets.values`
+# (k3d: public development defaults). create=false (AWS) expects it to exist already.
+secrets:
+  create: false
+  values: {}
+
+# One login in front of the tool UIs (Traefik basic-auth). With secrets.create the htpasswd
+# line is computed from toolsAuth; otherwise the Secret's `tools-basic-auth` key holds it.
+toolsAuth:
+  user: reviewer
+  password: ""
+
+# The optional demo data Job (docs/superpowers/specs/2026-11-16-demo-seed-data-design.md).
+demoSeed:
+  enabled: false
+  mode: seed          # seed | refresh
+  timezone: Australia/Sydney
+  # Bump to re-run: Job specs are immutable, so each run gets a new name.
+  run: "1"

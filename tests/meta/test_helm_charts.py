@@ -183,3 +183,55 @@ def test_part_b_builds_database_urls_from_the_secret():
     probe = workload(docs, "knowledge")["spec"]["template"]["spec"]["containers"][0]
     assert probe["readinessProbe"]["grpc"]["port"] == 50052
     assert {"envoy", "frontend"} <= {d["metadata"]["name"] for d in of_kind(docs, "Deployment")}
+
+
+@needs_helm
+def test_the_secret_is_rendered_only_when_asked():
+    local = render("values-local.yaml")
+    secrets = [s for s in of_kind(local, "Secret")
+               if s["metadata"]["name"] == "smarthealth-secrets"]
+    assert len(secrets) == 1
+    keys = set(secrets[0]["stringData"])
+    assert {"postgres-password", "knowledge-db-password", "assistant-db-password",
+            "rabbitmq-password", "grafana-admin-password", "jwt-private-key",
+            "tools-basic-auth", "demo-password"} <= keys
+    assert secrets[0]["stringData"]["tools-basic-auth"].startswith("reviewer:$2")
+    external = render("values-local.yaml", sets=("secrets.create=false",))
+    assert [s for s in of_kind(external, "Secret")
+            if s["metadata"]["name"] == "smarthealth-secrets"] == []
+
+
+def _routes(docs) -> dict[str, tuple[str, str]]:
+    """path -> (service, middlewares annotation)"""
+    out = {}
+    for ing in of_kind(docs, "Ingress"):
+        middlewares = ing["metadata"].get("annotations", {}).get(
+            "traefik.ingress.kubernetes.io/router.middlewares", "")
+        for rule in ing["spec"]["rules"]:
+            for p in rule["http"]["paths"]:
+                out[p["path"]] = (p["backend"]["service"]["name"], middlewares)
+    return out
+
+
+@needs_helm
+def test_the_ingress_routes_by_path_and_guards_the_tools():
+    routes = _routes(render("values-local.yaml"))
+    assert routes["/"][0] == "frontend"
+    assert routes["/api"][0] == "app" and "strip-api" in routes["/api"][1]
+    assert routes["/smarthealth.assistant.v1.Assistant"][0] == "envoy"
+    for path, svc in {"/grafana": "grafana", "/jaeger": "jaeger", "/temporal": "temporal-ui",
+                      "/mailpit": "mailpit", "/rabbitmq": "rabbitmq",
+                      "/prometheus": "prometheus"}.items():
+        assert routes[path][0] == svc
+        assert "tools-auth" in routes[path][1], path
+    assert "tools-auth" not in routes["/api"][1]
+
+
+@needs_helm
+def test_the_demo_job_is_off_by_default_and_runs_the_cli_when_on():
+    assert of_kind(render("values-local.yaml"), "Job") == []
+    job = of_kind(render("values-local.yaml", sets=("demoSeed.enabled=true",
+                                                    "demoSeed.mode=refresh")), "Job")[0]
+    c = job["spec"]["template"]["spec"]["containers"][0]
+    assert c["command"][:4] == ["python", "-m", "app.cli", "demo-refresh"]
+    assert "--allow-demo-data" in c["command"]

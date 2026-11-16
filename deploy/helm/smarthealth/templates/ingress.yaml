@@ -1,0 +1,56 @@
+# One host, routes by path (spec section 4). Traefik picks the longest matching prefix.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smarthealth-app
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          {{- include "smarthealth.path" (dict "path" "/" "svc" "frontend" "port" 80) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/smarthealth.assistant.v1.Assistant" "svc" "envoy" "port" 8088) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/smarthealth.knowledge.v1.Knowledge" "svc" "envoy" "port" 8088) | nindent 10 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smarthealth-api
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ include "smarthealth.mw" (dict "Release" .Release "name" "strip-api") }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          {{- include "smarthealth.path" (dict "path" "/api" "svc" "app" "port" 8000) | nindent 10 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smarthealth-tools
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ include "smarthealth.mw" (dict "Release" .Release "name" "tools-auth") }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          {{- include "smarthealth.path" (dict "path" "/grafana" "svc" "grafana" "port" 3000) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/jaeger" "svc" "jaeger" "port" 16686) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/temporal" "svc" "temporal-ui" "port" 8080) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/mailpit" "svc" "mailpit" "port" 8025) | nindent 10 }}
+          {{- include "smarthealth.path" (dict "path" "/rabbitmq" "svc" "rabbitmq" "port" 15672) | nindent 10 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smarthealth-prometheus
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ include "smarthealth.mw" (dict "Release" .Release "name" "tools-auth") }},{{ include "smarthealth.mw" (dict "Release" .Release "name" "strip-prometheus") }}
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          {{- include "smarthealth.path" (dict "path" "/prometheus" "svc" "prometheus" "port" 9090) | nindent 10 }}

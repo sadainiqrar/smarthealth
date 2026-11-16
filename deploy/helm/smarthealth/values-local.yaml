@@ -1,3 +1,17 @@
-# k3d: the defaults already describe it; development secrets are added in Task 9.
+# k3d. Every value here is a public development default (as in .env.example).
 global:
   publicUrl: http://localhost:8080
+secrets:
+  create: true
+  values:
+    postgres-password: smarthealth
+    knowledge-db-password: knowledge
+    assistant-db-password: assistant
+    rabbitmq-password: smarthealth
+    grafana-admin-password: smarthealth
+    jwt-private-key: ""        # empty = the committed development key (refused in production)
+    demo-password: demo-password-123
+    llm-api-key: ""            # empty = the assistant runs offline
+toolsAuth:
+  user: reviewer
+  password: smarthealth
