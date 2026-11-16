@@ -39,3 +39,39 @@ def test_everything_is_in_the_one_region():
     text = "\n".join(p.read_text(encoding="utf-8") for p in TF.rglob("*.tf"))
     regions = set(re.findall(r'"((?:us|eu|ap|ca|sa|me|af)-[a-z]+-\d)"', text))
     assert regions <= {"ap-southeast-2"}, regions
+
+
+USER_DATA = TF / "templates" / "server-user-data.sh.tftpl"
+BOOT = TF / "templates" / "smarthealth-boot.sh"
+
+
+def test_the_server_boot_scripts_pin_versions_and_hold_no_secrets():
+    user_data = USER_DATA.read_text(encoding="utf-8")
+    boot = BOOT.read_text(encoding="utf-8")
+    assert "INSTALL_K3S_VERSION=${k3s_version}" in user_data
+    assert "targetRevision: ${repo_revision}" in user_data
+    assert 'version: "${argocd_chart_version}"' in user_data
+    assert 'shutdown -h "+$AUTOSTOP_MINUTES"' in boot
+    assert "get-parameters-by-path" in boot
+    for text in (user_data, boot):
+        lowered = text.lower()
+        literal = re.search(r"password=[\"']?[a-z0-9]", lowered)
+        assert not literal, "literal password in a boot script"
+        assert "begin private key" not in lowered
+
+
+def test_the_boot_script_has_no_template_syntax():
+    # It is injected into the user-data template as a value, but a stray ${ would still be
+    # confusing there and would break if the script were ever rendered itself.
+    assert "${" not in BOOT.read_text(encoding="utf-8")
+
+
+def test_bash_scripts_parse():
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is not installed")
+    scripts = [BOOT, *sorted((ROOT / "scripts").glob("*.sh"))]
+    for script in scripts:
+        result = subprocess.run([bash, "-n", script.as_posix()], capture_output=True,
+                                text=True, check=False)
+        assert result.returncode == 0, f"{script.name}: {result.stderr}"

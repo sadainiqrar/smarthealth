@@ -1,0 +1,134 @@
+#!/bin/bash
+# deploy/terraform/templates/server-user-data.sh.tftpl -- FIRST boot of the k3s server.
+# Installs k3s, Argo CD (as a k3s HelmChart), and smarthealth-boot.service, which does the
+# every-boot work (deploy/terraform/templates/smarthealth-boot.sh).
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update -y
+apt-get install -y apache2-utils python3
+snap install aws-cli --classic
+
+mkdir -p /etc/smarthealth /var/lib/rancher/k3s/server/manifests
+cat >/etc/smarthealth/boot.env <<'EOF'
+REGION=${region}
+AUTOSTOP_MINUTES=${autostop_minutes}
+EOF
+
+# Argo CD, applied by k3s itself (no helm on the server). Served under /argocd over HTTP:
+# TLS ends at CloudFront. Anonymous users are read-only; they have already passed the
+# tool login at the ingress.
+cat >/var/lib/rancher/k3s/server/manifests/argocd.yaml <<'EOF'
+apiVersion: helm.cattle.io/v1
+kind: HelmChart
+metadata:
+  name: argocd
+  namespace: kube-system
+spec:
+  repo: https://argoproj.github.io/argo-helm
+  chart: argo-cd
+  version: "${argocd_chart_version}"
+  targetNamespace: argocd
+  createNamespace: true
+  valuesContent: |-
+    dex: {enabled: false}
+    notifications: {enabled: false}
+    applicationSet: {enabled: false}
+    configs:
+      params:
+        server.insecure: true
+        server.basehref: /argocd
+        server.rootpath: /argocd
+      cm:
+        users.anonymous.enabled: "true"
+        timeout.reconciliation: 180s
+      rbac:
+        policy.default: role:readonly
+    controller:
+      resources: {requests: {memory: 192Mi, cpu: 50m}, limits: {memory: 384Mi}}
+    repoServer:
+      resources: {requests: {memory: 128Mi, cpu: 50m}, limits: {memory: 320Mi}}
+    server:
+      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 160Mi}}
+    redis:
+      resources: {requests: {memory: 32Mi, cpu: 10m}, limits: {memory: 96Mi}}
+EOF
+
+# Applied by smarthealth-boot once Argo CD's CRDs exist.
+cat >/etc/smarthealth/argocd-extra.yaml <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: smarthealth
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ${repo_url}
+    targetRevision: ${repo_revision}
+    path: deploy/helm/smarthealth
+    helm:
+      valueFiles: [values.yaml, values-aws.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: smarthealth
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [CreateNamespace=true]
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: tools-auth
+  namespace: argocd
+spec:
+  basicAuth:
+    secret: smarthealth-tools-auth
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd
+  namespace: argocd
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: argocd-tools-auth@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /argocd
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
+EOF
+
+cat >/usr/local/sbin/smarthealth-boot <<'BOOT'
+${boot_script}
+BOOT
+chmod 0755 /usr/local/sbin/smarthealth-boot
+
+cat >/etc/systemd/system/smarthealth-boot.service <<'EOF'
+[Unit]
+Description=SmartHealth: auto-stop, Secrets from SSM, Argo CD Application
+After=k3s.service network-online.target
+Wants=network-online.target
+Requires=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smarthealth-boot
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=${k3s_version} sh -s - server \
+  --write-kubeconfig-mode 0640
+systemctl daemon-reload
+systemctl enable --now smarthealth-boot.service
