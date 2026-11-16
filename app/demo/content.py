@@ -34,7 +34,8 @@ class Case:
 
 SPECIALTIES: tuple[str, ...] = (
     "Cardiology", "Dermatology", "Endocrinology", "Gastroenterology", "General Practice",
-    "Neurology", "Orthopaedics", "Paediatrics", "Physiotherapy", "ENT",
+    "Neurology", "Orthopaedics", "Paediatrics", "Physiotherapy",
+    "Ear, Nose and Throat (ENT)",
 )
 
 CONTENT: dict[str, tuple[Case, ...]] = {
@@ -49,7 +50,7 @@ CONTENT: dict[str, tuple[Case, ...]] = {
         Case("Chest tightness on exertion", "Tightness climbing stairs, settles with rest.",
              "ECG sinus rhythm, no acute changes. BMI 29.",
              "Your heart tracing was normal today. We ordered cholesterol tests and a scan "
-             "to look further; call 000 if pain comes at rest.",
+             "to look further; call the emergency number if pain comes at rest.",
              (("Stable angina, under investigation", "I20.8"),),
              (Medication("Atorvastatin", "20 mg", "once daily", 180, "Take in the evening."),),
              ("lipids", "ct")),
@@ -61,10 +62,10 @@ CONTENT: dict[str, tuple[Case, ...]] = {
              (("Atopic dermatitis", "L20.9"),),
              (Medication("Hydrocortisone 1% cream", "thin layer", "twice daily", 14,
                          "Apply to affected skin only."),)),
-        Case("Mole check", "A mole on the back that has changed shape.",
-             "6 mm asymmetric pigmented lesion, dermoscopy reassuring.",
-             "The mole looks harmless today. We photographed it and will compare in three "
-             "months.",
+        Case("Mole check", "Would like a mole on the back checked.",
+             "6 mm symmetrical, evenly pigmented naevus; dermoscopy benign.",
+             "The mole looks harmless. We photographed it to compare in twelve months — come "
+             "back sooner if it changes in size, shape or colour, or bleeds.",
              (("Melanocytic naevus", "D22.5"),)),
     ),
     "Endocrinology": (
@@ -119,7 +120,8 @@ CONTENT: dict[str, tuple[Case, ...]] = {
              "headache diary.",
              (("Migraine without aura", "G43.0"),),
              (Medication("Sumatriptan", "50 mg", "at onset, may repeat after 2 hours", 90,
-                         "No more than 2 doses in 24 hours."),)),
+                         "Take at the start of a migraine; check the leaflet for the "
+                         "maximum in 24 hours."),)),
         Case("Numbness in hand", "Tingling in the thumb and fingers at night.",
              "Positive Phalen's test, normal power.",
              "This is likely carpal tunnel syndrome. Wear a wrist splint at night; we "
@@ -145,15 +147,15 @@ CONTENT: dict[str, tuple[Case, ...]] = {
              "Your child has a middle-ear infection. Give the antibiotic for the full course "
              "and paracetamol for pain.",
              (("Acute otitis media", "H66.9"),),
-             (Medication("Amoxicillin oral suspension", "dose by weight", "three times daily",
-                         5, "Shake well; finish the course."),)),
+             (Medication("Amoxicillin oral suspension", "by weight, set by the prescriber",
+                         "three times daily", 5, "Shake well; finish the course."),)),
         Case("Growth check", "Routine growth and development review.",
              "Height and weight on the 50th centile, development normal.",
              "Your child is growing and developing well.",
              (("Routine child health examination", "Z00.1"),)),
     ),
     "Physiotherapy": (
-        Case("Shoulder rehabilitation", "Stiff shoulder after a fall six weeks ago.",
+        Case("Shoulder rehabilitation", "Stiff right shoulder after a fall six weeks ago.",
              "Reduced abduction to 120 degrees, strength 4/5.",
              "We started an exercise programme. Do the exercises daily and come back in two "
              "weeks.",
@@ -163,7 +165,7 @@ CONTENT: dict[str, tuple[Case, ...]] = {
              "We set you core-strength exercises. Little and often works best.",
              (("Chronic low back pain", "M54.5"),)),
     ),
-    "ENT": (
+    "Ear, Nose and Throat (ENT)": (
         Case("Blocked nose", "Blocked nose and post-nasal drip for months.",
              "Swollen nasal turbinates, clear discharge.",
              "This is rhinitis. Use the nasal spray daily for at least a month.",
