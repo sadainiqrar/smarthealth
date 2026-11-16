@@ -4,4 +4,5 @@ description: SmartHealth -- every component of docker-compose.infra.yml on one 8
 type: application
 version: 0.1.0
 appVersion: "1.0"
-dependencies: []
+dependencies:
+  - {name: payments-mock, version: 0.1.0, repository: file://../charts/payments-mock}

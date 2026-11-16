@@ -9,3 +9,8 @@ global:
     registry: ""       # "" = images imported into the cluster (k3d); ghcr.io/<owner> on AWS
     tag: dev
     pullPolicy: IfNotPresent
+
+payments-mock:
+  workloads:
+    main:
+      resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 96Mi}}

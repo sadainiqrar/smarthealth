@@ -1,0 +1,5 @@
+apiVersion: v2
+name: sh-lib
+description: Shared templates for SmartHealth's component charts
+type: library
+version: 0.1.0

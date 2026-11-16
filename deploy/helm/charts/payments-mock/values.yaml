@@ -1,0 +1,8 @@
+workloads:
+  main:
+    image: {repository: smarthealth-payments-mock, own: true}
+    service:
+      ports: {http: 8090}
+    readinessProbe:
+      httpGet: {path: /health, port: 8090}
+      periodSeconds: 10

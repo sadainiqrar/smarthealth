@@ -55,3 +55,7 @@ frontend/node_modules/
 
 # Local document store (uploaded reports when running on the host)
 var/
+
+# Helm dependency build output
+deploy/helm/**/charts/*.tgz
+deploy/helm/**/Chart.lock

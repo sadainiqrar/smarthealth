@@ -34,7 +34,7 @@ def _helm(*args: str) -> str:
 
 @lru_cache(maxsize=8)
 def render(*value_files: str, sets: tuple[str, ...] = ()) -> tuple[dict, ...]:
-    _helm("dependency", "build", UMBRELLA.as_posix())
+    _helm("dependency", "update", UMBRELLA.as_posix())
     args = ["template", "smarthealth", UMBRELLA.as_posix(), "--namespace", "smarthealth"]
     for name in value_files:
         args += ["-f", (UMBRELLA / name).as_posix()]
@@ -50,3 +50,32 @@ def of_kind(docs, kind: str) -> list[dict]:
 @needs_helm
 def test_the_umbrella_renders():
     render("values-local.yaml")
+
+
+def workload(docs, name: str) -> dict:
+    found = [d for d in of_kind(docs, "Deployment") if d["metadata"]["name"] == name]
+    assert found, f"no Deployment {name}"
+    return found[0]
+
+
+def container(docs, name: str) -> dict:
+    return workload(docs, name)["spec"]["template"]["spec"]["containers"][0]
+
+
+@needs_helm
+def test_a_component_renders_a_deployment_and_its_service():
+    docs = render("values-local.yaml")
+    pod = workload(docs, "payments-mock")["spec"]["template"]["spec"]
+    assert pod["enableServiceLinks"] is False
+    assert pod["containers"][0]["image"] == "smarthealth-payments-mock:dev"
+    assert pod["containers"][0]["resources"]["limits"]["memory"]
+    services = {s["metadata"]["name"]: s for s in of_kind(docs, "Service")}
+    assert services["payments-mock"]["spec"]["ports"][0]["port"] == 8090
+
+
+@needs_helm
+def test_a_registry_prefixes_our_own_images():
+    docs = render("values-local.yaml", sets=("global.image.registry=ghcr.io/example",
+                                             "global.image.tag=abc123"))
+    assert container(docs, "payments-mock")["image"] == \
+        "ghcr.io/example/smarthealth-payments-mock:abc123"
