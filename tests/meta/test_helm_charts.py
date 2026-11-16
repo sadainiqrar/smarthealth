@@ -235,3 +235,52 @@ def test_the_demo_job_is_off_by_default_and_runs_the_cli_when_on():
     c = job["spec"]["template"]["spec"]["containers"][0]
     assert c["command"][:4] == ["python", "-m", "app.cli", "demo-refresh"]
     assert "--allow-demo-data" in c["command"]
+
+
+COMPOSE = ROOT / "docker-compose.infra.yml"
+#: compose service -> Deployment name, where they differ
+RENAMED = {"app": "core-api", "worker": "core-worker", "relay": "core-relay",
+           "consumers": "core-consumers", "celery-worker": "core-celery-worker",
+           "celery-beat": "core-celery-beat"}
+BUDGET_GIB = 6.5
+
+
+def _compose() -> dict:
+    return yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]
+
+
+def _mib(quantity: str) -> float:
+    units = {"Ki": 1 / 1024, "Mi": 1, "Gi": 1024}
+    for suffix, factor in units.items():
+        if quantity.endswith(suffix):
+            return float(quantity[: -len(suffix)]) * factor
+    return float(quantity) / (1024 * 1024)
+
+
+@needs_helm
+def test_every_compose_service_has_a_workload():
+    names = {d["metadata"]["name"] for d in of_kind(render("values-local.yaml"), "Deployment")}
+    missing = [s for s in _compose() if RENAMED.get(s, s) not in names]
+    assert not missing, f"compose services without a chart workload: {missing}"
+
+
+@needs_helm
+def test_every_container_has_memory_limits_within_the_budget():
+    total = 0.0
+    for d in of_kind(render("values-local.yaml"), "Deployment"):
+        for c in d["spec"]["template"]["spec"]["containers"]:
+            res = c.get("resources", {})
+            assert res.get("requests", {}).get("memory"), d["metadata"]["name"]
+            limit = res.get("limits", {}).get("memory")
+            assert limit, d["metadata"]["name"]
+            total += _mib(limit)
+    assert total / 1024 <= BUDGET_GIB, f"memory limits total {total / 1024:.2f} GiB"
+
+
+@needs_helm
+def test_third_party_images_match_compose():
+    compose_images = {s["image"] for s in _compose().values() if "image" in s}
+    rendered = {c["image"] for d in of_kind(render("values-local.yaml"), "Deployment")
+                for c in d["spec"]["template"]["spec"]["containers"]
+                if not c["image"].startswith("smarthealth-")}
+    assert rendered <= compose_images, rendered - compose_images
