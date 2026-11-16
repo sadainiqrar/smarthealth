@@ -21,6 +21,7 @@ from app.core.audit import AuditEvent
 from app.core.clock import Clock
 from app.db.engine import create_engine
 from app.db.session import create_session_factory
+from app.demo.ageing import AgeingCounts, age_history
 from app.demo.history import (
     ACTOR,
     HISTORY_DAYS,
@@ -32,8 +33,10 @@ from app.demo.history import (
 )
 from app.demo.live import LiveSummary, live_state, run_live
 from app.demo.network import (
+    CLINICS,
     DEFAULT_TIMEZONE,
     MRN_PREFIX,
+    PROVIDERS,
     UPCOMING_DAYS,
     Network,
     build_network,
@@ -41,6 +44,7 @@ from app.demo.network import (
 )
 from app.modules.clinical.storage import FilesystemDocumentStore
 from app.modules.patients.models import Patient
+from app.modules.providers.models import Clinic, Provider
 from app.settings import Settings
 
 
@@ -54,6 +58,7 @@ class DemoSummary:
     slots: int = 0
     days_imported: int = 0
     history: DayCounts = field(default_factory=DayCounts)
+    aged: AgeingCounts = field(default_factory=AgeingCounts)
     live: LiveSummary | None = None
 
     @property
@@ -71,6 +76,23 @@ async def foreign_patients(session: AsyncSession) -> int:
         Patient.mrn.not_like(f"{MRN_PREFIX}%")))
 
 
+async def _refuse_foreign_patients(session: AsyncSession) -> None:
+    others = await foreign_patients(session)
+    if others:
+        raise DemoRefused(
+            f"{others} patient(s) here are not demo patients (MRN not {MRN_PREFIX}...); "
+            "the demo commands only run on a database they own")
+
+
+async def _refuse_without_demo(session: AsyncSession) -> None:
+    clinics = await session.scalar(select(func.count()).select_from(Clinic).where(
+        Clinic.name.in_([name for name, _ in CLINICS])))
+    providers = await session.scalar(select(func.count()).select_from(Provider).where(
+        Provider.license_number.in_([p.licence for p in PROVIDERS])))
+    if clinics < len(CLINICS) or providers < len(PROVIDERS):
+        raise DemoRefused("no demo network here -- run demo-seed first")
+
+
 async def demo_seed(*, settings: Settings, password: str, api_url: str, audit,
                     timezone: str = DEFAULT_TIMEZONE, http: httpx.AsyncClient | None = None,
                     clock: Clock | None = None) -> DemoSummary:
@@ -78,11 +100,7 @@ async def demo_seed(*, settings: Settings, password: str, api_url: str, audit,
     try:
         factory = create_session_factory(engine)
         async with factory() as session:
-            others = await foreign_patients(session)
-            if others:
-                raise DemoRefused(
-                    f"{others} patient(s) here are not demo patients (MRN not {MRN_PREFIX}...); "
-                    "demo-seed only runs on a database it owns")
+            await _refuse_foreign_patients(session)
             net, created = await build_network(session, password=password, timezone=timezone)
             await session.commit()
         return await _top_up(factory, net, created, settings=settings, password=password,
@@ -98,6 +116,8 @@ async def demo_refresh(*, settings: Settings, password: str, api_url: str, audit
     try:
         factory = create_session_factory(engine)
         async with factory() as session:
+            await _refuse_without_demo(session)
+            await _refuse_foreign_patients(session)
             net, created = await build_network(session, password=password, timezone=timezone)
             await session.commit()
         return await _top_up(factory, net, created, settings=settings, password=password,
@@ -139,6 +159,10 @@ async def _top_up(factory: async_sessionmaker[AsyncSession], net: Network,
         await audit.record(AuditEvent(
             entity_type="demo_history", entity_id=f"{imported[0]}..{imported[-1]}",
             action="imported", actor_user_id=ACTOR, after=asdict(summary.history)))
+
+    async with factory() as session:
+        summary.aged = await age_history(session, net, store=store, now=now)
+        await session.commit()
 
     async with factory() as session:
         state = await live_state(session, net, now)

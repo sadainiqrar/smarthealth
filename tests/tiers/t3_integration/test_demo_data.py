@@ -20,7 +20,8 @@ from app.core.temporal import TASK_QUEUE, WORKFLOWS, build_worker, connect_clien
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
-from app.demo import DemoRefused, demo_seed
+from app.demo import DemoRefused, demo_refresh, demo_seed
+from app.demo.ageing import age_history
 from app.demo.history import ORIGIN, day_imported, import_day, last_imported_day, plan_day
 from app.demo.live import live_state, run_live
 from app.demo.network import (
@@ -39,6 +40,8 @@ from app.modules.clinical.models import (
     NoteStatus,
     OrderStatus,
     PatientDocument,
+    Prescription,
+    PrescriptionStatus,
     TestOrder,
 )
 from app.modules.clinical.storage import FilesystemDocumentStore
@@ -383,3 +386,61 @@ async def test_demo_seed_refuses_a_database_with_real_patients(demo_factory, db_
         async with demo_factory() as session:
             await session.execute(text("DELETE FROM patients WHERE mrn LIKE 'REAL-%'"))
             await session.commit()
+
+
+async def test_demo_refresh_refuses_a_database_without_the_demo(demo_factory, db_settings):
+    with pytest.raises(DemoRefused, match="no demo network"):
+        await demo_refresh(settings=db_settings, password=PASSWORD, api_url="http://unused",
+                           audit=RecordingAudit())
+
+
+async def test_demo_refresh_refuses_a_database_with_real_patients(demo_factory, db_settings):
+    async with demo_factory() as session:
+        await build_network(session, password=PASSWORD)
+        session.add(Patient(mrn=f"REAL-{uuid.uuid4().hex[:8]}", first_name="Real",
+                            last_name="Person"))
+        await session.commit()
+    try:
+        with pytest.raises(DemoRefused, match="not demo patients"):
+            await demo_refresh(settings=db_settings, password=PASSWORD,
+                               api_url="http://unused", audit=RecordingAudit())
+    finally:
+        async with demo_factory() as session:
+            await session.execute(text("DELETE FROM patients WHERE mrn LIKE 'REAL-%'"))
+            await session.commit()
+
+
+async def test_imported_clinical_state_ages(demo_factory, db_settings):
+    today = Clock().now().date()
+    days = [today - timedelta(days=d) for d in range(10, 2, -1)]
+    net, _ = await _import(demo_factory, db_settings, days)
+    store = FilesystemDocumentStore.from_settings(db_settings)
+    later = Clock().now() + timedelta(days=30)
+    ids = list(net.patient_ids)
+    async with demo_factory() as session:
+        before_orders = (await session.scalars(select(TestOrder).where(
+            TestOrder.patient_id.in_(ids), TestOrder.status == OrderStatus.ORDERED))).all()
+        before_rx = await session.scalar(select(func.count()).select_from(Prescription).where(
+            Prescription.patient_id.in_(ids),
+            Prescription.status == PrescriptionStatus.ACTIVE))
+        assert before_orders and before_rx
+        counts = await age_history(session, net, store=store, now=later)
+        await session.commit()
+    assert counts.orders_reviewed == len(before_orders)
+    assert 0 < counts.prescriptions_completed <= before_rx
+    async with demo_factory() as session:
+        orders = (await session.scalars(select(TestOrder).where(
+            TestOrder.id.in_([o.id for o in before_orders])))).all()
+        docs = {d.id: d for d in (await session.scalars(select(PatientDocument).where(
+            PatientDocument.patient_id.in_(ids)))).all()}
+        for order in orders:
+            assert order.status is OrderStatus.REVIEWED and order.reviewed_at
+            document = docs[order.result_document_id]
+            assert document.test_order_id == order.id
+            assert await store.get(document.object_key)
+        remaining = await session.scalar(select(func.count()).select_from(Prescription).where(
+            Prescription.patient_id.in_(ids),
+            Prescription.status == PrescriptionStatus.ACTIVE))
+        assert remaining == before_rx - counts.prescriptions_completed
+        again = await age_history(session, net, store=store, now=later)
+        assert (again.orders_reviewed, again.prescriptions_completed) == (0, 0)

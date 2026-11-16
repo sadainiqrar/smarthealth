@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 
+import httpx
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -245,6 +247,9 @@ async def run_demo(*, settings: Settings, command: str, password: str, api_url: 
                                          api_url=api_url, audit=audit, timezone=timezone)
     except DemoRefused as refused:
         raise _fail(str(refused)) from refused
+    except (httpx.HTTPError, TimeoutError) as error:
+        raise _fail(f"the live phase could not reach the API ({type(error).__name__}: "
+                    f"{error}); history up to that point was committed") from error
     finally:
         await mongo.close()
     print(f"network created: {summary.created}")
@@ -348,8 +353,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ("demo-refresh", "Bring the demo up to date: history to yesterday, slots, live activity."),
     ):
         demo_parser = subparsers.add_parser(name, help=help_text)
-        demo_parser.add_argument("--password", required=True,
-                                 help="Password for every demo login. Required; no default.")
+        demo_parser.add_argument("--password", default=None,
+                                 help="Password for every demo login. Falls back to "
+                                      "SMARTHEALTH_DEMO_PASSWORD; one of the two is required.")
         demo_parser.add_argument("--api-url", default="http://localhost:8000",
                                  help="Part A's base URL, for the live bookings.")
         demo_parser.add_argument("--allow-demo-data", action="store_true",
@@ -400,8 +406,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             print("error: refusing to write demo data without --allow-demo-data",
                   file=sys.stderr)
             raise SystemExit(1)
+        password = args.password or os.environ.get("SMARTHEALTH_DEMO_PASSWORD")
+        if not password:
+            print("error: no password: pass --password or set SMARTHEALTH_DEMO_PASSWORD",
+                  file=sys.stderr)
+            raise SystemExit(1)
         asyncio.run(run_demo(
-            settings=Settings(), command=args.command, password=args.password,
+            settings=Settings(), command=args.command, password=password,
             api_url=args.api_url, timezone=args.timezone))
 
 

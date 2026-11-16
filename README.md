@@ -83,8 +83,18 @@ written so the nightly reconcile reports zero drift); opens two weeks of slots; 
 activity through the API (bookings, one cancel, one reschedule, two waitlist joins), so
 Temporal, Kafka, Celery and Mailpit all have something to show. Run `demo-refresh` before a
 review to bring history up to yesterday and top up live bookings. Both take `--timezone`, both
-refuse without `--allow-demo-data`, `demo-seed` refuses a database holding non-demo patients,
-and both exit non-zero if a live booking fails. Design:
+refuse without `--allow-demo-data`, both refuse a database holding non-demo patients,
+`demo-refresh` also refuses a database with no demo network, and both exit non-zero if a live
+booking fails (or the API cannot be reached; history up to that point stays committed).
+`--password` may be omitted when `SMARTHEALTH_DEMO_PASSWORD` is set. Changing the password on a
+refresh does **not** change the password of logins that already exist. Each refresh also ages
+the imported clinical state: orders become reviewed (with their result) and prescriptions
+completed as time passes.
+
+Live bookings nobody checks in become no-shows through `VisitWorkflow` once their slot passes
+(on a stopped server, when it restarts), so recent no-show rates are higher than the imported
+history's; reviewers can check patients in and complete visits to avoid that. Each such no-show
+keeps its billing hold (PRD R-33). The live phase tops up to 12 upcoming appointments. Design:
 `docs/superpowers/specs/2026-11-16-demo-seed-data-design.md`.
 
 Logins, all with the password you chose:

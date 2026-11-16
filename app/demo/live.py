@@ -36,7 +36,7 @@ from app.demo.network import (
     patient_identity,
 )
 
-TARGET_UPCOMING = 20
+TARGET_UPCOMING = 12
 TARGET_WAITLIST = 2
 WALK_IN_START = 600  # walk-in patients booked by the front desk come from here on
 _CONFIRM_TIMEOUT = 60.0

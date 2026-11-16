@@ -40,10 +40,13 @@ from the workflows — the app correctly refuses to book a past slot (PRD R-3) �
   as `seed` does. History is keyed per day: a day with imported appointments is skipped.
   Re-running either command changes nothing it already did.
 - **Deterministic.** History for a calendar day comes from a random generator seeded with that
-  date, so the same day always produces the same rows (exact tests, reproducible demos).
+  date, but the fill-rate trend also uses the import date, so a day's history is determined by
+  its date and the date it was imported; within one run, re-planning a day gives identical rows
+  (exact tests). Imported clinical state **ages**: each run reviews orders and completes
+  prescriptions that the passing time has made due (`app/demo/ageing.py`, idempotent).
 - **Guarded.** Both refuse without `--allow-demo-data`. `demo-seed` refuses a database that
   holds patients outside the demo's MRN range, so fictional people are never mixed into real
-  data. `--password` sets every demo login's password (in production it comes from SSM).
+  data. `--password` (or `SMARTHEALTH_DEMO_PASSWORD`) sets every demo login's password (in production it comes from SSM).
 - **Separate from `seed`.** `app/seed.py` and its small network are untouched — the
   integration tests depend on them.
 - `--timezone` (default `Australia/Sydney`): all three clinics share it, so "today" and clinic
@@ -122,6 +125,12 @@ After the history, through Part A's HTTP API (`--api-url`), as demo users:
 - Each linked patient books one or two of their own.
 - One cancellation; one reschedule; two patients join the waitlist for a fully booked
   provider-day, so a cancellation there promotes them.
+
+Live bookings nobody checks in become no-shows through `VisitWorkflow` once their slot passes
+(on a stopped server, when it restarts), so recent no-show rates run higher than the imported
+history's. A reviewer can check patients in and complete visits to avoid that. Each such
+no-show keeps its billing hold (PRD R-33). The live phase tops up to 12 upcoming appointments
+to keep the effect small.
 
 Each booking waits for its workflow to confirm (polling `GET /appointments/{id}`), so the
 command fails visibly if the system is not healthy. Everything is visible afterwards in Temporal

@@ -3,8 +3,9 @@
 Two halves, deliberately separate:
 
 - **planning** (`plan_day`) is pure: a random generator seeded with the date decides every
-  slot, booking and outcome, so the same day always produces the same history and the rules
-  are unit-tested without a database;
+  slot, booking and outcome. A day's history is determined by its date and by the date it is
+  imported (`fill_rate` trends with `today`); within one run, re-planning a day gives identical
+  rows. The rules are unit-tested without a database;
 - **importing** (`import_day`) writes one planned day: slots inserted with their final
   status, appointments marked `origin = 'legacy_import'`, visits, signed notes,
   prescriptions, test orders and result documents, billing, and the day's analytics -- no
@@ -111,6 +112,8 @@ _CHILDREN = tuple(i for i in range(PATIENT_COUNT) if is_child(i))
 
 
 def plan_day(day: date, *, tz: ZoneInfo, today: date) -> PlannedDay:
+    """Plan one day. Determined by `day` and `today` (the import date): the same pair always
+    yields the same rows, but a different import date shifts the fill rate."""
     rng = random.Random(f"smarthealth-demo:{day.isoformat()}")
     used: set[int] = set()
     slots: list[tuple[str, datetime]] = []
