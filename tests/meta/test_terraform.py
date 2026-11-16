@@ -75,3 +75,13 @@ def test_bash_scripts_parse():
         result = subprocess.run([bash, "-n", script.as_posix()], capture_output=True,
                                 text=True, check=False)
         assert result.returncode == 0, f"{script.name}: {result.stderr}"
+
+
+def test_cloudfront_reaches_the_server_privately_and_never_caches_the_api():
+    text = (TF / "cloudfront.tf").read_text(encoding="utf-8")
+    assert 'resource "aws_cloudfront_vpc_origin"' in text
+    assert "vpc_origin_config" in text
+    assert re.search(r'viewer_protocol_policy\s*=\s*"redirect-to-https"', text)
+    assert "Managed-CachingDisabled" in text
+    assert re.search(r'path_pattern\s*=\s*"/assets/\*"', text)
+    assert "logging_config" in text
