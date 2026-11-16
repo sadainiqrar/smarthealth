@@ -59,3 +59,10 @@ var/
 # Helm dependency build output
 deploy/helm/**/charts/*.tgz
 deploy/helm/**/Chart.lock
+
+# Terraform: provider caches, local state of the bootstrap, generated backend config
+deploy/terraform/**/.terraform/
+deploy/terraform/**/*.tfstate
+deploy/terraform/**/*.tfstate.*
+deploy/terraform/backend.hcl
+deploy/terraform/**/.terraform.lock.hcl.bak

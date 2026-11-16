@@ -1,0 +1,35 @@
+#!/bin/bash
+# deploy/terraform/templates/nat-user-data.sh.tftpl -- first boot of the NAT instance.
+# Installs a unit that, on EVERY boot, turns on forwarding + masquerade and schedules the
+# auto-stop (user-data itself runs only once).
+set -euo pipefail
+cat >/usr/local/sbin/smarthealth-nat <<'EOF'
+#!/bin/bash
+set -euo pipefail
+sysctl -w net.ipv4.ip_forward=1
+iface="$(ip route show default | awk '{print $5; exit}')"
+nft list table ip nat >/dev/null 2>&1 || nft add table ip nat
+nft list chain ip nat postrouting >/dev/null 2>&1 || \
+  nft add chain ip nat postrouting '{ type nat hook postrouting priority 100 ; }'
+nft flush chain ip nat postrouting
+nft add rule ip nat postrouting ip saddr ${private_cidr} oifname "$iface" masquerade
+shutdown -h +${autostop_minutes} "smarthealth auto-stop"
+EOF
+chmod 0755 /usr/local/sbin/smarthealth-nat
+cat >/etc/systemd/system/smarthealth-nat.service <<'EOF'
+[Unit]
+Description=SmartHealth NAT (forwarding, masquerade) and auto-stop
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/smarthealth-nat
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+dnf install -y nftables
+systemctl daemon-reload
+systemctl enable --now smarthealth-nat.service
