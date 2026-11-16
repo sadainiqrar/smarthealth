@@ -144,3 +144,26 @@ def test_grafana_points_at_jaeger_under_its_sub_path():
     env = {e["name"]: e.get("value") for e in container(docs, "grafana")["env"]}
     assert env["GF_SERVER_ROOT_URL"] == "http://localhost:8080/grafana/"
     assert env["GF_SERVER_SERVE_FROM_SUB_PATH"] == "true"
+
+
+CORE = ["core-api", "core-worker", "core-relay", "core-consumers", "core-celery-worker",
+        "core-celery-beat"]
+
+
+@needs_helm
+def test_core_runs_six_processes_from_one_image():
+    docs = render("values-local.yaml")
+    images = {container(docs, name)["image"] for name in CORE}
+    assert images == {"smarthealth-core:dev"}
+    services = {s["metadata"]["name"] for s in of_kind(docs, "Service")}
+    assert "app" in services                      # the API keeps its compose name
+    relay = workload(docs, "core-relay")["spec"]["template"]["spec"]
+    setup = [c for c in relay["initContainers"] if c["name"] == "setup"][0]
+    assert setup["command"] == ["python", "-m", "app.relay", "--setup"]
+    api_env = {e["name"]: e for e in container(docs, "core-api")["env"]}
+    assert api_env["UVICORN_ROOT_PATH"]["value"] == "/api"
+    assert api_env["SMARTHEALTH_POSTGRES_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == \
+        "postgres-password"
+    beat = container(docs, "core-celery-worker")
+    mounts = {m["mountPath"] for m in beat["volumeMounts"]}
+    assert "/var/smarthealth/documents" in mounts

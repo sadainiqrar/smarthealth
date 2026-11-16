@@ -1,0 +1,117 @@
+global:
+  secretName: smarthealth-secrets
+  image: {registry: "", tag: dev, pullPolicy: IfNotPresent}
+
+# Settings shared by the six processes; each workload lists the subset compose gives it.
+x-common: &common
+  SMARTHEALTH_ENVIRONMENT: docker
+  SMARTHEALTH_POSTGRES_HOST: postgres
+  SMARTHEALTH_POSTGRES_PORT: "5432"
+  SMARTHEALTH_POSTGRES_USER: smarthealth
+  SMARTHEALTH_POSTGRES_DB: smarthealth
+  SMARTHEALTH_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+x-mongo: &mongo
+  SMARTHEALTH_MONGO_HOST: mongo
+  SMARTHEALTH_MONGO_PORT: "27017"
+  SMARTHEALTH_MONGO_DB: smarthealth
+x-redis: &redis
+  SMARTHEALTH_REDIS_HOST: redis
+  SMARTHEALTH_REDIS_PORT: "6379"
+x-temporal: &temporal
+  SMARTHEALTH_TEMPORAL_HOST: temporal
+  SMARTHEALTH_TEMPORAL_PORT: "7233"
+x-rabbit: &rabbit
+  SMARTHEALTH_RABBITMQ_HOST: rabbitmq
+  SMARTHEALTH_RABBITMQ_PORT: "5672"
+  SMARTHEALTH_RABBITMQ_USER: smarthealth
+x-kafka: &kafka
+  SMARTHEALTH_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+  SMARTHEALTH_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+x-celery: &celery
+  SMARTHEALTH_SMTP_HOST: mailpit
+  SMARTHEALTH_SMTP_PORT: "1025"
+  SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
+  SMARTHEALTH_PAYMENTS_URL: http://payments-mock:8090
+x-pg-secret: &pgsecret
+  SMARTHEALTH_POSTGRES_PASSWORD: postgres-password
+x-rabbit-secret: &rabbitsecret
+  SMARTHEALTH_RABBITMQ_PASSWORD: rabbitmq-password
+
+image: &image {repository: smarthealth-core, own: true}
+
+workloads:
+  api:
+    image: *image
+    service:
+      name: app
+      ports: {http: 8000}
+    waitFor: ["postgres:5432", "mongo:27017", "redis:6379", "temporal:7233"]
+    secretEnv:
+      <<: [*pgsecret, *rabbitsecret]
+      SMARTHEALTH_JWT_PRIVATE_KEY: jwt-private-key
+    env:
+      <<: [*common, *mongo, *redis, *temporal, *rabbit]
+      SMARTHEALTH_OTEL_ENDPOINT_GRPC: http://otel-collector:4317
+      SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
+      UVICORN_ROOT_PATH: /api       # the ingress strips /api; Swagger then fetches /api/openapi.json
+    readinessProbe:
+      httpGet: {path: /health, port: 8000}
+      periodSeconds: 10
+      failureThreshold: 12
+    volumes:
+      documents: {mountPath: /var/smarthealth/documents, persistent: true, size: 2Gi}
+  worker:
+    image: *image
+    command: ["python", "-m", "app.worker"]
+    waitFor: ["temporal:7233", "app:8000"]
+    secretEnv:
+      <<: [*pgsecret, *rabbitsecret]
+    env:
+      <<: [*common, *mongo, *temporal, *rabbit]
+      SMARTHEALTH_OTEL_ENDPOINT_GRPC: http://otel-collector:4317
+      SMARTHEALTH_NO_SHOW_GRACE_MINUTES: "15"
+      SMARTHEALTH_PAYMENTS_URL: http://payments-mock:8090
+    readinessProbe:
+      exec: {command: ["python", "-m", "app.worker", "--check"]}
+      periodSeconds: 60
+      timeoutSeconds: 12
+  relay:
+    image: *image
+    command: ["python", "-m", "app.relay"]
+    waitFor: ["postgres:5432", "kafka:29092", "schema-registry:8081"]
+    initContainers:
+      - name: setup
+        command: ["python", "-m", "app.relay", "--setup"]
+    secretEnv:
+      <<: *pgsecret
+    env:
+      <<: [*common, *kafka]
+  consumers:
+    image: *image
+    command: ["python", "-m", "app.consumers"]
+    waitFor: ["kafka:29092", "schema-registry:8081", "temporal:7233", "app:8000"]
+    secretEnv:
+      <<: [*pgsecret, *rabbitsecret]
+    env:
+      <<: [*common, *kafka, *temporal, *rabbit]
+  celery-worker:
+    image: *image
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=INFO",
+              "-Q", "notifications,maintenance,documents", "--concurrency=2"]
+    waitFor: ["rabbitmq:5672", "app:8000"]
+    secretEnv:
+      <<: [*pgsecret, *rabbitsecret]
+    env:
+      <<: [*common, *mongo, *redis, *rabbit, *celery, *temporal]
+    volumes:
+      documents: {mountPath: /var/smarthealth/documents, persistent: true,
+                  claimName: core-api-documents}
+  celery-beat:
+    image: *image
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=INFO",
+              "--schedule=/tmp/celerybeat-schedule"]
+    waitFor: ["rabbitmq:5672"]
+    secretEnv:
+      <<: [*pgsecret, *rabbitsecret]
+    env:
+      <<: [*common, *mongo, *redis, *rabbit, *celery, *temporal]

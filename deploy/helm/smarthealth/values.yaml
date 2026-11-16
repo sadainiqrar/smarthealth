@@ -94,3 +94,17 @@ grafana:
   workloads:
     main:
       resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 192Mi}}
+core:
+  workloads:
+    api:
+      resources: {requests: {memory: 192Mi, cpu: 100m}, limits: {memory: 320Mi}}
+    worker:
+      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 256Mi}}
+    relay:
+      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 160Mi}}
+    consumers:
+      resources: {requests: {memory: 128Mi, cpu: 20m}, limits: {memory: 192Mi}}
+    celery-worker:
+      resources: {requests: {memory: 192Mi, cpu: 50m}, limits: {memory: 256Mi}}
+    celery-beat:
+      resources: {requests: {memory: 96Mi, cpu: 10m}, limits: {memory: 160Mi}}

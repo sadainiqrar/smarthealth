@@ -24,3 +24,4 @@ dependencies:
   - {name: jaeger, version: 0.1.0, repository: file://../charts/jaeger}
   - {name: prometheus, version: 0.1.0, repository: file://../charts/prometheus}
   - {name: grafana, version: 0.1.0, repository: file://../charts/grafana}
+  - {name: core, version: 0.1.0, repository: file://../charts/core}
