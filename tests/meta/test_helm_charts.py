@@ -194,11 +194,71 @@ def test_the_secret_is_rendered_only_when_asked():
     keys = set(secrets[0]["stringData"])
     assert {"postgres-password", "knowledge-db-password", "assistant-db-password",
             "rabbitmq-password", "grafana-admin-password", "jwt-private-key",
-            "tools-basic-auth", "demo-password"} <= keys
-    assert secrets[0]["stringData"]["tools-basic-auth"].startswith("reviewer:$2")
-    external = render("values-local.yaml", sets=("secrets.create=false",))
-    assert [s for s in of_kind(external, "Secret")
-            if s["metadata"]["name"] == "smarthealth-secrets"] == []
+            "demo-password"} <= keys
+    # Traefik 2.x reads a basicAuth Secret only when it holds exactly one key.
+    login = [s for s in of_kind(local, "Secret")
+             if s["metadata"]["name"] == "smarthealth-tools-auth"]
+    assert len(login) == 1 and list(login[0]["stringData"]) == ["users"]
+    assert login[0]["stringData"]["users"].startswith("reviewer:$2")
+
+
+@needs_helm
+def test_a_precomputed_tool_login_is_used_as_given():
+    line = "reviewer:$2y$05$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+    docs = render("values-local.yaml", sets=(f"toolsAuth.htpasswd={line}",))
+    secret = [s for s in of_kind(docs, "Secret")
+              if s["metadata"]["name"] == "smarthealth-tools-auth"][0]
+    assert secret["stringData"]["users"] == line
+
+
+@needs_helm
+def test_an_external_secret_renders_no_secret_and_the_login_reads_it():
+    """Argo CD renders with `helm template`: no `lookup`, so nothing copied from the
+    cluster -- the middleware names the externally created one-key login Secret."""
+    docs = render("values-local.yaml", sets=("secrets.create=false",))
+    assert of_kind(docs, "Secret") == []
+    middlewares = {m["metadata"]["name"]: m for m in of_kind(docs, "Middleware")}
+    auth = middlewares["tools-auth"]["spec"]["basicAuth"]
+    assert auth["secret"] == "smarthealth-tools-auth"
+
+
+@needs_helm
+def test_persistent_volumes_survive_helm_and_argo_cd_deletion():
+    for pvc in of_kind(render("values-local.yaml"), "PersistentVolumeClaim"):
+        notes = pvc["metadata"]["annotations"]
+        assert notes["helm.sh/resource-policy"] == "keep"
+        assert notes["argocd.argoproj.io/sync-options"] == "Delete=false,Prune=false"
+
+
+@needs_helm
+def test_image_pull_secrets_reach_every_pod_when_set():
+    assert all("imagePullSecrets" not in d["spec"]["template"]["spec"]
+               for d in of_kind(render("values-local.yaml"), "Deployment"))
+    docs = render("values-local.yaml", sets=("global.imagePullSecrets={ghcr-pull}",
+                                             "demoSeed.enabled=true"))
+    pods = [d["spec"]["template"]["spec"]
+            for d in of_kind(docs, "Deployment") + of_kind(docs, "Job")]
+    assert pods and all(p.get("imagePullSecrets") == [{"name": "ghcr-pull"}] for p in pods)
+
+
+def _config_checksum(docs, name: str) -> str:
+    return workload(docs, name)["spec"]["template"]["metadata"]["annotations"][
+        "checksum/config"]
+
+
+@needs_helm
+def test_a_config_change_rolls_the_pods_that_read_it():
+    before = render("values-local.yaml")
+    after = render("values-local.yaml", sets=("envoy.configMaps.config.data.extra=changed",))
+    assert _config_checksum(before, "envoy") != _config_checksum(after, "envoy")
+    assert _config_checksum(before, "grafana") == _config_checksum(after, "grafana")
+
+
+@needs_helm
+def test_the_temporal_ui_is_read_only():
+    env = {e["name"]: e.get("value") for e in container(render("values-local.yaml"),
+                                                        "temporal-ui")["env"]}
+    assert env["TEMPORAL_DISABLE_WRITE_ACTIONS"] == "true"
 
 
 def _routes(docs) -> dict[str, tuple[str, str]]:
@@ -235,6 +295,12 @@ def test_the_demo_job_is_off_by_default_and_runs_the_cli_when_on():
     c = job["spec"]["template"]["spec"]["containers"][0]
     assert c["command"][:4] == ["python", "-m", "app.cli", "demo-refresh"]
     assert "--allow-demo-data" in c["command"]
+    notes = job["metadata"]["annotations"]
+    assert notes["argocd.argoproj.io/hook"] == "PostSync"
+    assert notes["argocd.argoproj.io/hook-delete-policy"] == "BeforeHookCreation"
+    assert "ttlSecondsAfterFinished" not in job["spec"]
+    wait = job["spec"]["template"]["spec"]["initContainers"][0]
+    assert "nc -z app 8000" in wait["command"][-1]
 
 
 COMPOSE = ROOT / "docker-compose.infra.yml"

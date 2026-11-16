@@ -5,21 +5,10 @@ metadata:
   name: tools-auth
 spec:
   basicAuth:
-    secret: {{ .Values.global.secretName }}-tools-auth
----
-# Traefik reads basic-auth users from a Secret's `users` key; mirror the shared key into it.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: {{ .Values.global.secretName }}-tools-auth
-type: Opaque
-stringData:
-  {{- if .Values.secrets.create }}
-  users: {{ htpasswd .Values.toolsAuth.user .Values.toolsAuth.password | quote }}
-  {{- else }}
-  {{- $existing := lookup "v1" "Secret" .Release.Namespace .Values.global.secretName }}
-  users: {{ if $existing }}{{ index $existing.data "tools-basic-auth" | b64dec | quote }}{{ else }}""{{ end }}
-  {{- end }}
+    # A one-key Secret (`users`; Traefik 2.x refuses a Secret with more keys), rendered by
+    # secrets.yaml or created beside smarthealth-secrets (spec section 5). No `lookup`, so
+    # `helm template` (Argo CD) renders the same as `helm install`.
+    secret: {{ .Values.toolsAuth.secretName }}
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware

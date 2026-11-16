@@ -11,6 +11,8 @@ global:
     registry: ""       # "" = images imported into the cluster (k3d); ghcr.io/<owner> on AWS
     tag: dev
     pullPolicy: IfNotPresent
+  # Names of image pull Secrets for every pod (e.g. a private registry); empty on k3d.
+  imagePullSecrets: []
 
 # measured 2026-11-17: 35Mi working set, 37Mi peak incl. page cache
 payments-mock:
@@ -162,11 +164,16 @@ secrets:
   create: false
   values: {}
 
-# One login in front of the tool UIs (Traefik basic-auth). With secrets.create the htpasswd
-# line is computed from toolsAuth; otherwise the Secret's `tools-basic-auth` key holds it.
+# One login in front of the tool UIs (Traefik basic-auth), read from the one-key Secret
+# `secretName` (key `users`, an htpasswd line; Traefik 2.x refuses a Secret with more keys).
+# With secrets.create the chart renders it: `htpasswd` if set, else computed from
+# user/password (a fresh bcrypt salt each render, so it changes every upgrade -- acceptable
+# on k3d). With secrets.create=false it must exist, created beside smarthealth-secrets.
 toolsAuth:
+  secretName: smarthealth-tools-auth
   user: reviewer
   password: ""
+  htpasswd: ""        # a precomputed `user:$2y$...` line; "" = compute it
 
 # The optional demo data Job (docs/superpowers/specs/2026-11-16-demo-seed-data-design.md).
 demoSeed:

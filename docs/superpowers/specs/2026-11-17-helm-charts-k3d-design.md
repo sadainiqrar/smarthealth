@@ -90,11 +90,23 @@ ingress, routes by path:
 ## 5. Secrets
 
 Every chart reads credentials from one Secret, `smarthealth-secrets`: Postgres passwords (×3),
-Mongo, RabbitMQ, Grafana admin, the JWT signing key, the basic-auth `htpasswd` line, the
-optional Groq API key, and the demo password. `secrets.create: true` (k3d) renders it from
+Mongo, RabbitMQ, Grafana admin, the JWT signing key, the
+optional Groq API key, and the demo password (the basic-auth `htpasswd` line has its own
+Secret -- see *As built* below). `secrets.create: true` (k3d) renders it from
 `values-local.yaml`, whose values are the public development defaults of `.env.example`;
 `secrets.create: false` (AWS) expects it to exist — sub-project 3 creates it from SSM before
 Argo CD syncs. No non-development secret is ever in git.
+
+*As built:* the basic-auth `htpasswd` line is **not** in `smarthealth-secrets` but in a
+second Secret, `smarthealth-tools-auth` (`toolsAuth.secretName`), whose only key is `users`:
+Traefik 2.x (bundled with k3s) refuses a basicAuth Secret holding more than one key ("must be
+single element exactly"). The `tools-auth` Middleware names it directly. There is no `lookup`
+and nothing copied from the cluster, so `helm template` (how Argo CD renders) produces the
+same manifests as `helm install`, and with `secrets.create: false` the chart renders no Secret
+at all -- sub-project 3 creates both from SSM. With `secrets.create: true` the line is
+`toolsAuth.htpasswd` when set, otherwise computed from `toolsAuth.user`/`password`; bcrypt
+salts afresh each render, so on k3d that Secret changes on every upgrade (harmless there; a
+precomputed line avoids it).
 
 ## 6. Startup, jobs, storage
 
@@ -121,7 +133,11 @@ Argo CD syncs. No non-development secret is ever in git.
   *As built:* each persistent volume is a standalone PVC annotated
   `helm.sh/resource-policy: keep`, mounted by a one-replica Deployment with
   `strategy: Recreate` -- not a StatefulSet. On one replica a StatefulSet adds nothing, and
-  `keep` means `helm uninstall` never deletes the data.
+  `keep` means `helm uninstall` never deletes the data; the PVCs also carry
+  `argocd.argoproj.io/sync-options: Delete=false,Prune=false`, so neither does Argo CD
+  deleting or pruning the application. The demo-seed Job is an Argo CD `PostSync` hook
+  (`BeforeHookCreation`), waits for `app:8000` in an init container, and plain helm ignores
+  the hook annotations.
 
 ## 7. The 8 GB budget
 

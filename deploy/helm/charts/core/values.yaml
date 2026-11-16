@@ -59,6 +59,8 @@ workloads:
       periodSeconds: 10
       failureThreshold: 12
     volumes:
+      # ReadWriteOnce, yet also mounted by celery-worker and the demo-seed Job: this works only
+      # because there is one node (RWO binds a node, not a pod). A second node needs RWX.
       documents: {mountPath: /var/smarthealth/documents, persistent: true, size: 2Gi}
   worker:
     image: *image

@@ -166,7 +166,9 @@ bash scripts/k3d_down.sh        # delete the cluster
 | <http://localhost:8080/prometheus> | Prometheus |
 
 The tool paths (everything except `/` and `/api`) sit behind one basic-auth login,
-`reviewer` / `smarthealth` (k3d only; set `toolsAuth` in `values-local.yaml`). Qdrant stays
+`reviewer` / `smarthealth` (k3d only; set `toolsAuth` in `values-local.yaml`), stored as
+the one key (`users`) of the Secret `smarthealth-tools-auth`, which the Traefik middleware
+reads. Qdrant stays
 internal: `kubectl -n smarthealth port-forward svc/qdrant 6333`. Demo data (the smoke script
 does this itself): `helm upgrade smarthealth deploy/helm/smarthealth -n smarthealth -f
 deploy/helm/smarthealth/values-local.yaml --set demoSeed.enabled=true`.
@@ -178,7 +180,7 @@ probes, wait-for init container); `deploy/helm/charts/` holds 21 component chart
 being Part A's six processes from one image (`core-api` is the Service `app`); the umbrella
 installs `postgres` three times and `redis` twice by alias. Config files under `ops/` are
 copied into charts by `python scripts/sync_chart_files.py` (a meta-test fails on drift).
-Persistent data lives in PVCs kept on `helm uninstall`.
+Persistent data lives in PVCs kept on `helm uninstall` and on Argo CD deletion.
 
 ## Architecture
 

@@ -80,8 +80,17 @@ spec:
         {{- include "sh-lib.labels" (dict "root" $root "name" $name) | nindent 8 }}
       annotations:
         checksum/values: {{ toYaml $w | sha256sum | trunc 16 }}
+        {{- with $root.Values.configMaps }}
+        checksum/config: {{ include "sh-lib.configChecksum" $root }}
+        {{- end }}
     spec:
       enableServiceLinks: false
+      {{- with $g.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       {{- with $w.securityContext }}
       securityContext:
         {{- toYaml . | nindent 8 }}
@@ -213,7 +222,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: {{ printf "%s-%s" .name .vname }}
   annotations:
+    # Data outlives the release: never deleted by `helm uninstall`, nor by Argo CD
+    # deleting or pruning the application.
     helm.sh/resource-policy: keep
+    argocd.argoproj.io/sync-options: Delete=false,Prune=false
   labels:
     {{- include "sh-lib.labels" (dict "root" .root "name" .name) | nindent 4 }}
 spec:
@@ -222,6 +234,19 @@ spec:
     requests:
       storage: {{ .v.size | default "1Gi" }}
 {{- end }}
+{{- end -}}
+
+{{- /* A hash of the chart's ConfigMaps -- their values and the content of every listed file
+     -- so a config change rolls the pods that mount it. */ -}}
+{{- define "sh-lib.configChecksum" -}}
+{{- $root := . -}}
+{{- $parts := list (toYaml .Values.configMaps) -}}
+{{- range $cname, $cm := .Values.configMaps }}
+{{- range $cm.files }}
+{{- $parts = append $parts ($root.Files.Get .) -}}
+{{- end }}
+{{- end }}
+{{- join "|" $parts | sha256sum | trunc 16 -}}
 {{- end -}}
 
 {{- define "sh-lib.configmap" -}}

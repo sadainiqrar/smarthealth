@@ -2505,15 +2505,19 @@ frontend, `/api/*` the API with the prefix stripped (FastAPI `root_path=/api` ke
 Swagger working), the two gRPC-Web service paths go to Envoy with no buffering and no
 response timeout, and `/grafana`, `/jaeger`, `/temporal`, `/mailpit`, `/rabbitmq`,
 `/prometheus` are the tool UIs, each configured for its sub-path. The tool paths sit behind
-one Traefik basic-auth middleware (D-39); a request without the login gets 401. Qdrant's
+one Traefik basic-auth middleware (D-39), which reads the one-key Secret `smarthealth-tools-auth`
+(key `users`; Traefik 2.x refuses a Secret with more keys, so it cannot share
+`smarthealth-secrets`; no `lookup`, so `helm template` renders it for Argo CD); a request without
+the login gets 401. The Temporal UI is read-only (`TEMPORAL_DISABLE_WRITE_ACTIONS`). Qdrant's
 dashboard does not serve under a sub-path and stays internal (`kubectl port-forward`).
 
 ### 7.3 Secrets
 
 Every chart reads credentials from one Secret, `smarthealth-secrets` (D-41). With
 `secrets.create: true` (k3d) the umbrella renders it from `values-local.yaml`, whose values
-are the public development defaults; with `false` it is expected to exist already. No
-non-development secret is in git. Images are built and imported or pushed from the laptop,
+are the public development defaults; with `false` it is expected to exist already. The tool
+login is the one exception, a second one-key Secret `smarthealth-tools-auth` (§7.2), rendered
+or expected on the same terms. No non-development secret is in git. Images are built and imported or pushed from the laptop,
 tagged with the git SHA (D-40, `scripts/push_images.sh`).
 
 ### 7.4 Startup order and jobs
@@ -2523,12 +2527,15 @@ without a dependency; the rest restart with backoff. Migrations stay in the API 
 entrypoint (one replica, so nothing races). `core-relay` runs `python -m app.relay --setup`
 as an init container before relaying. Workloads that must never overlap during an upgrade
 (`singleton: true`: Schema Registry, Celery beat) use `Recreate`. The demo seed is a Job
-(`demoSeed.enabled`, `mode: seed|refresh`) that runs the CLI against `http://app:8000`.
+(`demoSeed.enabled`, `mode: seed|refresh`) that waits for and runs the CLI against
+`http://app:8000`; under Argo CD it is a `PostSync` hook. A config change rolls the pods that
+read it: the pod template carries a checksum of the chart's ConfigMaps.
 
 ### 7.5 Storage and the budget
 
 k3s's `local-path` provisioner backs standalone PVCs annotated
-`helm.sh/resource-policy: keep` (so `helm uninstall` never deletes data), mounted by
+`helm.sh/resource-policy: keep` and `argocd.argoproj.io/sync-options: Delete=false,Prune=false`
+(so neither `helm uninstall` nor Argo CD deletion deletes data), mounted by
 one-replica Deployments with `strategy: Recreate` rather than StatefulSets: with one replica
 a StatefulSet adds nothing. Persistent: the three Postgres, Mongo, Kafka, Qdrant, the
 knowledge model cache and Part A's documents. Part A's documents are shared by `core-api` and

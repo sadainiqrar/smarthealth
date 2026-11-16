@@ -826,10 +826,10 @@ flowchart LR
     <li>21 component charts — <code>core</code> (Part A's six processes from one image: core-api with the Service <code>app</code>, core-worker, core-relay, core-consumers, core-celery-worker, core-celery-beat), <code>knowledge</code>, <code>assistant</code>, <code>payments-mock</code>, <code>frontend</code>, <code>envoy</code>, <code>postgres</code>, <code>redis</code>, <code>mongo</code>, <code>rabbitmq</code>, <code>kafka</code>, <code>schema-registry</code>, <code>kafka-exporter</code>, <code>temporal</code>, <code>temporal-ui</code>, <code>qdrant</code>, <code>mailpit</code>, <code>otel-collector</code>, <code>jaeger</code>, <code>prometheus</code>, <code>grafana</code>.</li>
     <li>Aliases, not copies: <code>postgres</code> is installed three times (<code>postgres</code>, <code>knowledge-db</code>, <code>assistant-db</code>) and <code>redis</code> twice (<code>redis</code>, <code>assistant-redis</code>).</li>
   </ul>
-  <p>Persistent data lives in PVCs annotated <code>helm.sh/resource-policy: keep</code>, mounted by one-replica
+  <p>Persistent data lives in PVCs kept on <code>helm uninstall</code> and on Argo CD deletion (<code>helm.sh/resource-policy: keep</code>, <code>argocd.argoproj.io/sync-options: Delete=false,Prune=false</code>), mounted by one-replica
   Deployments with <code>strategy: Recreate</code>. Measured on k3d (k3s 1.30.6) after the demo seed: memory limits
   total 6.36 GiB, requests 3.2 GiB. Tool UIs are public under sub-paths behind one basic-auth login
-  (<code>reviewer</code> / <code>smarthealth</code>, k3d only); Qdrant stays internal.</p>
+  (<code>reviewer</code> / <code>smarthealth</code>, k3d only), read from the one-key Secret <code>smarthealth-tools-auth</code>; the Temporal UI is read-only; Qdrant stays internal.</p>
   <div class="table-wrap"><table>
     <tr><th>Command</th><th>What</th></tr>
     <tr><td><code>bash scripts/k3d_up.sh</code></td><td>Create the 8 GB k3d cluster, build and import the five images, install the umbrella</td></tr>

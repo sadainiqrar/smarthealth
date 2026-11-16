@@ -10,6 +10,7 @@ workloads:
       TEMPORAL_ADDRESS: temporal:7233
       TEMPORAL_UI_PUBLIC_PATH: /temporal     # served under /temporal behind the ingress
       TEMPORAL_CORS_ORIGINS: "{{ .Values.global.publicUrl }}"
+      TEMPORAL_DISABLE_WRITE_ACTIONS: "true"   # read-only: no cancel/terminate/signal from the UI
     readinessProbe:
       tcpSocket: {port: 8080}
       periodSeconds: 10
