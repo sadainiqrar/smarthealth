@@ -33,8 +33,9 @@ deploy/helm/
   sh-lib/              library chart (type: library): deployment, statefulset, service,
                        configmap, env-from-secret, probes, resources, wait-for initContainer
   charts/
-    part-a/            ONE image, six workloads: api, worker, relay, consumers,
-                       celery-worker, celery-beat
+    core/              Part A of the assignment (the modular monolith): ONE image, six
+                       workloads core-api, core-worker, core-relay, core-consumers,
+                       core-celery-worker, core-celery-beat
     knowledge/  assistant/  payments-mock/  frontend/  envoy/
     postgres/  redis/  mongo/  rabbitmq/  kafka/  schema-registry/  kafka-exporter/
     temporal/  temporal-ui/  qdrant/  mailpit/
@@ -48,8 +49,10 @@ scripts/k3d_up.sh, k3d_down.sh, k3d_smoke.py
 scripts/sync_chart_files.py   copy ops/ config files into the charts that need them
 ```
 
-- 21 component charts plus `sh-lib` and the umbrella. Part A's six processes share one chart
-  because they ship as one image and are deployed together.
+- 21 component charts plus `sh-lib` and the umbrella. Part A's six processes share one chart,
+  `core` (named for what it is; its README notes it is "Part A" of the assignment), because
+  they ship as one image and are deployed together. The API's Service keeps the compose name
+  `app`, like every other Service (below).
 - **Aliases instead of copies:** the umbrella installs `postgres` three times (`postgres` for
   Part A and Temporal, as in compose; `knowledge-db`; `assistant-db`) and `redis` twice
   (`redis`, `assistant-redis`).
