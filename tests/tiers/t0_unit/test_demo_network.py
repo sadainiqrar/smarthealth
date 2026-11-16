@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -14,6 +14,7 @@ from app.demo.network import (
     MRN_PREFIX,
     PATIENT_COUNT,
     PROVIDERS,
+    PROVIDERS_BY_LICENCE,
     is_child,
     patient_identity,
     session_starts,
@@ -42,21 +43,35 @@ def test_patient_identity_is_deterministic_and_demo_marked():
 
 
 def test_children_are_children_and_linked_patients_are_adults():
-    child = patient_identity(7)
-    assert is_child(7) and child.date_of_birth > date(2010, 1, 1)
-    assert not any(is_child(i) for i in LINKED_PATIENT_INDEXES)
-    assert patient_identity(1).date_of_birth < date(2008, 1, 1)
+    for i in range(PATIENT_COUNT):
+        if is_child(i):
+            assert patient_identity(i).date_of_birth >= date(2012, 1, 1)
+    for i in LINKED_PATIENT_INDEXES:
+        assert not is_child(i)
+        assert patient_identity(i).date_of_birth < date(2008, 1, 1)
 
 
-def test_a_session_is_six_half_hours_from_nine_local_in_utc():
-    starts = session_starts(date(2026, 6, 1), ZoneInfo("Australia/Sydney"))
+@pytest.mark.parametrize(
+    ("day", "first_start"),
+    [
+        # June: AEST, UTC+10. 09:00 local is 23:00 UTC the day before.
+        (date(2026, 6, 1), datetime(2026, 5, 31, 23, 0, tzinfo=UTC)),
+        # October: AEDT, UTC+11 after the DST change. 09:00 local is 22:00 UTC the day before.
+        (date(2026, 10, 5), datetime(2026, 10, 4, 22, 0, tzinfo=UTC)),
+        # April: AEST again after the DST change. 09:00 local is 23:00 UTC the day before.
+        (date(2026, 4, 6), datetime(2026, 4, 5, 23, 0, tzinfo=UTC)),
+    ],
+)
+def test_a_session_is_six_half_hours_from_nine_local_in_utc(day, first_start):
+    starts = session_starts(day, ZoneInfo("Australia/Sydney"))
     assert len(starts) == 6 and all(s.tzinfo is UTC for s in starts)
-    # 09:00 AEST (UTC+10 in June) is 23:00 UTC the day before.
-    assert starts[0] == datetime(2026, 5, 31, 23, 0, tzinfo=UTC)
+    assert starts[0] == first_start
+    assert all(b - a == timedelta(minutes=30) for a, b in zip(starts, starts[1:], strict=False))
 
 
 def test_working_follows_the_weekly_schedule():
-    p = PROVIDERS[0]
-    monday = date(2026, 6, 1)
-    assert working(p, monday) == (0 in p.weekdays)
-    assert not working(p, date(2026, 6, 6))  # Saturday
+    osei = PROVIDERS_BY_LICENCE["DEMO-LIC-001"]  # Cardiology, weekdays (0, 2)
+    assert working(osei, date(2026, 6, 1))  # Monday
+    assert working(osei, date(2026, 6, 3))  # Wednesday
+    assert not working(osei, date(2026, 6, 2))  # Tuesday
+    assert not working(osei, date(2026, 6, 6))  # Saturday

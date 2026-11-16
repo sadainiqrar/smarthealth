@@ -116,7 +116,7 @@ def patient_identity(index: int) -> DemoPatient:
     first = _FIRST[index % len(_FIRST)]
     last = _LAST[(index // len(_FIRST) + index) % len(_LAST)]
     if is_child(index):
-        born = date(2011, 1, 1) + timedelta(days=rng.randrange(13 * 365))
+        born = date(2012, 1, 1) + timedelta(days=rng.randrange(12 * 365))
     else:
         born = date(1941, 1, 1) + timedelta(days=rng.randrange(65 * 365))
     return DemoPatient(
