@@ -62,9 +62,10 @@ like the seeder does, without a `CROSS_MODULE_ALLOWED` edge.
 | `live.py` | API client that logs in as demo users and books, cancels, reschedules, joins the waitlist |
 | `__init__.py` | `demo_seed()` / `demo_refresh()` orchestration used by `app/cli.py` |
 
-**Slot status writes stay in `scheduling/service.py`** (`tests/meta/test_slot_writes.py`
-forbids them anywhere else): a new `import_past_slots(...)` there writes past slots as `booked`
-or `free`, with `version = version + 1` on any update.
+**No slot status is ever updated outside `scheduling/service.py`.** `tests/meta/test_slot_writes.py`
+forbids *updates* elsewhere and explicitly allows inserting a slot with its status
+(`ProviderSlot(..., status=...)`, as `app/seed.py` does). History only inserts slots, so it needs
+no new service function and touches nothing under `app/modules`.
 
 ## 5. The network (Medium)
 
@@ -73,18 +74,23 @@ or `free`, with `version = version + 1` on any update.
   Gastroenterology, General Practice, Neurology, Orthopaedics, Paediatrics, Physiotherapy, ENT —
   so every specialty the assistant names can be booked. **~15 providers**, two for the busiest
   (General Practice, Paediatrics, Physiotherapy), departments per clinic to match.
-- **~250 patients**: varied ages (Paediatrics patients are children), fictional names,
-  `@example.com` emails and phone numbers; most without logins (walk-ins).
+- **~800 patients**: varied ages (about one in seven a child; Paediatrics sees only children),
+  fictional names, `@example.com` emails and phone numbers; most without logins (walk-ins).
+  (Revised from ~250 while planning: with ~3,000 appointments, 250 patients would each visit
+  about ten times in six months; 800 gives three to four.)
 - **Logins** (all with `--password`): 1 admin, 2 front desk, **every provider** (linked), **5
   patients** linked to records chosen for rich history — repeat visits, an active prescription,
   a pending test result. Their emails are listed in the README and on the site.
-- **Slots**: weekdays, clinic hours 09:00–17:00 with a lunch gap, 30 minutes, 2 weeks ahead.
+- **Schedules and slots**: each provider holds **two morning sessions a week** on fixed
+  weekdays, 09:00–12:00 in the clinic's timezone — six 30-minute slots a session — for history
+  and for the 2 weeks of upcoming slots alike. (Revised from "09:00–17:00 every weekday", which
+  over six months is ~17,000 appointments rather than the ~3,000 approved.)
 
 ## 6. Imported history
 
 For each past weekday from 6 months ago to yesterday, not already imported:
 
-1. **Slots** for every provider's clinic hours (via `import_past_slots`).
+1. **Slots** for every provider session that day, inserted with their final status (`booked` or `free`).
 2. **Fill rate** 55–80% per provider-day: higher for General Practice and Paediatrics, mild
    weekly pattern (Mondays busiest), a slow upward trend across the six months.
 3. **Outcome** of each booking: ~82% completed, ~10% cancelled (some on the day), ~8% no-show.
