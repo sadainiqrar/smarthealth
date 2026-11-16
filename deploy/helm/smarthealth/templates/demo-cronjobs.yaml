@@ -1,0 +1,60 @@
+# Demo data (docs/superpowers/specs/2026-11-16-demo-seed-data-design.md). Two CronJobs that
+# never run on a schedule (`suspend: true`): they are templates, started on demand with
+#   kubectl -n smarthealth create job --from=cronjob/demo-refresh demo-refresh-$(date +%s)
+# No Argo CD hook, so a sync never re-runs them (spec A-2 / section 6).
+{{- $g := .Values.global }}
+{{- range $mode := list "seed" "refresh" }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: demo-{{ $mode }}
+spec:
+  schedule: "0 0 31 2 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 604800
+      template:
+        spec:
+          restartPolicy: Never
+          enableServiceLinks: false
+          {{- with $g.imagePullSecrets }}
+          imagePullSecrets:
+            {{- range . }}
+            - name: {{ . }}
+            {{- end }}
+          {{- end }}
+          initContainers:
+            - name: wait-api
+              image: busybox:1.36
+              command: ["sh", "-c", "until nc -z app 8000; do echo waiting for app:8000; sleep 2; done"]
+              resources: {requests: {memory: 8Mi, cpu: 5m}, limits: {memory: 16Mi}}
+          containers:
+            - name: demo
+              image: {{ if $g.image.registry }}{{ $g.image.registry }}/{{ end }}smarthealth-core:{{ $g.image.tag }}
+              imagePullPolicy: {{ $g.image.pullPolicy }}
+              command: ["python", "-m", "app.cli", "demo-{{ $mode }}",
+                        "--api-url", "http://app:8000", "--allow-demo-data",
+                        "--timezone", {{ $.Values.demoSeed.timezone | quote }}]
+              env:
+                - {name: SMARTHEALTH_POSTGRES_PASSWORD, valueFrom: {secretKeyRef: {name: {{ $g.secretName }}, key: postgres-password}}}
+                - {name: SMARTHEALTH_DEMO_PASSWORD, valueFrom: {secretKeyRef: {name: {{ $g.secretName }}, key: demo-password}}}
+                - {name: SMARTHEALTH_ENVIRONMENT, value: docker}
+                - {name: SMARTHEALTH_POSTGRES_HOST, value: postgres}
+                - {name: SMARTHEALTH_POSTGRES_PORT, value: "5432"}
+                - {name: SMARTHEALTH_POSTGRES_USER, value: smarthealth}
+                - {name: SMARTHEALTH_POSTGRES_DB, value: smarthealth}
+                - {name: SMARTHEALTH_MONGO_HOST, value: mongo}
+                - {name: SMARTHEALTH_MONGO_PORT, value: "27017"}
+                - {name: SMARTHEALTH_MONGO_DB, value: smarthealth}
+                - {name: SMARTHEALTH_DOCUMENTS_PATH, value: /var/smarthealth/documents}
+              resources: {requests: {memory: 192Mi, cpu: 50m}, limits: {memory: 384Mi}}
+              volumeMounts:
+                - {name: documents, mountPath: /var/smarthealth/documents}
+          volumes:
+            - name: documents
+              persistentVolumeClaim: {claimName: core-api-documents}
+{{- end }}

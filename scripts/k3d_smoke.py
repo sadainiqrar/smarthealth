@@ -97,13 +97,11 @@ def tools(base: str, user: str, password: str) -> None:
 
 
 def demo_seed() -> None:
-    step("demo-seed Job (takes several minutes)")
-    subprocess.run(["helm", "upgrade", "smarthealth", "deploy/helm/smarthealth", "-n", NS,
-                    "-f", "deploy/helm/smarthealth/values-local.yaml", "--reuse-values",
-                    "--set", "demoSeed.enabled=true", "--set", "demoSeed.mode=seed"],
-                   check=True)
-    kubectl("wait", "--for=condition=complete", "job/demo-seed-1", "--timeout=40m")
-    print(kubectl("logs", "job/demo-seed-1")[-1500:])
+    step("demo-seed from its CronJob (takes several minutes)")
+    name = f"demo-seed-{int(time.time())}"
+    kubectl("create", "job", "--from=cronjob/demo-seed", name)
+    kubectl("wait", "--for=condition=complete", f"job/{name}", "--timeout=40m")
+    print(kubectl("logs", f"job/{name}")[-1500:])
 
 
 def memory() -> None:

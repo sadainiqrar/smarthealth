@@ -1,3 +1,3 @@
 SmartHealth is installed. Open {{ .Values.global.publicUrl }}/
 Tools (login "{{ .Values.toolsAuth.user }}"): /grafana /jaeger /temporal /mailpit /rabbitmq /prometheus
-Demo data: helm upgrade ... --set demoSeed.enabled=true --set demoSeed.mode=seed
+Demo data: kubectl -n {{ .Release.Namespace }} create job --from=cronjob/demo-seed demo-seed-1

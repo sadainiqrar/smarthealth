@@ -229,10 +229,10 @@ def test_persistent_volumes_survive_helm_and_argo_cd_deletion():
 def test_image_pull_secrets_reach_every_pod_when_set():
     assert all("imagePullSecrets" not in d["spec"]["template"]["spec"]
                for d in of_kind(render("values-local.yaml"), "Deployment"))
-    docs = render("values-local.yaml", sets=("global.imagePullSecrets={ghcr-pull}",
-                                             "demoSeed.enabled=true"))
-    pods = [d["spec"]["template"]["spec"]
-            for d in of_kind(docs, "Deployment") + of_kind(docs, "Job")]
+    docs = render("values-local.yaml", sets=("global.imagePullSecrets={ghcr-pull}",))
+    pods = [d["spec"]["template"]["spec"] for d in of_kind(docs, "Deployment")]
+    pods += [c["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+             for c in of_kind(docs, "CronJob")]
     assert pods and all(p.get("imagePullSecrets") == [{"name": "ghcr-pull"}] for p in pods)
 
 
@@ -283,19 +283,19 @@ def test_the_ingress_routes_by_path_and_guards_the_tools():
 
 
 @needs_helm
-def test_the_demo_job_is_off_by_default_and_runs_the_cli_when_on():
-    assert of_kind(render("values-local.yaml"), "Job") == []
-    job = of_kind(render("values-local.yaml", sets=("demoSeed.enabled=true",
-                                                    "demoSeed.mode=refresh")), "Job")[0]
-    c = job["spec"]["template"]["spec"]["containers"][0]
-    assert c["command"][:4] == ["python", "-m", "app.cli", "demo-refresh"]
-    assert "--allow-demo-data" in c["command"]
-    notes = job["metadata"]["annotations"]
-    assert notes["argocd.argoproj.io/hook"] == "PostSync"
-    assert notes["argocd.argoproj.io/hook-delete-policy"] == "BeforeHookCreation"
-    assert "ttlSecondsAfterFinished" not in job["spec"]
-    wait = job["spec"]["template"]["spec"]["initContainers"][0]
-    assert "nc -z app 8000" in wait["command"][-1]
+def test_demo_data_is_two_suspended_cronjobs():
+    docs = render("values-local.yaml")
+    assert of_kind(docs, "Job") == []
+    crons = {c["metadata"]["name"]: c for c in of_kind(docs, "CronJob")}
+    assert set(crons) == {"demo-seed", "demo-refresh"}
+    for name, cron in crons.items():
+        assert cron["spec"]["suspend"] is True
+        assert "argocd.argoproj.io/hook" not in cron["metadata"].get("annotations", {})
+        pod = cron["spec"]["jobTemplate"]["spec"]["template"]["spec"]
+        cmd = pod["containers"][0]["command"]
+        assert cmd[:4] == ["python", "-m", "app.cli", name]
+        assert "--allow-demo-data" in cmd
+        assert pod["initContainers"][0]["name"] == "wait-api"
 
 
 COMPOSE = ROOT / "docker-compose.infra.yml"

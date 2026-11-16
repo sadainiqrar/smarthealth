@@ -175,10 +175,6 @@ toolsAuth:
   password: ""
   htpasswd: ""        # a precomputed `user:$2y$...` line; "" = compute it
 
-# The optional demo data Job (docs/superpowers/specs/2026-11-16-demo-seed-data-design.md).
+# Demo data: two suspended CronJobs, started on demand (templates/demo-cronjobs.yaml).
 demoSeed:
-  enabled: false
-  mode: seed          # seed | refresh
   timezone: Australia/Sydney
-  # Bump to re-run: Job specs are immutable, so each run gets a new name.
-  run: "1"
