@@ -3,7 +3,3 @@ name: envoy
 description: "Front door: gRPC-Web to Part B"
 type: application
 version: 0.1.0
-dependencies:
-  - name: sh-lib
-    version: 0.1.0
-    repository: file://../../sh-lib

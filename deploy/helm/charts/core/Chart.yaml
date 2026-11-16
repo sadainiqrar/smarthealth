@@ -3,7 +3,3 @@ name: core
 description: Part A -- the modular monolith (app/), six processes from one image
 type: application
 version: 0.1.0
-dependencies:
-  - name: sh-lib
-    version: 0.1.0
-    repository: file://../../sh-lib

@@ -34,12 +34,7 @@ def _helm(*args: str) -> str:
 
 @lru_cache(maxsize=1)
 def build_dependencies() -> None:
-    """Refresh every chart's packaged dependencies, innermost first: each component chart
-    carries its own copy of sh-lib, and updating only the umbrella would package stale
-    copies (an sh-lib edit would then not show in any render)."""
-    for chart in sorted((HELM_DIR / "charts").iterdir()):
-        if (chart / "Chart.yaml").is_file():
-            _helm("dependency", "update", chart.as_posix())
+    """One `helm dependency build` of the umbrella -- exactly what Argo CD runs."""
     _helm("dependency", "update", UMBRELLA.as_posix())
 
 
@@ -350,3 +345,16 @@ def test_third_party_images_match_compose():
                 for c in d["spec"]["template"]["spec"]["containers"]
                 if not c["image"].startswith("smarthealth-")}
     assert rendered <= compose_images, rendered - compose_images
+
+
+def test_only_the_umbrella_declares_dependencies():
+    """Argo CD runs `helm dependency build` on the umbrella only (one level), so a component
+    chart with its own dependency would not build there (spec A-2)."""
+    offenders = []
+    for chart in sorted((HELM_DIR / "charts").iterdir()):
+        meta = yaml.safe_load((chart / "Chart.yaml").read_text(encoding="utf-8"))
+        if meta.get("dependencies"):
+            offenders.append(chart.name)
+    assert not offenders, f"component charts with their own dependencies: {offenders}"
+    umbrella = yaml.safe_load((UMBRELLA / "Chart.yaml").read_text(encoding="utf-8"))
+    assert "sh-lib" in {d["name"] for d in umbrella["dependencies"]}

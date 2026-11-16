@@ -15,10 +15,6 @@ kubectl create namespace smarthealth --dry-run=client -o yaml | kubectl apply -f
 
 scripts/push_images.sh --local
 python scripts/sync_chart_files.py --check
-# Innermost first: every component chart packages its own copy of sh-lib.
-for chart in deploy/helm/charts/*/; do
-  helm dependency update "$chart" >/dev/null
-done
 helm dependency update deploy/helm/smarthealth >/dev/null
 helm upgrade --install smarthealth deploy/helm/smarthealth -n smarthealth \
   -f deploy/helm/smarthealth/values-local.yaml --wait --timeout 15m

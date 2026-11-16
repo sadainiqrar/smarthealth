@@ -3,7 +3,3 @@ name: redis
 description: Redis 7, installed once per instance by alias
 type: application
 version: 0.1.0
-dependencies:
-  - name: sh-lib
-    version: 0.1.0
-    repository: file://../../sh-lib

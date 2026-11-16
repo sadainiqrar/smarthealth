@@ -31,3 +31,6 @@ frontend/src/**          -> README.md, docs/index.html
 deploy/**                -> README.md, docs/ARCHITECTURE.md, docs/index.html
 scripts/k3d_*            -> README.md, docs/index.html
 scripts/push_images.sh   -> README.md, docs/index.html
+scripts/aws_*            -> README.md, docs/index.html
+scripts/release.sh       -> README.md, docs/index.html
+scripts/tf.sh            -> README.md, docs/index.html

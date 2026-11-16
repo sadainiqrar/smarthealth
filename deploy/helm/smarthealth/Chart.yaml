@@ -5,6 +5,7 @@ type: application
 version: 0.1.0
 appVersion: "1.0"
 dependencies:
+  - {name: sh-lib, version: 0.1.0, repository: file://../sh-lib}
   - {name: payments-mock, version: 0.1.0, repository: file://../charts/payments-mock}
   - {name: postgres, alias: postgres, version: 0.1.0, repository: file://../charts/postgres}
   - {name: postgres, alias: knowledge-db, version: 0.1.0, repository: file://../charts/postgres}
