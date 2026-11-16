@@ -14,12 +14,21 @@ Two halves, deliberately separate:
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+import hashlib
+import uuid
+from collections import Counter, defaultdict
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from app.demo.content import CANCELLATION_REASONS, CONTENT
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.demo.content import CANCELLATION_REASONS, CONTENT, RESULT_TEXT
 from app.demo.network import (
+    SLOT_DURATION,
+    PROVIDERS_BY_LICENCE,
+    Network,
     LINKED_PATIENT_INDEXES,
     PATIENT_COUNT,
     PROVIDERS,
@@ -28,6 +37,28 @@ from app.demo.network import (
     session_starts,
     working,
 )
+
+from app.modules.analytics import service as analytics_service
+from app.modules.billing.models import BillingRecord, BillingStatus
+from app.modules.clinical.models import (
+    ClinicalNote,
+    NoteStatus,
+    OrderStatus,
+    PatientDocument,
+    Prescription,
+    PrescriptionStatus,
+    TestOrder,
+)
+from app.modules.clinical.storage import DocumentStore
+from app.modules.scheduling.models import (
+    Appointment,
+    AppointmentStatus,
+    ProviderSlot,
+    SlotStatus,
+    Visit,
+    VisitStatus,
+)
+from app.settings import Settings
 
 ORIGIN = "legacy_import"
 HISTORY_DAYS = 182
@@ -150,3 +181,197 @@ def result_pdf(text: str) -> bytes:
     out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (
         len(bodies) + 1, xref)
     return bytes(out)
+
+
+NO_SHOW_GRACE = timedelta(minutes=15)  # when the live visit timer would have marked it
+REVIEW_AFTER = timedelta(days=14)
+ACTOR = "system:demo-import"
+
+_STATUS = {"completed": AppointmentStatus.COMPLETED, "cancelled": AppointmentStatus.CANCELLED,
+           "no_show": AppointmentStatus.NO_SHOW}
+_BILLING = {"completed": BillingStatus.CAPTURED, "cancelled": BillingStatus.VOIDED,
+            "no_show": BillingStatus.VOIDED}
+
+
+@dataclass
+class DayCounts:
+    slots: int = 0
+    appointments: int = 0
+    completed: int = 0
+    cancelled: int = 0
+    no_show: int = 0
+    prescriptions: int = 0
+    orders: int = 0
+    documents: int = 0
+
+    def add(self, other: DayCounts) -> None:
+        for name, value in asdict(other).items():
+            setattr(self, name, getattr(self, name) + value)
+
+
+def _local_bounds(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
+    start = datetime.combine(day, time.min, tzinfo=tz)
+    return start.astimezone(UTC), (start + timedelta(days=1)).astimezone(UTC)
+
+
+async def day_imported(session: AsyncSession, net: Network, day: date) -> bool:
+    """A day is imported once any demo provider has a slot on it (history writes every
+    session's slots, booked or not; upcoming slots never reach the past)."""
+    lower, upper = _local_bounds(day, net.tz)
+    found = await session.scalar(select(ProviderSlot.id).where(
+        ProviderSlot.provider_id.in_(net.provider_ids.values()),
+        ProviderSlot.starts_at >= lower, ProviderSlot.starts_at < upper).limit(1))
+    return found is not None
+
+
+async def last_imported_day(session: AsyncSession, net: Network) -> date | None:
+    """The latest past day holding a demo slot, in the clinics' timezone."""
+    today_start, _ = _local_bounds(datetime.now(net.tz).date(), net.tz)
+    latest = await session.scalar(select(func.max(ProviderSlot.starts_at)).where(
+        ProviderSlot.provider_id.in_(net.provider_ids.values()),
+        ProviderSlot.starts_at < today_start))
+    return latest.astimezone(net.tz).date() if latest else None
+
+
+def _utc_day(moment: datetime) -> date:
+    return moment.astimezone(UTC).date()
+
+
+async def import_day(session: AsyncSession, net: Network, plan: PlannedDay, *,
+                     store: DocumentStore, settings: Settings, now: datetime) -> DayCounts:
+    """Write one planned day. Flushes, never commits: the caller commits per day, so a crash
+    leaves whole days imported or not, and `day_imported` skips the finished ones."""
+    counts = DayCounts()
+    booked = {(a.licence, a.starts_at) for a in plan.appointments if a.outcome != "cancelled"}
+    slots: dict[tuple[str, datetime], ProviderSlot] = {}
+    for licence, start in plan.slots:
+        meta = PROVIDERS_BY_LICENCE[licence]
+        slot = ProviderSlot(
+            provider_id=net.provider_ids[licence], clinic_id=net.clinic_ids[meta.clinic],
+            department_id=net.department_ids[(meta.clinic, meta.specialty)],
+            starts_at=start, ends_at=start + SLOT_DURATION,
+            status=SlotStatus.BOOKED if (licence, start) in booked else SlotStatus.FREE)
+        session.add(slot)
+        slots[(licence, start)] = slot
+    counts.slots = len(slots)
+    await session.flush()
+
+    rows: list[tuple[PlannedAppointment, Appointment]] = []
+    for planned in plan.appointments:
+        meta = PROVIDERS_BY_LICENCE[planned.licence]
+        appointment = Appointment(
+            patient_id=net.patient_ids[planned.patient_index],
+            provider_id=net.provider_ids[planned.licence],
+            clinic_id=net.clinic_ids[meta.clinic],
+            department_id=net.department_ids[(meta.clinic, meta.specialty)],
+            slot_id=slots[(planned.licence, planned.starts_at)].id,
+            status=_STATUS[planned.outcome],
+            reason=CONTENT[meta.specialty][planned.case].reason,
+            origin=ORIGIN, confirmed_at=planned.confirmed_at,
+            cancelled_at=planned.cancelled_at,
+            cancellation_reason=planned.cancellation_reason,
+            created_at=planned.confirmed_at)
+        session.add(appointment)
+        rows.append((planned, appointment))
+    await session.flush()
+
+    analytics: dict[tuple[date, uuid.UUID, uuid.UUID], Counter] = defaultdict(Counter)
+    visits: list[tuple[PlannedAppointment, Appointment, Visit]] = []
+    for planned, appointment in rows:
+        key_ids = (appointment.clinic_id, appointment.provider_id)
+        analytics[(_utc_day(planned.confirmed_at), *key_ids)]["booked"] += 1
+        session.add(BillingRecord(
+            appointment_id=appointment.id, patient_id=appointment.patient_id,
+            status=_BILLING[planned.outcome], amount_minor=settings.billing_amount_minor,
+            currency=settings.billing_currency, authorization_ref=f"legacy-{appointment.id}"))
+        counts.appointments += 1
+        if planned.outcome == "cancelled":
+            counts.cancelled += 1
+            analytics[(_utc_day(planned.cancelled_at), *key_ids)]["cancelled"] += 1
+        elif planned.outcome == "no_show":
+            counts.no_show += 1
+            marked = planned.starts_at + SLOT_DURATION + NO_SHOW_GRACE
+            analytics[(_utc_day(marked), *key_ids)]["no_show"] += 1
+        else:
+            counts.completed += 1
+            v = planned.visit
+            visit = Visit(appointment_id=appointment.id, checked_in_at=v.checked_in_at,
+                          seen_at=v.seen_at, completed_at=v.completed_at,
+                          status=VisitStatus.COMPLETED)
+            session.add(visit)
+            visits.append((planned, appointment, visit))
+            day_key = (_utc_day(v.completed_at), *key_ids)
+            analytics[day_key]["completed"] += 1
+            analytics[day_key]["wait_seconds_sum"] += int((v.seen_at - v.checked_in_at)
+                                                          .total_seconds())
+            analytics[day_key]["wait_count"] += 1
+    await session.flush()
+
+    for planned, appointment, visit in visits:
+        meta = PROVIDERS_BY_LICENCE[planned.licence]
+        case = CONTENT[meta.specialty][planned.case]
+        prescriptions = list(case.medications) if planned.prescribe else []
+        tests = list(case.tests[:1]) if planned.order_test else []
+        note = ClinicalNote(
+            visit_id=visit.id, appointment_id=appointment.id,
+            patient_id=appointment.patient_id, provider_id=appointment.provider_id,
+            version=1, status=NoteStatus.SIGNED,
+            presenting_complaint=case.complaint, findings=case.findings, clinician_notes="",
+            patient_summary=case.summary,
+            diagnoses=[{"description": d, "icd10": c} for d, c in case.diagnoses],
+            draft_prescriptions=[{"medication": m.medication, "dose": m.dose,
+                                  "frequency": m.frequency, "duration": f"{m.duration_days} days",
+                                  "instructions": m.instructions} for m in prescriptions],
+            draft_orders=[{"test_code": code, "reason": case.reason, "urgency": "routine"}
+                          for code in tests],
+            signed_at=planned.visit.completed_at - timedelta(minutes=2),
+            signed_by=str(net.provider_user_ids[planned.licence]))
+        session.add(note)
+        await session.flush()
+        completed_at = planned.visit.completed_at
+        for m in prescriptions:
+            still_taking = completed_at + timedelta(days=m.duration_days) > now
+            session.add(Prescription(
+                note_id=note.id, patient_id=appointment.patient_id, medication=m.medication,
+                dose=m.dose, frequency=m.frequency, duration=f"{m.duration_days} days",
+                instructions=m.instructions,
+                status=PrescriptionStatus.ACTIVE if still_taking else PrescriptionStatus.COMPLETED))
+            counts.prescriptions += 1
+        for code in tests:
+            reviewed = completed_at < now - REVIEW_AFTER
+            document_id = None
+            if reviewed:
+                document_id = await _result_document(
+                    session, store, appointment.patient_id, code, completed_at)
+                counts.documents += 1
+            session.add(TestOrder(
+                note_id=note.id, patient_id=appointment.patient_id,
+                ordered_by=appointment.provider_id, test_code=code, reason=case.reason,
+                urgency="routine",
+                status=OrderStatus.REVIEWED if reviewed else OrderStatus.ORDERED,
+                result_document_id=document_id,
+                reviewed_at=completed_at + timedelta(days=7) if reviewed else None))
+            counts.orders += 1
+    await session.flush()
+
+    for (day, clinic_id, provider_id), increments in analytics.items():
+        await analytics_service.record(session, day=day, clinic_id=clinic_id,
+                                       provider_id=provider_id, **dict(increments))
+    return counts
+
+
+async def _result_document(session: AsyncSession, store: DocumentStore, patient_id: uuid.UUID,
+                           code: str, completed_at: datetime) -> uuid.UUID:
+    text = RESULT_TEXT[code]
+    data = result_pdf(text)
+    key = f"patients/{patient_id}/{uuid.uuid4()}"
+    await store.put(key, data, "application/pdf")
+    document = PatientDocument(
+        patient_id=patient_id, uploaded_by=ACTOR, filename=f"{code}-result.pdf",
+        media_type="application/pdf", size_bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(), object_key=key,
+        extraction_status="extracted", extracted_text=text,
+        created_at=completed_at + timedelta(days=3))
+    session.add(document)
+    await session.flush()
+    return document.id

@@ -12,6 +12,7 @@ from app.core.clock import Clock
 from app.core.ratelimit import InMemoryRateLimiter
 from app.db.engine import create_engine
 from app.db.session import create_session_factory
+from app.demo.history import ORIGIN, day_imported, import_day, last_imported_day, plan_day
 from app.demo.network import (
     LINKED_PATIENT_INDEXES,
     PATIENT_COUNT,
@@ -20,10 +21,14 @@ from app.demo.network import (
     ensure_slots,
     patient_identity,
 )
+from app.modules.analytics.tasks import reconcile
+from app.modules.billing.models import BillingRecord, BillingStatus
+from app.modules.clinical.models import ClinicalNote, NoteStatus, PatientDocument
+from app.modules.clinical.storage import FilesystemDocumentStore
 from app.modules.identity.service import authenticate
 from app.modules.identity.sessions import InMemorySessionStore
 from app.modules.patients.models import Patient
-from app.modules.scheduling.models import ProviderSlot
+from app.modules.scheduling.models import Appointment, AppointmentStatus, ProviderSlot, Visit
 from tests.tiers.t3_integration.demo_helpers import purge_demo
 
 pytestmark = [pytest.mark.integration, pytest.mark.docker]
@@ -83,3 +88,79 @@ async def test_upcoming_slots_follow_the_schedule_and_are_not_duplicated(demo_fa
         count = await session.scalar(select(func.count()).select_from(ProviderSlot).where(
             ProviderSlot.provider_id.in_(net.provider_ids.values())))
         assert count == made
+
+
+async def _import(demo_factory, db_settings, days):
+    async with demo_factory() as session:
+        net, _ = await build_network(session, password=PASSWORD)
+        await session.commit()
+    store = FilesystemDocumentStore.from_settings(db_settings)
+    today = Clock().now().astimezone(net.tz).date()
+    for day in days:
+        async with demo_factory() as session:
+            if await day_imported(session, net, day):
+                continue
+            await import_day(session, net, plan_day(day, tz=net.tz, today=today),
+                             store=store, settings=db_settings, now=Clock().now())
+            await session.commit()
+    return net, today
+
+
+async def test_imported_history_holds_every_rule_and_is_marked(demo_factory, db_settings):
+    today = Clock().now().date()
+    days = [today - timedelta(days=d) for d in range(30, 20, -1)]
+    net, _ = await _import(demo_factory, db_settings, days)
+    async with demo_factory() as session:
+        ids = list(net.provider_ids.values())
+        appts = (await session.scalars(select(Appointment).where(
+            Appointment.provider_id.in_(ids)))).all()
+        assert appts and {a.origin for a in appts} == {ORIGIN}
+        assert {a.status for a in appts} <= {AppointmentStatus.COMPLETED,
+                                             AppointmentStatus.CANCELLED,
+                                             AppointmentStatus.NO_SHOW}
+        completed = [a for a in appts if a.status is AppointmentStatus.COMPLETED]
+        visits = (await session.scalars(select(Visit).where(
+            Visit.appointment_id.in_([a.id for a in completed])))).all()
+        assert len(visits) == len(completed)
+        notes = (await session.scalars(select(ClinicalNote).where(
+            ClinicalNote.appointment_id.in_([a.id for a in completed])))).all()
+        assert len(notes) == len(completed) and {n.status for n in notes} == {NoteStatus.SIGNED}
+        billing = {b.appointment_id: b.status for b in (await session.scalars(
+            select(BillingRecord).where(BillingRecord.appointment_id.in_([a.id for a in appts]))
+        )).all()}
+        assert len(billing) == len(appts)
+        for a in appts:
+            expected = (BillingStatus.CAPTURED if a.status is AppointmentStatus.COMPLETED
+                        else BillingStatus.VOIDED)
+            assert billing[a.id] is expected
+        docs = (await session.scalars(select(PatientDocument).where(
+            PatientDocument.patient_id.in_(net.patient_ids)))).all()
+        assert all(d.extraction_status == "extracted" and d.extracted_text for d in docs)
+
+
+async def test_importing_again_adds_nothing(demo_factory, db_settings):
+    today = Clock().now().date()
+    days = [today - timedelta(days=d) for d in range(15, 10, -1)]
+    net, _ = await _import(demo_factory, db_settings, days)
+    async with demo_factory() as session:
+        before = await session.scalar(select(func.count()).select_from(Appointment).where(
+            Appointment.provider_id.in_(net.provider_ids.values())))
+    await _import(demo_factory, db_settings, days)
+    async with demo_factory() as session:
+        after = await session.scalar(select(func.count()).select_from(Appointment).where(
+            Appointment.provider_id.in_(net.provider_ids.values())))
+        assert after == before
+        assert await last_imported_day(session, net) == max(
+            d for d in days if d.weekday() < 5)
+
+
+async def test_the_nightly_reconcile_finds_no_drift_in_imported_days(demo_factory, db_settings):
+    today = Clock().now().date()
+    days = [today - timedelta(days=d) for d in range(40, 9, -1)]
+    net, _ = await _import(demo_factory, db_settings, days)
+    # Bookings count on their confirmation day, up to 21 days before the visit, so check a
+    # window that starts after the earliest imported confirmation could fall outside it.
+    drift = await reconcile(db_settings, start=today - timedelta(days=19),
+                            end=today - timedelta(days=11))
+    demo_clinics = {str(c) for c in net.clinic_ids.values()}
+    assert [d for d in drift if d["clinic_id"] in demo_clinics] == []
