@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from qdrant_client import AsyncQdrantClient
 
 from knowledge_service.auth import TokenVerifier
+from knowledge_service.consumer import reindex_providers
 from knowledge_service.consumer import run as run_consumer
 from knowledge_service.embeddings import embedder_for
 from knowledge_service.index import Index
@@ -44,6 +45,8 @@ async def main() -> None:
     # to the corpus the image carries.
     report = await ingest_corpus(index)
     logger.info("corpus ingested: %s", report)
+    # The same for providers the directory already holds (consumer.reindex_providers).
+    logger.info("providers re-indexed: %s embedded", await reindex_providers(directory, index))
     server = build_server(directory, TokenVerifier(settings.jwks_url, settings.jwt_issuer),
                           settings.grpc_port, index)
     await server.start()

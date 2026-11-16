@@ -55,6 +55,26 @@ async def apply(directory: Directory, key: str, value: dict | None,
             await index.remove_document(f"provider:{entry.provider_id}")
 
 
+async def reindex_providers(directory: Directory, index: Index) -> int:
+    """Bring search up to the directory: every active provider indexed, every inactive one
+    removed. Returns how many chunks were embedded.
+
+    Needed because the consumer only acts on events it has not yet committed. A side effect
+    added later -- indexing, in Week 4 -- never ran for providers whose events were read
+    before it existed: on 2026-11-16 the directory held six providers and the index none.
+    Idempotent and cheap (an unchanged chunk keeps its hash and is not embedded again), so
+    it runs on every start, as the corpus ingest does."""
+    embedded = 0
+    for entry in await directory.all():
+        document_id = f"provider:{entry.provider_id}"
+        if entry.is_active:
+            embedded += await index.replace_document(
+                document_id, [chunk_provider(entry.provider_id, entry.name, entry.specialty)])
+        else:
+            await index.remove_document(document_id)
+    return embedded
+
+
 async def run(settings: KnowledgeSettings, directory: Directory, stop: asyncio.Event,
               index: Index | None = None) -> None:
     topic = settings.topic("providers.state")

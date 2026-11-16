@@ -10,10 +10,27 @@ from __future__ import annotations
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.grpc import GrpcAioInstrumentorClient, GrpcAioInstrumentorServer
+from opentelemetry.instrumentation.grpc import (
+    GrpcAioInstrumentorClient,
+    GrpcAioInstrumentorServer,
+)
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+
+HEALTH = "/grpc.health.v1.Health/"
+
+
+def TRACED(call_details) -> bool:  # noqa: N802 - a constant-like filter, named as one
+    """Which incoming calls become spans: everything but the gRPC health probes, which
+    compose sends every few seconds and which otherwise fill Jaeger (live run, 2026-11-16).
+    Not `filters.health_check()`: it splits the method with `os.path`, which on Windows
+    turns "/" into "\\" and never matches."""
+    method = getattr(call_details, "method", "")
+    if isinstance(method, bytes):
+        method = method.decode()
+    return not method.startswith(HEALTH)
 
 
 def setup(endpoint: str, environment: str) -> TracerProvider | None:
@@ -26,6 +43,6 @@ def setup(endpoint: str, environment: str) -> TracerProvider | None:
     }))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
     trace.set_tracer_provider(provider)
-    GrpcAioInstrumentorServer().instrument()
+    GrpcAioInstrumentorServer(filter_=TRACED).instrument()
     GrpcAioInstrumentorClient().instrument()
     return provider

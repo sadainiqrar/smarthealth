@@ -22,6 +22,8 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -30,11 +32,39 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, messages_from_dict, messages_to_dict
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.utils.function_calling import convert_to_openai_tool
+from opentelemetry import trace
+from opentelemetry.trace import Span, SpanKind
 from pydantic import ConfigDict, Field
 
 #: One writer at a time appends to a fixture file (module level: a model is copied when tools
 #: are bound, and a lock cannot be).
 _RECORD_LOCK = threading.Lock()
+_tracer = trace.get_tracer(__name__)
+
+
+def model_name(model: BaseChatModel) -> str:
+    """The model's own name where the client exposes one (ChatGroq, ChatOpenAI and
+    ChatAnthropic all do), else the class: a test double, a fixture."""
+    return str(getattr(model, "model_name", None) or getattr(model, "model", None)
+               or type(model).__name__)
+
+
+@contextmanager
+def model_span(model: BaseChatModel) -> Iterator[Span]:
+    """One span per call to the model, named and labelled after OpenTelemetry's GenAI
+    conventions, so a slow or failing provider is visible inside the turn's trace. The
+    caller records the tokens with `record_tokens` once the call has finished."""
+    with _tracer.start_as_current_span("llm chat", kind=SpanKind.CLIENT, attributes={
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": model_name(model),
+    }) as span:
+        yield span
+
+
+def record_tokens(span: Span, usage: dict | None) -> None:
+    usage = usage or {}
+    span.set_attribute("gen_ai.usage.input_tokens", int(usage.get("input_tokens") or 0))
+    span.set_attribute("gen_ai.usage.output_tokens", int(usage.get("output_tokens") or 0))
 DEFAULT_FIXTURES = Path(__file__).resolve().parents[1] / "eval" / "fixtures" / "llm.jsonl"
 
 

@@ -964,3 +964,90 @@ async def test_the_engagement_summary_counts_the_assistants_own_records():
     assert figures["Bookings made with the assistant"] == "1 of 2 (50%)"
     assert figures["Drafted messages sent"] == "1 of 1, reaching 3 patients"
     assert events[-1].done.reason == "complete"
+
+
+def test_a_section_is_cited_only_when_the_answer_is_about_that_section():
+    """Live run 2026-11-16: a thyroid-test answer also cited the fasting and HbA1c sections
+    of the same guide, because all three share "blood" and "fasting"-like words with it.
+    Real hits carry the *document* title; the section is in the source id's anchor. When the
+    anchor names something the title does not, the answer must name it too."""
+    from assistant_service.agent import sources_used
+
+    title = "Preparing for a blood test"
+
+    def hit(anchor: str, snippet: str) -> dict:
+        return {"source_id": f"doc:prep-blood-tests#{anchor}", "title": title,
+                "snippet": snippet}
+
+    thyroid = hit("thyroid-function-test", "Preparing for a blood test — Thyroid function "
+                  "test. A thyroid test needs no fasting. Take levothyroxine after the test.")
+    fasting = hit("fasting-blood-test", "Preparing for a blood test — Fasting blood test. Do "
+                  "not eat or drink anything except water for 8 to 12 hours before the blood test.")
+    hba1c = hit("hba1c", "Preparing for a blood test — HbA1c. An HbA1c blood test needs no "
+                "fasting and can be taken at any time of day.")
+    answer = ("You don't need to fast for a thyroid blood test. Have the blood taken before "
+              "your daily levothyroxine dose.")
+    assert [h["source_id"] for h in sources_used(answer, [thyroid, fasting, hba1c])] == [
+        "doc:prep-blood-tests#thyroid-function-test"
+    ]
+
+
+async def test_a_part_a_call_joins_the_turns_trace():
+    """Live run 2026-11-16: a Confirm turn was a one-span trace -- the booking it made in Part
+    A showed up as a separate trace, because the call carried no trace context."""
+    import httpx
+    from opentelemetry import trace
+    from opentelemetry.trace import SpanKind
+
+    from tests.harness.telemetry import SPAN_EXPORTER
+
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.headers)
+        return httpx.Response(200, json={"ok": True})
+
+    parta = PartA("http://part-a", transport=httpx.MockTransport(handler))
+    with trace.get_tracer("test").start_as_current_span("turn") as turn:
+        await parta.request("GET", "/patients/me", "tok")
+    await parta.aclose()
+    trace_id = turn.get_span_context().trace_id
+    assert seen["traceparent"].split("-")[1] == format(trace_id, "032x")
+    calls = [s for s in SPAN_EXPORTER.get_finished_spans()
+             if s.context.trace_id == trace_id and s.kind is SpanKind.CLIENT]
+    assert [s.name for s in calls] == ["Part A GET"]
+    assert calls[0].parent.span_id == turn.get_span_context().span_id
+    assert calls[0].attributes["url.path"] == "/patients/me"
+    assert calls[0].attributes["http.response.status_code"] == 200
+
+
+async def test_every_model_call_is_a_span_with_its_tokens():
+    """External LLM calls must be diagnosable (spec section 7): each call is its own span,
+    named for the model, carrying the tokens it used."""
+    from tests.harness.telemetry import SPAN_EXPORTER
+
+    SPAN_EXPORTER.clear()
+    model = Scripted(
+        script=[
+            AIMessage(content="", tool_calls=[{"name": "search_knowledge",
+                                               "args": {"query": "fasting blood test"},
+                                               "id": "c1"}]),
+            AIMessage(content="Only water for 8 to 12 hours before."),
+        ]
+    )
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        await h.chat(_token(), message="can I eat before a fasting blood test?")
+    calls = [s for s in SPAN_EXPORTER.get_finished_spans() if s.name == "llm chat"]
+    assert len(calls) == 2
+    assert calls[0].attributes["gen_ai.operation.name"] == "chat"
+    assert "gen_ai.usage.input_tokens" in calls[0].attributes
+
+
+def test_health_checks_are_not_traced():
+    """Live run 2026-11-16: most of the assistant's traces in Jaeger were gRPC health probes."""
+    from types import SimpleNamespace
+
+    from assistant_service.telemetry import TRACED
+
+    assert not TRACED(SimpleNamespace(method="/grpc.health.v1.Health/Check"))
+    assert TRACED(SimpleNamespace(method="/smarthealth.assistant.v1.Assistant/Chat"))

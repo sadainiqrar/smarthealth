@@ -151,3 +151,31 @@ async def test_search_over_grpc_uses_the_callers_audience(index):
         await server.stop(None)
 
 
+
+
+async def test_providers_already_in_the_directory_are_indexed_at_start(index):
+    """Live run 2026-11-16: the directory held every provider but Qdrant held none. The
+    consumer had read `providers.state` before indexing existed, its offsets were committed,
+    and nothing ever read those events again. Each start now brings the index up to the
+    directory -- idempotently, so a second start embeds nothing."""
+    from knowledge_service.consumer import reindex_providers
+    from knowledge_service.store import Entry, InMemoryDirectory
+
+    directory = InMemoryDirectory()
+    await directory.upsert(Entry("p-1", "Ada Lovelace", "cardiology", True), [])
+    await directory.upsert(Entry("p-2", "Gone Away", "cardiology", False), [])
+
+    assert await reindex_providers(directory, index) == 1
+    hits = await index.search("cardiology clinician", audiences=["patient"], limit=5)
+    sources = [h.source_id for h in hits]
+    assert "provider:p-1" in sources and "provider:p-2" not in sources
+    assert await reindex_providers(directory, index) == 0
+
+
+def test_knowledge_health_checks_are_not_traced():
+    from types import SimpleNamespace
+
+    from knowledge_service.telemetry import TRACED
+
+    assert not TRACED(SimpleNamespace(method="/grpc.health.v1.Health/Check"))
+    assert TRACED(SimpleNamespace(method="/smarthealth.knowledge.v1.Knowledge/Search"))

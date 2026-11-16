@@ -48,7 +48,7 @@ from assistant_service.auth import Caller
 from assistant_service.flows import FLOWS, flows_for
 from assistant_service.flows.base import Ctx, DraftLog, FlowError, NotAnAnswer, Search
 from assistant_service.guard import guidance, red_flag
-from assistant_service.llm import LLMUnavailable
+from assistant_service.llm import LLMUnavailable, model_span, record_tokens
 from assistant_service.offline import answer_from_documents, match_flow
 from assistant_service.parta import PartA, PartAError
 from assistant_service.usage import TurnUsage
@@ -230,13 +230,15 @@ async def _model_turn(
     messages: list[AnyMessage] = [SystemMessage(system_prompt(ctx)), *history, HumanMessage(text)]
     for _ in range(MAX_TOOL_ROUNDS):
         reply: AIMessage | None = None
-        async for chunk in bound.astream(messages):
-            if isinstance(chunk.content, str) and chunk.content:
-                usage.first_token()
-                ctx.emit({"kind": "token", "text": chunk.content})
-            reply = chunk if reply is None else reply + chunk
-        if reply is None:
-            raise LLMUnavailable("empty response")
+        with model_span(model) as span:
+            async for chunk in bound.astream(messages):
+                if isinstance(chunk.content, str) and chunk.content:
+                    usage.first_token()
+                    ctx.emit({"kind": "token", "text": chunk.content})
+                reply = chunk if reply is None else reply + chunk
+            if reply is None:
+                raise LLMUnavailable("empty response")
+            record_tokens(span, getattr(reply, "usage_metadata", None))
         usage.add_call(getattr(reply, "usage_metadata", None))
         messages.append(reply)
         if not reply.tool_calls:
@@ -286,22 +288,47 @@ def _terms(text: str) -> set[str]:
     return {w[:6] for w in re.findall(r"[a-z]{4,}", text.lower()) if w not in _STOP}
 
 
+_SHORT_STOP = frozenset("and the for how you can not any per are was".split())
+
+
+def _names(text: str) -> set[str]:
+    """Like `_terms`, but keeps three-letter words and digits: a section's name is short and
+    often a code ("hba1c", "mri")."""
+    return {w[:6] for w in re.findall(r"[a-z0-9]{3,}", text.lower())
+            if w not in _STOP and w not in _SHORT_STOP}
+
+
+def _section_names(hit: dict) -> set[str]:
+    """What the hit's section is called, beyond its document's title: the source id's
+    anchor (`doc:prep-blood-tests#thyroid-function-test` -> thyroid, function), less the
+    title's own words. Empty for a hit with no section, or one whose title already is it."""
+    _, _, anchor = hit["source_id"].partition("#")
+    return _names(anchor.replace("-", " ")) - _names(hit["title"])
+
+
 def sources_used(answer: str, hits: list[dict], *, limit: int = 3) -> list[dict]:
-    """The passages an answer actually draws on: at least two distinctive words shared.
+    """The passages an answer actually draws on: at least two distinctive words shared, and
+    the section's own name, when it has one the title does not carry.
 
     A search returns passages that merely mention a query word -- knee pain fetches the
     chest-pain guide, both say "pain". Citing everything retrieved would show the user a
     source the answer never used (the offline judge caught exactly this, ai-001); citing
-    only what the answer shares words with keeps every source honest.
+    only what the answer shares words with keeps every source honest. Sections of one
+    guide share most of their words ("blood", "test", "fasting"), so a thyroid answer also
+    cited the fasting and HbA1c sections (live run, 2026-11-16): the section's name decides.
     """
-    words = _terms(answer)
+    words, names = _terms(answer), _names(answer)
     used, seen = [], set()
     for hit in hits:
         if hit["source_id"] in seen:
             continue
-        if len(words & _terms(hit["title"] + " " + hit["snippet"])) >= 2:
-            used.append(hit)
-            seen.add(hit["source_id"])
+        if len(words & _terms(hit["title"] + " " + hit["snippet"])) < 2:
+            continue
+        section = _section_names(hit)
+        if section and not section & names:
+            continue
+        used.append(hit)
+        seen.add(hit["source_id"])
     return used[:limit]
 
 

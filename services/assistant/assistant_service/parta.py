@@ -11,7 +11,10 @@ own, so a prompt that talks the model into asking for someone else's record meet
   knowledge questions (degradation, spec 9.2);
 - **idempotent writes**: a booking carries `Idempotency-Key` (derived from the
   confirmation it answers) and `X-Conversation-Ref`, so a retried confirm returns the same
-  appointment and the booking is attributed to the conversation (PART-B-FR-5).
+  appointment and the booking is attributed to the conversation (PART-B-FR-5);
+- **one trace**: every call is a client span that carries the turn's trace context
+  (`traceparent`), so Part A's request -- and the booking workflow it starts -- joins the
+  assistant's trace instead of beginning one of its own.
 """
 
 from __future__ import annotations
@@ -21,6 +24,11 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+from opentelemetry import propagate, trace
+from opentelemetry.trace import SpanKind, Status, StatusCode
+
+
+_tracer = trace.get_tracer(__name__)
 
 
 class PartAUnavailable(Exception):
@@ -90,13 +98,22 @@ class PartA:
             raise PartAUnavailable("the booking system is not responding")
         merged = {"Authorization": f"Bearer {token}", **(headers or {})}
         clean = {k: v for k, v in (params or {}).items() if v is not None}
-        try:
-            response = await self._http.request(
-                method, path, params=clean, json=json, headers=merged
-            )
-        except httpx.HTTPError as exc:
-            self.breaker.failure(time.monotonic())
-            raise PartAUnavailable(str(exc) or type(exc).__name__) from exc
+        with _tracer.start_as_current_span(
+            f"Part A {method}", kind=SpanKind.CLIENT,
+            attributes={"http.request.method": method, "url.path": path},
+        ) as span:
+            propagate.inject(merged)
+            try:
+                response = await self._http.request(
+                    method, path, params=clean, json=json, headers=merged
+                )
+            except httpx.HTTPError as exc:
+                span.set_status(Status(StatusCode.ERROR, type(exc).__name__))
+                self.breaker.failure(time.monotonic())
+                raise PartAUnavailable(str(exc) or type(exc).__name__) from exc
+            span.set_attribute("http.response.status_code", response.status_code)
+            if response.status_code >= 500:
+                span.set_status(Status(StatusCode.ERROR))
         if response.status_code >= 500:
             self.breaker.failure(time.monotonic())
             raise PartAUnavailable(f"Part A answered {response.status_code}")

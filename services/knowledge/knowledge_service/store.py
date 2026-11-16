@@ -50,6 +50,7 @@ class Directory(Protocol):
     async def upsert(self, entry: Entry, department_ids: list[str]) -> None: ...
     async def remove(self, provider_id: str) -> None: ...
     async def search(self, query: str, limit: int) -> list[Entry]: ...
+    async def all(self) -> list[Entry]: ...
 
 
 class PostgresDirectory:
@@ -88,6 +89,11 @@ class PostgresDirectory:
             )
             return [Entry(r.provider_id, r.name, r.specialty, r.is_active) for r in rows]
 
+    async def all(self) -> list[Entry]:
+        async with self._engine.connect() as connection:
+            rows = await connection.execute(select(directory).order_by(directory.c.provider_id))
+            return [Entry(r.provider_id, r.name, r.specialty, r.is_active) for r in rows]
+
 
 class InMemoryDirectory:
     def __init__(self) -> None:
@@ -104,3 +110,6 @@ class InMemoryDirectory:
         found = [e for e in self.entries.values()
                  if e.is_active and (needle in e.specialty.lower() or needle in e.name.lower())]
         return sorted(found, key=lambda e: (e.specialty, e.name))[:limit]
+
+    async def all(self) -> list[Entry]:
+        return sorted(self.entries.values(), key=lambda e: e.provider_id)

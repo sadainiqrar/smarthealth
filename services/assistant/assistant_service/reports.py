@@ -34,6 +34,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from assistant_service import metrics
 from assistant_service.auth import Caller
+from assistant_service.llm import model_span, record_tokens
 from assistant_service.parta import PartA, PartAError, PartAUnavailable
 from assistant_service.stores import Stores
 from assistant_service.usage import TurnUsage, UsageStore
@@ -588,13 +589,15 @@ class ReportRunner:
                     "utilisation": UTILISATION_INSTRUCTIONS,
                     "engagement": ENGAGEMENT_INSTRUCTIONS,
                 }.get(kind, NARRATIVE_INSTRUCTIONS)
-                async for chunk in self._model.astream(
-                    [SystemMessage(instructions), HumanMessage(material)]
-                ):
-                    whole = chunk if whole is None else whole + chunk
-                    if isinstance(chunk.content, str) and chunk.content:
-                        usage.first_token()
-                        await emit({"kind": "token", "text": chunk.content})
+                with model_span(self._model) as span:
+                    async for chunk in self._model.astream(
+                        [SystemMessage(instructions), HumanMessage(material)]
+                    ):
+                        whole = chunk if whole is None else whole + chunk
+                        if isinstance(chunk.content, str) and chunk.content:
+                            usage.first_token()
+                            await emit({"kind": "token", "text": chunk.content})
+                    record_tokens(span, getattr(whole, "usage_metadata", None))
                 if whole is not None:
                     usage.add_call(getattr(whole, "usage_metadata", None))
                 if usage.first_token_ms is not None:
