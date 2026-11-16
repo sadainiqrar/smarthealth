@@ -1,0 +1,19 @@
+global:
+  secretName: smarthealth-secrets
+  image: {registry: "", tag: dev, pullPolicy: IfNotPresent}
+
+# gRPC-Web -> gRPC for the assistant and knowledge
+workloads:
+  main:
+    image: envoyproxy/envoy:v1.31.2
+    args: ["-c", "/etc/envoy/envoy.yaml"]
+    service:
+      ports: {http: 8088}
+    readinessProbe:
+      tcpSocket: {port: 8088}
+      periodSeconds: 10
+    volumes:
+      config: {mountPath: /etc/envoy/envoy.yaml, configMap: envoy-config, subPath: envoy.yaml}
+configMaps:
+  config:
+    files: [files/envoy.yaml]

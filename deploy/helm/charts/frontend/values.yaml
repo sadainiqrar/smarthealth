@@ -1,0 +1,15 @@
+global:
+  secretName: smarthealth-secrets
+  image: {registry: "", tag: dev, pullPolicy: IfNotPresent}
+
+# The demo client (nginx serving the SPA). Its nginx.conf proxies /api to http://app:8000,
+# resolved at start: the Service "app" exists from install, so nginx starts even before the
+# API is ready. Under Kubernetes the ingress routes /api itself; the proxy is simply unused.
+workloads:
+  main:
+    image: {repository: smarthealth-frontend, own: true}
+    service:
+      ports: {http: 80}
+    readinessProbe:
+      httpGet: {path: /, port: 80}
+      periodSeconds: 10

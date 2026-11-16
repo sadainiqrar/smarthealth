@@ -108,3 +108,19 @@ core:
       resources: {requests: {memory: 192Mi, cpu: 50m}, limits: {memory: 256Mi}}
     celery-beat:
       resources: {requests: {memory: 96Mi, cpu: 10m}, limits: {memory: 160Mi}}
+knowledge:
+  workloads:
+    main:
+      resources: {requests: {memory: 320Mi, cpu: 50m}, limits: {memory: 448Mi}}
+assistant:
+  workloads:
+    main:
+      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 320Mi}}
+envoy:
+  workloads:
+    main:
+      resources: {requests: {memory: 32Mi, cpu: 10m}, limits: {memory: 64Mi}}
+frontend:
+  workloads:
+    main:
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 32Mi}}

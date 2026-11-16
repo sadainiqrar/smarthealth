@@ -1,0 +1,31 @@
+global:
+  secretName: smarthealth-secrets
+  image: {registry: "", tag: dev, pullPolicy: IfNotPresent}
+
+workloads:
+  main:
+    image: {repository: smarthealth-assistant, own: true}
+    service:
+      ports: {grpc: 50051}
+    waitFor: ["assistant-db:5432", "assistant-redis:6379", "knowledge:50052"]
+    secretEnv:
+      ASSISTANT_DB_PASSWORD: assistant-db-password
+      ASSISTANT_LLM_API_KEY: llm-api-key?      # optional: without it the assistant runs offline
+    env:
+      ASSISTANT_ENVIRONMENT: docker
+      ASSISTANT_REDIS_URL: redis://assistant-redis:6379/0
+      ASSISTANT_KNOWLEDGE_TARGET: knowledge:50052
+      ASSISTANT_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      ASSISTANT_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      ASSISTANT_JWKS_URL: http://app:8000/.well-known/jwks.json
+      ASSISTANT_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+      ASSISTANT_PARTA_URL: http://app:8000
+      ASSISTANT_DATABASE_URL: postgresql://assistant:$(ASSISTANT_DB_PASSWORD)@assistant-db:5432/assistant
+      ASSISTANT_DISPLAY_TIMEZONE: Australia/Sydney
+      ASSISTANT_LLM_MODE: auto
+      ASSISTANT_LLM_PROVIDER: groq
+      ASSISTANT_LLM_MODEL: ""
+    readinessProbe:
+      grpc: {port: 50051}
+      periodSeconds: 10
+      failureThreshold: 12

@@ -1,0 +1,28 @@
+global:
+  secretName: smarthealth-secrets
+  image: {registry: "", tag: dev, pullPolicy: IfNotPresent}
+
+workloads:
+  main:
+    image: {repository: smarthealth-knowledge, own: true}
+    service:
+      ports: {grpc: 50052}
+    waitFor: ["knowledge-db:5432", "qdrant:6333", "kafka:29092", "app:8000"]
+    secretEnv:
+      KNOWLEDGE_DB_PASSWORD: knowledge-db-password
+    env:
+      KNOWLEDGE_ENVIRONMENT: docker
+      KNOWLEDGE_DATABASE_URL: postgresql+asyncpg://knowledge:$(KNOWLEDGE_DB_PASSWORD)@knowledge-db:5432/knowledge
+      KNOWLEDGE_QDRANT_URL: http://qdrant:6333
+      KNOWLEDGE_EMBEDDING_MODE: live
+      FASTEMBED_CACHE_PATH: /models
+      KNOWLEDGE_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KNOWLEDGE_SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      KNOWLEDGE_JWKS_URL: http://app:8000/.well-known/jwks.json
+      KNOWLEDGE_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+    readinessProbe:
+      grpc: {port: 50052}
+      periodSeconds: 10
+      failureThreshold: 30           # first start downloads the embedding model
+    volumes:
+      models: {mountPath: /models, persistent: true, size: 2Gi}

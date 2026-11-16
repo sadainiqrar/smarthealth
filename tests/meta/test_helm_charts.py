@@ -167,3 +167,19 @@ def test_core_runs_six_processes_from_one_image():
     beat = container(docs, "core-celery-worker")
     mounts = {m["mountPath"] for m in beat["volumeMounts"]}
     assert "/var/smarthealth/documents" in mounts
+
+
+@needs_helm
+def test_part_b_builds_database_urls_from_the_secret():
+    docs = render("values-local.yaml")
+    env = container(docs, "knowledge")["env"]
+    names = [e["name"] for e in env]
+    assert names.index("KNOWLEDGE_DB_PASSWORD") < names.index("KNOWLEDGE_DATABASE_URL")
+    url = {e["name"]: e.get("value") for e in env}["KNOWLEDGE_DATABASE_URL"]
+    assert url == ("postgresql+asyncpg://knowledge:$(KNOWLEDGE_DB_PASSWORD)"
+                   "@knowledge-db:5432/knowledge")
+    assistant = {e["name"]: e for e in container(docs, "assistant")["env"]}
+    assert assistant["ASSISTANT_LLM_API_KEY"]["valueFrom"]["secretKeyRef"]["optional"] is True
+    probe = workload(docs, "knowledge")["spec"]["template"]["spec"]["containers"][0]
+    assert probe["readinessProbe"]["grpc"]["port"] == 50052
+    assert {"envoy", "frontend"} <= {d["metadata"]["name"] for d in of_kind(docs, "Deployment")}
