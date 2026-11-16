@@ -1,0 +1,7 @@
+workloads:
+  main:
+    image: danielqsj/kafka-exporter:v1.8.0
+    args: ["--kafka.server=kafka:29092"]
+    service:
+      ports: {metrics: 9308}
+    waitFor: ["kafka:29092"]

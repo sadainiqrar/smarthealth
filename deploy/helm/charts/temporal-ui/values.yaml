@@ -1,0 +1,15 @@
+# Default so the chart lints on its own; the umbrella sets the real one.
+global:
+  publicUrl: http://localhost:8080
+workloads:
+  main:
+    image: temporalio/ui:2.31.2
+    service:
+      ports: {http: 8080}
+    env:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_UI_PUBLIC_PATH: /temporal     # served under /temporal behind the ingress
+      TEMPORAL_CORS_ORIGINS: "{{ .Values.global.publicUrl }}"
+    readinessProbe:
+      tcpSocket: {port: 8080}
+      periodSeconds: 10

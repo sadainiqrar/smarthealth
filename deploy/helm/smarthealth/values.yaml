@@ -58,3 +58,23 @@ mailpit:
   workloads:
     main:
       resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}
+kafka:
+  workloads:
+    main:
+      resources: {requests: {memory: 640Mi, cpu: 100m}, limits: {memory: 768Mi}}
+schema-registry:
+  workloads:
+    main:
+      resources: {requests: {memory: 224Mi, cpu: 50m}, limits: {memory: 320Mi}}
+kafka-exporter:
+  workloads:
+    main:
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 48Mi}}
+temporal:
+  workloads:
+    main:
+      resources: {requests: {memory: 256Mi, cpu: 50m}, limits: {memory: 448Mi}}
+temporal-ui:
+  workloads:
+    main:
+      resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}

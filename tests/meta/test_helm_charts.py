@@ -95,3 +95,15 @@ def test_aliased_charts_install_one_workload_per_alias():
     claims = {p["metadata"]["name"] for p in of_kind(docs, "PersistentVolumeClaim")}
     assert {"postgres-data", "knowledge-db-data", "assistant-db-data", "mongo-data",
             "qdrant-data"} <= claims
+
+
+@needs_helm
+def test_kafka_binds_all_interfaces_and_advertises_its_service_name():
+    docs = render("values-local.yaml")
+    env = {e["name"]: e.get("value") for e in container(docs, "kafka")["env"]}
+    assert env["KAFKA_ADVERTISED_LISTENERS"] == "PLAINTEXT://kafka:29092"
+    assert "0.0.0.0:29092" in env["KAFKA_LISTENERS"]
+    assert env["KAFKA_AUTO_CREATE_TOPICS_ENABLE"] == "false"
+    assert "-Xmx" in env["KAFKA_HEAP_OPTS"]
+    assert {"schema-registry", "kafka-exporter", "temporal", "temporal-ui"} <= {
+        d["metadata"]["name"] for d in of_kind(docs, "Deployment")}

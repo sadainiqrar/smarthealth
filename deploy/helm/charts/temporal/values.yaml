@@ -1,0 +1,18 @@
+# auto-setup creates its databases in postgres
+workloads:
+  main:
+    image: temporalio/auto-setup:1.25.2
+    service:
+      ports: {frontend: 7233}
+    waitFor: ["postgres:5432"]
+    secretEnv:
+      POSTGRES_PWD: postgres-password
+    env:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: smarthealth
+    readinessProbe:
+      tcpSocket: {port: 7233}
+      periodSeconds: 10
+      failureThreshold: 18
