@@ -1,5 +1,7 @@
 # The slim profile: everything on one 8 GB node (m7i-flex.large). Per-workload memory
-# limits live here, under each component, so the whole budget reads in one file.
+# limits live here, under each component, so the whole budget reads in one file. Requests are
+# roughly the working set measured on k3d after the demo seed (`kubectl top`); limits ~1.5x it,
+# at least +64Mi, more where a peak or a cache demands it.
 global:
   # Where the system is reached from a browser; sub-path tools build links from it.
   publicUrl: http://localhost:8080
@@ -10,120 +12,149 @@ global:
     tag: dev
     pullPolicy: IfNotPresent
 
+# measured 2026-11-17: 35Mi working set, 37Mi peak incl. page cache
 payments-mock:
   workloads:
     main:
-      resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 96Mi}}
+      resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 112Mi}}
 
+# measured 2026-11-17: 168Mi working set, 237Mi peak incl. page cache
 postgres:
   workloads:
     main:
       secretEnv: {POSTGRES_PASSWORD: postgres-password}
-      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 320Mi}}
+      resources: {requests: {memory: 176Mi, cpu: 50m}, limits: {memory: 320Mi}}
+# measured 2026-11-17: 35Mi working set, 81Mi peak incl. page cache
 knowledge-db:
   user: knowledge
   database: knowledge
   workloads:
     main:
       secretEnv: {POSTGRES_PASSWORD: knowledge-db-password}
-      resources: {requests: {memory: 64Mi, cpu: 10m}, limits: {memory: 160Mi}}
+      resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 128Mi}}
+# measured 2026-11-17: 40Mi working set, 81Mi peak incl. page cache
 assistant-db:
   user: assistant
   database: assistant
   workloads:
     main:
       secretEnv: {POSTGRES_PASSWORD: assistant-db-password}
-      resources: {requests: {memory: 64Mi, cpu: 10m}, limits: {memory: 160Mi}}
+      resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 128Mi}}
+# measured 2026-11-17: 4Mi working set, 7Mi peak incl. page cache
 redis:
   workloads:
     main:
-      resources: {requests: {memory: 32Mi, cpu: 10m}, limits: {memory: 96Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 10m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 3Mi working set, 6Mi peak incl. page cache
 assistant-redis:
   workloads:
     main:
-      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 64Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 73Mi working set, 76Mi peak incl. page cache; limit stays above the 256 MB WiredTiger cache
 mongo:
   workloads:
     main:
-      resources: {requests: {memory: 224Mi, cpu: 50m}, limits: {memory: 384Mi}}
+      resources: {requests: {memory: 96Mi, cpu: 50m}, limits: {memory: 384Mi}}
+# measured 2026-11-17: 154Mi working set, 181Mi peak incl. page cache
 rabbitmq:
   workloads:
     main:
       resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 256Mi}}
+# measured 2026-11-17: 91Mi working set, 107Mi peak incl. page cache
 qdrant:
   workloads:
     main:
-      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 256Mi}}
+      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 160Mi}}
+# measured 2026-11-17: 10Mi working set, 33Mi peak incl. page cache
 mailpit:
   workloads:
     main:
-      resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 426Mi working set, 430Mi peak incl. page cache; heap capped at 512m
 kafka:
   workloads:
     main:
-      resources: {requests: {memory: 640Mi, cpu: 100m}, limits: {memory: 768Mi}}
+      resources: {requests: {memory: 448Mi, cpu: 100m}, limits: {memory: 768Mi}}
+# measured 2026-11-17: 284Mi working set, 287Mi peak incl. page cache; heap capped at 256m, the old 320Mi limit was within 33Mi
 schema-registry:
   workloads:
     main:
-      resources: {requests: {memory: 224Mi, cpu: 50m}, limits: {memory: 320Mi}}
+      resources: {requests: {memory: 288Mi, cpu: 50m}, limits: {memory: 384Mi}}
+# measured 2026-11-17: 7Mi working set, 11Mi peak incl. page cache
 kafka-exporter:
   workloads:
     main:
-      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 48Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 96Mi working set, 120Mi peak incl. page cache
 temporal:
   workloads:
     main:
-      resources: {requests: {memory: 256Mi, cpu: 50m}, limits: {memory: 448Mi}}
+      resources: {requests: {memory: 112Mi, cpu: 50m}, limits: {memory: 256Mi}}
+# measured 2026-11-17: 8Mi working set, 10Mi peak incl. page cache
 temporal-ui:
   workloads:
     main:
-      resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 40Mi working set, 42Mi peak incl. page cache
 otel-collector:
   workloads:
     main:
-      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 128Mi}}
+      resources: {requests: {memory: 48Mi, cpu: 20m}, limits: {memory: 128Mi}}
+# measured 2026-11-17: 16Mi working set, 21Mi peak incl. page cache; in-memory traces grow to MEMORY_MAX_TRACES
 jaeger:
   workloads:
     main:
-      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 160Mi}}
+      resources: {requests: {memory: 32Mi, cpu: 20m}, limits: {memory: 160Mi}}
+# measured 2026-11-17: 49Mi working set, 54Mi peak incl. page cache; grows with 2 days of retention
 prometheus:
   workloads:
     main:
-      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 192Mi}}
+      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 192Mi}}
+# measured 2026-11-17: 57Mi working set, 62Mi peak incl. page cache
 grafana:
   workloads:
     main:
-      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 192Mi}}
+      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 160Mi}}
 core:
   workloads:
+    # measured 2026-11-17: 175Mi working set, 318Mi peak incl. page cache
     api:
       resources: {requests: {memory: 192Mi, cpu: 100m}, limits: {memory: 320Mi}}
+    # measured 2026-11-17: 138Mi working set, 241Mi peak incl. page cache
     worker:
-      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 256Mi}}
+      resources: {requests: {memory: 144Mi, cpu: 50m}, limits: {memory: 256Mi}}
+    # measured 2026-11-17: 84Mi working set, 86Mi peak incl. page cache
     relay:
       resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 160Mi}}
+    # measured 2026-11-17: 115Mi working set, 124Mi peak incl. page cache
     consumers:
       resources: {requests: {memory: 128Mi, cpu: 20m}, limits: {memory: 192Mi}}
+    # measured 2026-11-17: 249Mi working set, 256Mi peak incl. page cache; OOM-killed at the old 256Mi limit during the demo seed (2 forks extracting documents)
     celery-worker:
-      resources: {requests: {memory: 192Mi, cpu: 50m}, limits: {memory: 256Mi}}
+      resources: {requests: {memory: 256Mi, cpu: 50m}, limits: {memory: 448Mi}}
+    # measured 2026-11-17: 105Mi working set, 106Mi peak incl. page cache
     celery-beat:
-      resources: {requests: {memory: 96Mi, cpu: 10m}, limits: {memory: 160Mi}}
+      resources: {requests: {memory: 112Mi, cpu: 10m}, limits: {memory: 176Mi}}
+# measured 2026-11-17: 403Mi working set, 448Mi peak incl. page cache; peak reached the old 448Mi limit (model files in page cache)
 knowledge:
   workloads:
     main:
-      resources: {requests: {memory: 320Mi, cpu: 50m}, limits: {memory: 448Mi}}
+      resources: {requests: {memory: 416Mi, cpu: 50m}, limits: {memory: 608Mi}}
+# measured 2026-11-17: 125Mi working set, 170Mi peak incl. page cache
 assistant:
   workloads:
     main:
-      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 320Mi}}
+      resources: {requests: {memory: 128Mi, cpu: 50m}, limits: {memory: 256Mi}}
+# measured 2026-11-17: 14Mi working set, 16Mi peak incl. page cache
 envoy:
   workloads:
     main:
-      resources: {requests: {memory: 32Mi, cpu: 10m}, limits: {memory: 64Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 10m}, limits: {memory: 80Mi}}
+# measured 2026-11-17: 11Mi working set, 13Mi peak incl. page cache
 frontend:
   workloads:
     main:
-      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 32Mi}}
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 80Mi}}
 
 # The shared Secret (spec section 5). create=true renders it from `secrets.values`
 # (k3d: public development defaults). create=false (AWS) expects it to exist already.

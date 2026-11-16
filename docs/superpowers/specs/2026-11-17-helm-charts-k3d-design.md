@@ -30,7 +30,7 @@ charts with a different values file.
 
 ```
 deploy/helm/
-  sh-lib/              library chart (type: library): deployment, statefulset, service,
+  sh-lib/              library chart (type: library): deployment, PVC, service,
                        configmap, env-from-secret, probes, resources, wait-for initContainer
   charts/
     core/              Part A of the assignment (the modular monolith): ONE image, six
@@ -118,6 +118,10 @@ Argo CD syncs. No non-development secret is ever in git.
   the server being stopped. Part A documents are shared by `app` and `celery-worker`; this
   works because there is **one node** (local-path volumes are node-local), an assumption the
   chart states. Redis, RabbitMQ, Prometheus and Jaeger are not persisted, as in compose.
+  *As built:* each persistent volume is a standalone PVC annotated
+  `helm.sh/resource-policy: keep`, mounted by a one-replica Deployment with
+  `strategy: Recreate` -- not a StatefulSet. On one replica a StatefulSet adds nothing, and
+  `keep` means `helm uninstall` never deletes the data.
 
 ## 7. The 8 GB budget
 
@@ -142,9 +146,10 @@ measurements on k3d and recorded in `values.yaml` comments.
 
 `scripts/k3d_up.sh`:
 1. creates a one-node k3d cluster `smarthealth` with `--servers-memory 8G`, port 8080 → the
-   ingress;
+   ingress, and the API server on `127.0.0.1:6550` (otherwise Docker Desktop's kubeconfig
+   names `host.docker.internal`, which resolves to the LAN address and may be firewalled);
 2. `push_images.sh --local` builds the five images and imports them;
-3. `helm dependency build` and `helm upgrade --install smarthealth deploy/helm/smarthealth
+3. `helm dependency update` on every component chart, then the umbrella, and `helm upgrade --install smarthealth deploy/helm/smarthealth
    -f values-local.yaml --wait --timeout 15m`.
 
 `scripts/k3d_smoke.py` then fails on the first problem:
