@@ -4,11 +4,12 @@ analytics reconcile finds no drift, and the live phase books through real workfl
 from __future__ import annotations
 
 import contextlib
+import uuid
 from collections import Counter
 from datetime import UTC, timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from temporalio.service import RPCError
 
 from app.components import build_activities, register_all
@@ -19,8 +20,9 @@ from app.core.temporal import TASK_QUEUE, WORKFLOWS, build_worker, connect_clien
 from app.db.engine import create_engine
 from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
+from app.demo import DemoRefused, demo_seed
 from app.demo.history import ORIGIN, day_imported, import_day, last_imported_day, plan_day
-from app.demo.live import run_live
+from app.demo.live import live_state, run_live
 from app.demo.network import (
     LINKED_PATIENT_INDEXES,
     PATIENT_COUNT,
@@ -54,6 +56,7 @@ from app.modules.scheduling.models import (
     WaitlistStatus,
 )
 from tests.tiers.t3_integration.demo_helpers import purge_demo
+from tests.tiers.t3_integration.scheduling_helpers import RecordingAudit
 
 pytestmark = [pytest.mark.integration, pytest.mark.docker]
 
@@ -341,8 +344,11 @@ async def test_a_second_run_does_not_double_book_or_requeue(api, demo_factory, d
     first = await run_live(api, net, password=PASSWORD, target=8, now=Clock().now())
     assert first.failed == 0, first.failures
     rows, waiting = await _live_state(demo_factory, net)
-    busy = frozenset(patient for patient, *_ in rows)
-    waiting_ids = frozenset(patient for patient, _ in waiting)
+    async with demo_factory() as session:
+        state = await live_state(session, net, Clock().now())
+    busy, waiting_ids = state.busy_patient_ids, state.waiting_patient_ids
+    assert busy == frozenset(patient for patient, *_ in rows)
+    assert waiting_ids == frozenset(patient for patient, _ in waiting)
     second = await run_live(
         api, net, password=PASSWORD, target=12, existing_upcoming=len(rows),
         existing_waitlist=0, busy_patient_ids=busy, waiting_patient_ids=waiting_ids,
@@ -362,3 +368,18 @@ async def test_a_second_run_does_not_double_book_or_requeue(api, demo_factory, d
     waiting_patients = [patient for patient, _ in waiting]
     assert len(waiting_patients) == len(set(waiting_patients))
     assert second.waitlisted == 2 and len(waiting_patients) == len(waiting_ids) + 2
+
+
+async def test_demo_seed_refuses_a_database_with_real_patients(demo_factory, db_settings):
+    async with demo_factory() as session:
+        session.add(Patient(mrn=f"REAL-{uuid.uuid4().hex[:8]}", first_name="Real",
+                            last_name="Person"))
+        await session.commit()
+    try:
+        with pytest.raises(DemoRefused):
+            await demo_seed(settings=db_settings, password=PASSWORD,
+                            api_url="http://unused", audit=RecordingAudit())
+    finally:
+        async with demo_factory() as session:
+            await session.execute(text("DELETE FROM patients WHERE mrn LIKE 'REAL-%'"))
+            await session.commit()

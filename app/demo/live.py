@@ -15,7 +15,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.scheduling.models import (
+    Appointment,
+    AppointmentStatus,
+    ProviderSlot,
+    WaitlistEntry,
+    WaitlistStatus,
+)
 from app.demo.network import (
     LINKED_PATIENT_INDEXES,
     PATIENT_COUNT,
@@ -33,6 +42,34 @@ WALK_IN_START = 600  # walk-in patients booked by the front desk come from here 
 _CONFIRM_TIMEOUT = 60.0
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class LiveState:
+    """What the demo patients already hold, read from the database before `run_live`."""
+
+    busy_patient_ids: frozenset[uuid.UUID]
+    waiting_patient_ids: frozenset[uuid.UUID]
+    upcoming: int  # live upcoming appointments of demo patients
+    waitlist: int  # open waitlist entries of demo patients
+
+
+async def live_state(session: AsyncSession, net: Network, now: datetime) -> LiveState:
+    """Demo patients with a pending or confirmed appointment starting after `now`, and demo
+    patients with an active waitlist entry."""
+    busy = (await session.execute(
+        select(Appointment.patient_id)
+        .join(ProviderSlot, ProviderSlot.id == Appointment.slot_id)
+        .where(Appointment.patient_id.in_(net.patient_ids),
+               Appointment.provider_id.in_(net.provider_ids.values()),
+               Appointment.status.in_((AppointmentStatus.PENDING,
+                                       AppointmentStatus.CONFIRMED)),
+               ProviderSlot.starts_at > now))).scalars().all()
+    waiting = (await session.execute(
+        select(WaitlistEntry.patient_id).where(
+            WaitlistEntry.patient_id.in_(net.patient_ids),
+            WaitlistEntry.status == WaitlistStatus.ACTIVE))).scalars().all()
+    return LiveState(frozenset(busy), frozenset(waiting), len(busy), len(waiting))
 
 
 @dataclass
