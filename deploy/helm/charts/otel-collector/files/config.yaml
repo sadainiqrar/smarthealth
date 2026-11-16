@@ -1,0 +1,38 @@
+# The one place telemetry goes (Weeks 3-5 spec D-28). Every process exports OTLP here;
+# where it goes next is decided in this file, not in application code.
+receivers:
+  otlp:
+    protocols:
+      grpc: { endpoint: 0.0.0.0:4317 }   # Temporal core's SDK metrics
+      http: { endpoint: 0.0.0.0:4318 }   # application spans and metrics
+
+processors:
+  memory_limiter: { check_interval: 1s, limit_mib: 256 }
+  batch: {}
+
+exporters:
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls: { insecure: true }
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # The process is named by `job` = "<service.namespace>/<service.name>", e.g.
+    # "smarthealth/part-a-api"; other resource attributes stay on `target_info`.
+    # Not resource_to_telemetry_conversion: Temporal core's metrics carry a
+    # `service_name` attribute of their own, which collides with the converted resource
+    # label and makes the exporter drop every Temporal metric.
+
+extensions:
+  health_check: { endpoint: 0.0.0.0:13133 }
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/jaeger]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

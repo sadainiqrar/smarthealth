@@ -1,0 +1,15 @@
+workloads:
+  main:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    args: ["--config=/etc/otelcol-contrib/config.yaml"]
+    service:
+      ports: {otlp-grpc: 4317, otlp-http: 4318, prom: 8889, health: 13133}
+    readinessProbe:
+      httpGet: {path: /, port: 13133}
+      periodSeconds: 10
+    volumes:
+      config: {mountPath: /etc/otelcol-contrib/config.yaml, configMap: otel-collector-config,
+               subPath: config.yaml}
+configMaps:
+  config:
+    files: [files/config.yaml]

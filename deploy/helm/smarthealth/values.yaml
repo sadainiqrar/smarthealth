@@ -78,3 +78,19 @@ temporal-ui:
   workloads:
     main:
       resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}
+otel-collector:
+  workloads:
+    main:
+      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 128Mi}}
+jaeger:
+  workloads:
+    main:
+      resources: {requests: {memory: 64Mi, cpu: 20m}, limits: {memory: 160Mi}}
+prometheus:
+  workloads:
+    main:
+      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 192Mi}}
+grafana:
+  workloads:
+    main:
+      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 192Mi}}

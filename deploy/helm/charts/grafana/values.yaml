@@ -1,0 +1,37 @@
+# Default so the chart lints on its own; the umbrella sets the real one.
+global:
+  publicUrl: http://localhost:8080
+workloads:
+  main:
+    image: grafana/grafana:11.2.2
+    service:
+      ports: {http: 3000}
+    secretEnv:
+      GF_SECURITY_ADMIN_PASSWORD: grafana-admin-password
+    env:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # The ingress's tool login sends an Authorization header; Grafana must not try it as
+      # one of its own users (it would answer 401). Grafana's admin login is its form.
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_SERVER_ROOT_URL: "{{ .Values.global.publicUrl }}/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    readinessProbe:
+      httpGet: {path: /api/health, port: 3000}
+      periodSeconds: 10
+    volumes:
+      datasources: {mountPath: /etc/grafana/provisioning/datasources, configMap: grafana-datasources}
+      providers: {mountPath: /etc/grafana/provisioning/dashboards, configMap: grafana-providers}
+      alerting: {mountPath: /etc/grafana/provisioning/alerting, configMap: grafana-alerting}
+      dashboards: {mountPath: /var/lib/grafana/dashboards, configMap: grafana-dashboards}
+configMaps:
+  providers:
+    files: [files/provisioning/dashboards.yaml]
+  alerting:
+    files: [files/provisioning/rules.yaml]
+  dashboards:
+    files:
+      - files/dashboards/assistant.json
+      - files/dashboards/async-backbone.json
+      - files/dashboards/platform-analytics.json
+      - files/dashboards/service-overview.json

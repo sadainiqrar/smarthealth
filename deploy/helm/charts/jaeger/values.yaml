@@ -1,0 +1,12 @@
+workloads:
+  main:
+    image: jaegertracing/all-in-one:1.62.0
+    service:
+      ports: {ui: 16686, otlp-grpc: 4317}
+    env:
+      COLLECTOR_OTLP_ENABLED: "true"
+      QUERY_BASE_PATH: /jaeger         # served under /jaeger behind the ingress
+      MEMORY_MAX_TRACES: "20000"       # in-memory storage, capped for the 8 GB budget
+    readinessProbe:
+      tcpSocket: {port: 16686}
+      periodSeconds: 10

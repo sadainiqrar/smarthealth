@@ -1,0 +1,26 @@
+# Default so the chart lints on its own; the umbrella sets the real one.
+global:
+  publicUrl: http://localhost:8080
+# External URL carries /prometheus for links; the route prefix stays "/" because the
+# ingress strips /prometheus -- so Grafana keeps querying http://prometheus:9090.
+workloads:
+  main:
+    image: prom/prometheus:v2.54.1
+    args:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - "--web.external-url={{ .Values.global.publicUrl }}/prometheus/"
+      - --web.route-prefix=/
+    service:
+      ports: {http: 9090}
+    readinessProbe:
+      httpGet: {path: /-/ready, port: 9090}
+      periodSeconds: 10
+    volumes:
+      config: {mountPath: /etc/prometheus/prometheus.yml, configMap: prometheus-config,
+               subPath: prometheus.yml}
+      data: {mountPath: /prometheus, emptyDir: true}
+configMaps:
+  config:
+    files: [files/prometheus.yml]

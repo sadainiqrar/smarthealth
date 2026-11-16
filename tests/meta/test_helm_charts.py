@@ -107,3 +107,29 @@ def test_kafka_binds_all_interfaces_and_advertises_its_service_name():
     assert "-Xmx" in env["KAFKA_HEAP_OPTS"]
     assert {"schema-registry", "kafka-exporter", "temporal", "temporal-ui"} <= {
         d["metadata"]["name"] for d in of_kind(docs, "Deployment")}
+
+
+import importlib.util  # noqa: E402
+
+
+def _sync_module():
+    spec = importlib.util.spec_from_file_location("sync_chart_files",
+                                                  ROOT / "scripts" / "sync_chart_files.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_chart_copies_of_ops_files_are_identical():
+    assert _sync_module().drift() == []
+
+
+@needs_helm
+def test_grafana_points_at_jaeger_under_its_sub_path():
+    docs = render("values-local.yaml")
+    maps = {m["metadata"]["name"]: m for m in of_kind(docs, "ConfigMap")}
+    datasources = maps["grafana-datasources"]["data"]["datasources.yaml"]
+    assert "http://jaeger:16686/jaeger" in datasources
+    env = {e["name"]: e.get("value") for e in container(docs, "grafana")["env"]}
+    assert env["GF_SERVER_ROOT_URL"] == "http://localhost:8080/grafana/"
+    assert env["GF_SERVER_SERVE_FROM_SUB_PATH"] == "true"

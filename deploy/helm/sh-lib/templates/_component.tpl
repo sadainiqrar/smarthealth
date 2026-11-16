@@ -114,7 +114,10 @@ spec:
           command: {{ toJson . }}
           {{- end }}
           {{- with $w.args }}
-          args: {{ toJson . }}
+          args:
+            {{- range . }}
+            - {{ tpl (toString .) $root | quote }}
+            {{- end }}
           {{- end }}
           {{- if or $w.secretEnv $w.env }}
           env:
