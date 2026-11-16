@@ -153,4 +153,4 @@ calls `billing.release` — so the billing record stays `authorized` indefinitel
 patient-facing policy (`services/knowledge/corpus/policies.md`, "Payment and the card hold")
 says nothing about no-shows. Imported history uses `voided` for no-shows, the behaviour the
 policy implies. Whether a no-show should be voided or charged, and fixing the live path, is a
-separate decision and a separate change, recorded as an open PRD risk when it is made.
+separate decision and a separate change, recorded as PRD risk R-33 (open).

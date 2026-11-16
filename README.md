@@ -66,6 +66,41 @@ old code. To stop, keeping the data: the same command with `down` in place of
 | `a.osei@medinova.example` | `provider` (linked to provider `LIC-100001`) |
 | `j.okonkwo@example.com` | `patient` (linked to record `MRN-000001`) |
 
+### Demo data (for a deployed review environment)
+
+`seed` gives a small, empty network for development. For a demo that looks lived-in:
+
+```bash
+python -m app.cli demo-seed --password '<choose one>' --api-url http://localhost:8000 --allow-demo-data
+python -m app.cli demo-refresh --password '<same>' --api-url http://localhost:8000 --allow-demo-data
+```
+
+`demo-seed` builds 3 clinics, 15 providers across all 10 documented specialties and 800
+patients; imports six months of history up to yesterday (visits, signed notes, prescriptions,
+test results, cancellations, no-shows, billing and analytics), marked
+`appointments.origin = 'legacy_import'` (no events are emitted for it, and analytics are
+written so the nightly reconcile reports zero drift); opens two weeks of slots; and books live
+activity through the API (bookings, one cancel, one reschedule, two waitlist joins), so
+Temporal, Kafka, Celery and Mailpit all have something to show. Run `demo-refresh` before a
+review to bring history up to yesterday and top up live bookings. Both take `--timezone`, both
+refuse without `--allow-demo-data`, `demo-seed` refuses a database holding non-demo patients,
+and both exit non-zero if a live booking fails. Design:
+`docs/superpowers/specs/2026-11-16-demo-seed-data-design.md`.
+
+Logins, all with the password you chose:
+
+| Login | Role |
+| --- | --- |
+| `demo.admin@medinova.example` | `admin` |
+| `demo.desk1@medinova.example`, `demo.desk2@medinova.example` | `front_desk` |
+| `amara.osei@medinova.example`, `lena.fischer@medinova.example`, `kenji.watanabe@medinova.example`, `priya.raman@medinova.example`, `ravi.chandrasekhar@medinova.example`, `grace.abara@medinova.example`, `mateo.alvarez@medinova.example`, `sofia.lindgren@medinova.example`, `noor.haddad@medinova.example`, `daniel.mensah@medinova.example`, `hannah.brooks@medinova.example`, `oliver.grant@medinova.example`, `mei.lin@medinova.example`, `samuel.okafor@medinova.example`, `elena.petrova@medinova.example` | `provider` (one each) |
+| `liam.smith2@example.com`, `mia.patel3@example.com`, `noah.kowalski4@example.com`, `zara.rossi5@example.com`, `ethan.haddad6@example.com` | `patient` (linked to their records) |
+
+Where it shows: the demo client (appointments, visits, analytics, the provider's notes), Grafana
+*Platform analytics* (six months of trends), Temporal UI and Jaeger (the live bookings only;
+imported history has no workflows or traces), and Mailpit (live-booking emails only).
+Imported rows are told apart by `appointments.origin = 'legacy_import'`.
+
 ### Where everything is
 
 Default host ports; each can be moved with the variable named in

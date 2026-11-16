@@ -208,6 +208,7 @@ Commands that work today:
 | `python -m app.cli deactivate-user --email …` | stop a login authenticating and end every live session it has |
 | `python -m app.cli generate-signing-key` | print a fresh Ed25519 key for `SMARTHEALTH_JWT_PRIVATE_KEY` (the committed default is a development key, refused when `SMARTHEALTH_ENVIRONMENT=production`) |
 | `python -m app.cli seed --password … [--patients N] [--clear]` | demo clinic network — clinics, departments, providers, patients, slots. Idempotent. Seeds **no** appointments/visits/waitlist: those are Week 2 workflow outputs |
+| `python -m app.cli demo-seed --password … --api-url … --allow-demo-data [--timezone …]` / `demo-refresh` | demo network + six months of imported history (`origin = 'legacy_import'`, no events, analytics written to match) + live bookings through the API; refuses without the flag or on a database with non-demo patients (`app/demo/`) |
 | `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 

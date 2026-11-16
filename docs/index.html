@@ -786,6 +786,8 @@ docker compose --profile app --profile partb -f docker-compose.infra.yml down -v
     <tr><th>Command</th><th>What</th></tr>
     <tr><td><code>python -m app.cli create-user --email … --password … --role admin</code></td><td>Create a login</td></tr>
     <tr><td><code>python -m app.cli link-patient --email … --mrn …</code></td><td>Link a patient login to its record</td></tr>
+    <tr><td><code>python -m app.cli demo-seed --password … --api-url … --allow-demo-data</code></td><td>Demo network, six months of imported history (<code>origin = 'legacy_import'</code>), live bookings through the API</td></tr>
+    <tr><td><code>python -m app.cli demo-refresh --password … --api-url … --allow-demo-data</code></td><td>Bring the demo up to yesterday and top up live activity</td></tr>
     <tr><td><code>python -m app.cli deactivate-user --email …</code></td><td>Stop a login and end its sessions</td></tr>
     <tr><td><code>python -m app.cli republish</code></td><td>Re-emit state events for every clinic, department and provider</td></tr>
     <tr><td><code>python -m app.cli dlt-replay --topic …</code></td><td>Re-publish a topic's dead letters after a fix</td></tr>
