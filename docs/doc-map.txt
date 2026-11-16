@@ -1,0 +1,30 @@
+# Which docs describe which code -- read by the docs Stop hook (tests/runner/docs_gate.py).
+#
+#   <code glob> -> <doc>, <doc>, ...
+#
+# When files matching a glob change and none of its docs (and no other doc file) changed
+# with them, the hook blocks the stop and names the docs to review. Not every change needs
+# a doc edit: waive with DOCS_WAIVE="<reason>" (logged to tests/waivers.log).
+#
+# Generated data (docs/data/*.json) is kept current by tests/meta/test_docs_data.py and
+# `python scripts/gen_docs_data.py`; the hook also reminds when it is stale.
+
+app/api/**               -> README.md, docs/ARCHITECTURE.md, docs/index.html
+app/modules/**           -> docs/ARCHITECTURE.md, docs/PRD.md, docs/index.html
+app/events/**            -> docs/ARCHITECTURE.md, docs/index.html
+app/core/**              -> docs/ARCHITECTURE.md, docs/index.html
+app/db/**                -> docs/ARCHITECTURE.md, docs/index.html
+app/cli.py               -> README.md, docs/index.html
+app/celery_app.py        -> docs/ARCHITECTURE.md, docs/index.html
+app/worker.py            -> docs/ARCHITECTURE.md, docs/index.html
+app/relay.py             -> docs/ARCHITECTURE.md, docs/index.html
+app/consumers.py         -> docs/ARCHITECTURE.md, docs/index.html
+app/settings.py          -> README.md, docs/index.html
+migrations/**            -> docs/ARCHITECTURE.md, docs/index.html
+services/knowledge/**    -> docs/ARCHITECTURE.md, docs/PRD.md, docs/index.html
+services/assistant/**    -> docs/ARCHITECTURE.md, docs/PRD.md, docs/index.html
+services/payments_mock/** -> docs/ARCHITECTURE.md, docs/index.html
+contracts/**             -> docs/ARCHITECTURE.md, docs/index.html
+docker-compose*.yml      -> README.md, docs/index.html
+ops/**                   -> README.md, docs/ARCHITECTURE.md, docs/index.html
+frontend/src/**          -> README.md, docs/index.html
