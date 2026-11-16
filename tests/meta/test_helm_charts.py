@@ -358,3 +358,22 @@ def test_only_the_umbrella_declares_dependencies():
     assert not offenders, f"component charts with their own dependencies: {offenders}"
     umbrella = yaml.safe_load((UMBRELLA / "Chart.yaml").read_text(encoding="utf-8"))
     assert "sh-lib" in {d["name"] for d in umbrella["dependencies"]}
+
+
+@needs_helm
+def test_the_aws_values_render_without_secrets_and_from_ghcr():
+    docs = render("values-aws.yaml")
+    assert of_kind(docs, "Secret") == []          # created on the server from SSM
+    aws = yaml.safe_load((UMBRELLA / "values-aws.yaml").read_text(encoding="utf-8"))
+    tag = aws["global"]["image"]["tag"]
+    assert tag != "dev"
+    for d in of_kind(docs, "Deployment"):
+        for c in d["spec"]["template"]["spec"]["containers"]:
+            if "smarthealth-" in c["image"]:
+                assert c["image"].startswith("ghcr.io/sadainiqrar/smarthealth-"), c["image"]
+                assert c["image"].endswith(f":{tag}")
+    routes = _routes(docs)
+    for path in ("/grafana", "/jaeger", "/temporal", "/mailpit", "/rabbitmq", "/prometheus"):
+        assert "tools-auth" in routes[path][1], path
+    assert aws["global"]["publicUrl"].startswith("https://")
+    assert aws["global"]["publicUrl"].endswith(".cloudfront.net")

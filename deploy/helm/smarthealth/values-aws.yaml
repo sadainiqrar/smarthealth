@@ -1,0 +1,14 @@
+# deploy/helm/smarthealth/values-aws.yaml
+# The AWS server (docs/superpowers/specs/2026-11-17-aws-deploy-design.md), applied by Argo CD
+# on top of values.yaml. Nothing secret lives here: the server's boot unit creates
+# smarthealth-secrets and smarthealth-tools-auth from SSM Parameter Store.
+global:
+  # The CloudFront address; written by scripts/release.sh from `terraform output`.
+  publicUrl: https://d0000000000000.cloudfront.net
+  image:
+    registry: ghcr.io/sadainiqrar
+    # The release; written by scripts/release.sh (the git SHA the images were built from).
+    tag: unreleased
+    pullPolicy: IfNotPresent
+secrets:
+  create: false
