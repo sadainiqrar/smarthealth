@@ -155,6 +155,8 @@ span, over-generous citations (R-28, `5f91d39`). Open, stated in the PRD: no SQL
 Jaeger (R-29), the analytics drift metric is unwatched (R-30), reports are in-process tasks
 (R-31).
 
+**Deployment: k3d locally, AWS via Terraform + Argo CD** (`deploy/terraform/`, `scripts/aws_*.sh`; spec `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`, decisions D-42 … D-48, risk R-34 no backups) — written and reviewed, **not yet applied to any AWS account**.
+
 **Documentation is a deliverable and is kept in step with the code.** The site
 `docs/index.html` (GitHub Pages from `/docs` on `main`; `docs/assets/`, `docs/.nojekyll`)
 renders `docs/data/*.json` — the OpenAPI document, every table, and the Kafka / Celery /
@@ -211,6 +213,11 @@ Commands that work today:
 | `python -m app.cli demo-seed --password … --api-url … --allow-demo-data [--timezone …]` / `demo-refresh` | demo network + six months of imported history (`origin = 'legacy_import'`, no events, analytics written to match) + live bookings through the API; refuses without the flag or on a database with non-demo patients (`app/demo/`) |
 | `bash scripts/k3d_up.sh` / `python scripts/k3d_smoke.py` / `bash scripts/k3d_down.sh` | local 8 GB Kubernetes: a k3d cluster, the five images built and imported, the umbrella chart `deploy/helm/smarthealth` installed (29 pods); the smoke checks pods, login, gRPC-Web, tool logins, the demo seed and memory against the budget; needs `helm` and `k3d` and the compose stacks stopped; URLs at `http://localhost:8080/` (tools behind `reviewer` / `smarthealth`); see README "Kubernetes (k3d)" and PRD D-37 … D-41 |
 | `python scripts/sync_chart_files.py [--check]` | copy the `ops/` config files (Envoy, OTel, Prometheus, Grafana) into the charts that need them; the meta-test fails on drift |
+| `scripts/tf.sh [bootstrap] <terraform args>` / `scripts/aws_init.sh` | Terraform with the `smarthealth` profile's credentials exported (the provider may not read the `aws login` cache); `aws_init.sh` writes the git-ignored `backend.hcl` and inits the stack. The AWS CLI is found in `~/AppData/Local/Programs/Amazon/AWSCLIV2` when not on PATH |
+| `scripts/aws_start.sh [--refresh]` / `aws_stop.sh` / `aws_extend.sh` | start the NAT instance and server and wait for `/api/ready` through CloudFront (`--refresh` re-runs `demo-refresh`) / stop both / re-arm both 3-hour auto-stops |
+| `scripts/aws_secrets.sh` / `aws_seed.sh` / `aws_shell.sh` | JWT key and Groq key into SSM / first-time `demo-seed` Job / SSM shell on the server (needs the Session Manager plugin) |
+| `scripts/release.sh` | push the five images to GHCR, write the tag and CloudFront URL into `values-aws.yaml`, commit `release: <sha>` (then fast-forward `main` and push; Argo CD syncs) |
+| `python scripts/aws_smoke.py` | HTTP smoke through CloudFront: ready, login, gRPC-Web, tool logins, `/argocd`, caching |
 | `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |
 

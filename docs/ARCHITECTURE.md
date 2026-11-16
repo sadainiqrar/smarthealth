@@ -2488,7 +2488,10 @@ Kubernetes node with one `helm upgrade --install`, proven on a k3d cluster cappe
 
 `deploy/helm/smarthealth` is the umbrella and depends on every chart by `file://`;
 `deploy/helm/sh-lib` is a library chart (deployment, PVC, service, config map, secret
-references, probes, resources, the wait-for init container); `deploy/helm/charts/` holds 21
+references, probes, resources, the wait-for init container) that **only the umbrella
+declares** as a dependency: Helm named templates are global across a chart and its subcharts,
+so the components use them without one, and Argo CD's single `helm dependency build` of the
+umbrella is enough (D-43; a meta-test fails if a component chart declares a dependency); `deploy/helm/charts/` holds 21
 component charts. `core` is Part A's six processes from one image (`core-api`, whose Service
 keeps the compose name `app`, `core-worker`, `core-relay`, `core-consumers`,
 `core-celery-worker`, `core-celery-beat`). `postgres` is installed three times
@@ -2526,9 +2529,11 @@ A wait-for init container (busybox, polls host:port) holds back workloads that c
 without a dependency; the rest restart with backoff. Migrations stay in the API container's
 entrypoint (one replica, so nothing races). `core-relay` runs `python -m app.relay --setup`
 as an init container before relaying. Workloads that must never overlap during an upgrade
-(`singleton: true`: Schema Registry, Celery beat) use `Recreate`. The demo seed is a Job
-(`demoSeed.enabled`, `mode: seed|refresh`) that waits for and runs the CLI against
-`http://app:8000`; under Argo CD it is a `PostSync` hook. A config change rolls the pods that
+(`singleton: true`: Schema Registry, Celery beat) use `Recreate`. Demo data is two
+suspended CronJobs, `demo-seed` and `demo-refresh` (`templates/demo-cronjobs.yaml`), never
+scheduled and started on demand with `kubectl create job --from=cronjob/<name>`; each waits
+for and runs the CLI against `http://app:8000`. They are not Argo CD hooks, so a sync never
+re-runs them. A config change rolls the pods that
 read it: the pod template carries a checksum of the chart's ConfigMaps.
 
 ### 7.5 Storage and the budget
@@ -2548,3 +2553,116 @@ demo seed: limits total 6.36 GiB, requests 3.2 GiB; `core-celery-worker` needed 
 forks extracting documents). `tests/meta/test_helm_charts.py` renders the umbrella and fails
 if a compose service has no workload, a container has no limit, or the limits exceed 6.5 GiB.
 Running k3d needs the compose stacks stopped.
+
+## 8. Deployment on AWS
+
+The same umbrella chart on one k3s server in AWS, for a reviewer to open from anywhere.
+Terraform in `deploy/terraform/` creates everything; Argo CD keeps the cluster equal to git.
+**Not yet deployed**: this section describes what `terraform apply` builds. Design and
+rejected alternatives: `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`; decisions
+D-42 ... D-48; the missing backups are R-34.
+
+### 8.1 Network
+
+One VPC (`10.20.0.0/16`) in one availability zone of `ap-southeast-2`, with two subnets
+(`network.tf`):
+
+- **public**: the NAT instance (`t4g.micro`, Amazon Linux 2023), with a public IPv4, source/dest
+  check off, and `iptables` masquerade from the private subnet; its security group admits
+  only the private subnet;
+- **private**: the k3s server (`m7i-flex.large`, Ubuntu 24.04, 40 GB encrypted gp3). It has no
+  public IP and no key pair. Its security group admits TCP 80 from the AWS-managed
+  **CloudFront origin-facing prefix list** and nothing else. The private subnet's default
+  route goes to the NAT instance.
+
+Every EC2 instance requires IMDSv2. The server's instance profile carries
+`AmazonSSMManagedInstanceCore` (Session Manager and Run Command, the way in) and read access
+to `/smarthealth/*` in SSM Parameter Store.
+
+**Why a VPC origin and a NAT instance (D-42).** CloudFront speaks plain HTTP to its origin
+here (a certificate needs a domain). With a public server that hop crosses the internet and
+carries passwords and bearer tokens in clear text. A CloudFront **VPC origin** reaches a
+private instance over AWS's own network, so the server needs no public address at all. The
+server still needs the internet to pull images from GHCR and charts from GitHub, and to call
+Groq; a managed NAT gateway costs about $35 a month even idle, while a `t4g.micro` that starts
+and stops with the server costs cents.
+
+### 8.2 CloudFront
+
+`cloudfront.tf`: one distribution, `PriceClass_All`, the default `*.cloudfront.net`
+certificate, viewers redirected to HTTPS. The origin is the VPC origin for the server (HTTP 80,
+read timeout 60 s). The default behaviour allows every method (POST for the API and gRPC-Web),
+uses the `CachingDisabled` cache policy and the `AllViewer` origin-request policy (so the tool
+login's `Authorization` header and bearer tokens reach Traefik). `/assets/*` uses
+`CachingOptimized`: the frontend's assets are content-hashed. Managed policies are looked up by
+name, never by id. Standard logs go to an S3 bucket kept 14 days.
+
+### 8.3 The boot sequence
+
+`templates/server-user-data.sh.tftpl` runs once, on first boot: it installs `apache2-utils`
+and the AWS CLI, writes `/etc/smarthealth/boot.env`, writes a k3s `HelmChart` manifest for
+Argo CD (chart pinned; served under `/argocd`, TLS ending at CloudFront, anonymous users
+read-only) and `/etc/smarthealth/argocd-extra.yaml` (the Argo CD `Application`, the `/argocd`
+Ingress and its basic-auth Middleware), installs k3s pinned to `v1.30.6+k3s1` (keeping Traefik
+and local-path), and installs `smarthealth-boot.service`. That oneshot unit runs
+`templates/smarthealth-boot.sh` **on every boot, after k3s**:
+
+1. schedule the auto-stop (`shutdown -h +180`);
+2. wait for the Kubernetes API;
+3. read `/smarthealth/*` from SSM, retrying until it answers, and write `smarthealth-secrets`
+   and `smarthealth-tools-auth` into the `smarthealth` namespace, the latter also into
+   `argocd` (D-41);
+4. wait for Argo CD's CRDs, set its admin password (bcrypt) and apply `argocd-extra.yaml`.
+
+Pods whose Secret does not exist yet wait instead of starting with empty passwords. Rotating
+a password is a change in SSM and a reboot. The NAT instance's user-data enables forwarding
+and masquerade and its own timer, 15 minutes after the server's.
+
+### 8.4 GitOps flow
+
+`scripts/release.sh` builds and pushes the five images to `ghcr.io/sadainiqrar`, tagged with
+the git SHA (public packages, no pull secret: D-44), writes the tag and the CloudFront URL into
+`deploy/helm/smarthealth/values-aws.yaml` (`scripts/set_release.py`) and commits
+`release: <sha>`. The owner fast-forwards and pushes `main`. The Argo CD Application tracks
+`main`, path `deploy/helm/smarthealth`, value files `values.yaml` then `values-aws.yaml`, with
+automated sync, prune and self-heal; it polls every 3 minutes, and reads the chart straight
+from git (the reason `sh-lib` belongs to the umbrella only). `values-aws.yaml` sets
+`secrets.create: false`, the GHCR registry, the tag and `global.publicUrl`; no secret is in it.
+Argo CD's own UI is at `/argocd` behind the same tool login (D-45).
+
+### 8.5 Secrets
+
+Terraform generates each password with `random_password` (the three Postgres, RabbitMQ,
+Grafana, the tool login, the demo logins, Argo CD admin) and writes them to SSM as
+SecureString (`ssm.tf`); they are therefore in Terraform state, which is why the state bucket
+is private, encrypted and versioned (D-48). Two secrets never enter state:
+`scripts/aws_secrets.sh` puts a freshly generated JWT signing key and the Groq key from the
+git-ignored `.env` into SSM directly. The owner reads the tool, demo and Argo CD passwords
+with `scripts/tf.sh output -raw ...`. The instance profile can read `/smarthealth/*` only.
+
+### 8.6 Auto-stop and what survives it
+
+A review lasts hours, not weeks, and an idle server is the main cost. The server's boot unit
+schedules `shutdown -h`; because `instance_initiated_shutdown_behavior = "stop"`, the instance
+stops rather than terminates (D-46: no Lambda, no EventBridge). The timer is 3 hours after
+each boot; `scripts/aws_extend.sh` re-arms both timers through Run Command, and
+`scripts/aws_stop.sh` stops the instances at once.
+
+**A stop keeps** the encrypted root disk, which holds every `local-path` volume (the three
+Postgres, Mongo, Kafka, Qdrant, the knowledge model cache and Part A's documents); on the
+next start k3s restarts, the Secrets are rewritten and Argo CD syncs whatever git says. **A
+stop loses** only what is in memory, as on any restart (Redis, RabbitMQ, Prometheus and
+Jaeger are not persisted). **A terminate keeps the root disk too**
+(`delete_on_termination = false`), so `terraform destroy` leaves a volume to delete by hand.
+**Nothing backs the disk up**: lose the volume and the demo is gone (R-34);
+`scripts/aws_seed.sh` rebuilds the demo data.
+
+### 8.7 Operating it
+
+`scripts/aws_start.sh [--refresh]`, `aws_stop.sh`, `aws_extend.sh`, `aws_seed.sh`,
+`aws_shell.sh`, `release.sh` and `scripts/tf.sh` (Terraform with the `smarthealth` profile's
+credentials exported as environment variables, because the provider may not read the
+`aws login` cache), each documented in the README's "Deploying to AWS". `python
+scripts/aws_smoke.py` checks the deployment over HTTP through CloudFront: ready, a demo
+login, a gRPC-Web stream, every tool path and `/argocd` answering 401 without the login and
+200 with it, hashed assets cached and the API not.

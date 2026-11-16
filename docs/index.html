@@ -822,7 +822,7 @@ flowchart LR
   <h3>The charts</h3>
   <ul>
     <li><code>smarthealth</code> — the umbrella: depends on every chart by <code>file://</code>; <code>values.yaml</code> is the slim 8 GB profile with the measured memory budget, <code>values-local.yaml</code> is k3d.</li>
-    <li><code>sh-lib</code> — a library chart: deployment, PVC, service, config map, probes, resources and a wait-for init container.</li>
+    <li><code>sh-lib</code> — a library chart: deployment, PVC, service, config map, probes, resources and a wait-for init container. Only the umbrella depends on it; the components use its templates.</li>
     <li>21 component charts — <code>core</code> (Part A's six processes from one image: core-api with the Service <code>app</code>, core-worker, core-relay, core-consumers, core-celery-worker, core-celery-beat), <code>knowledge</code>, <code>assistant</code>, <code>payments-mock</code>, <code>frontend</code>, <code>envoy</code>, <code>postgres</code>, <code>redis</code>, <code>mongo</code>, <code>rabbitmq</code>, <code>kafka</code>, <code>schema-registry</code>, <code>kafka-exporter</code>, <code>temporal</code>, <code>temporal-ui</code>, <code>qdrant</code>, <code>mailpit</code>, <code>otel-collector</code>, <code>jaeger</code>, <code>prometheus</code>, <code>grafana</code>.</li>
     <li>Aliases, not copies: <code>postgres</code> is installed three times (<code>postgres</code>, <code>knowledge-db</code>, <code>assistant-db</code>) and <code>redis</code> twice (<code>redis</code>, <code>assistant-redis</code>).</li>
   </ul>
@@ -836,9 +836,42 @@ flowchart LR
     <tr><td><code>python scripts/k3d_smoke.py</code></td><td>Pods Ready, login, gRPC-Web, tool logins, demo seed, memory against the budget</td></tr>
     <tr><td><code>bash scripts/k3d_down.sh</code></td><td>Delete the cluster</td></tr>
     <tr><td><code>python scripts/sync_chart_files.py [--check]</code></td><td>Copy <code>ops/</code> config files into the charts that need them</td></tr>
-    <tr><td><code>helm upgrade smarthealth deploy/helm/smarthealth -n smarthealth -f deploy/helm/smarthealth/values-local.yaml --set demoSeed.enabled=true</code></td><td>Run the demo-seed Job</td></tr>
+    <tr><td><code>kubectl -n smarthealth create job --from=cronjob/demo-seed demo-seed-1</code></td><td>Run the demo seed (<code>demo-seed</code> and <code>demo-refresh</code> are suspended CronJobs, started on demand)</td></tr>
   </table></div>
   <p>Stop the compose stacks before running k3d (Docker Desktop memory); see the README's "Kubernetes (k3d)" section.</p>
+  <h3>On AWS</h3>
+  <p>The same umbrella chart runs on one private k3s server in <code>ap-southeast-2</code>, built by Terraform and kept equal to git by Argo CD. A reviewer opens one CloudFront address; the owner starts it before a review and it stops itself after 3 hours. <b>Not deployed yet</b>: this is what <code>terraform apply</code> builds (README, "Deploying to AWS"; ARCHITECTURE section 8; decisions D-42 to D-48).</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  B(["Browser"]) -->|"HTTPS"| CF["CloudFront"]
+  CF -->|"VPC origin, HTTP 80"| K
+  subgraph VPC["VPC 10.20.0.0/16, one zone"]
+    subgraph PRIV["private subnet"]
+      K["k3s server<br/>Traefik and the pods"]
+    end
+    subgraph PUB["public subnet"]
+      N["NAT instance"]
+    end
+  end
+  K -->|"outbound"| N
+  N --> NET["GHCR, GitHub, Groq"]
+  SSM["Systems Manager"] -->|"shell, Run Command"| K
+  PS["SSM Parameter Store"] -->|"secrets at boot"| K
+  GH["GitHub main"] -->|"Argo CD polls"| K
+  </pre></div>
+  <p>The server has no public address and no SSH. CloudFront reaches it over a VPC origin (private, so tokens and passwords never cross the internet in clear text); it reaches the internet through a <code>t4g.micro</code> NAT instance (a managed NAT gateway costs about $35 a month). Secrets come from SSM Parameter Store at every boot; Argo CD syncs <code>main</code> every 3 minutes while the server runs; a systemd timer stops the instance 3 hours after boot. There are no backups (PRD R-34).</p>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What</th></tr>
+    <tr><td><code>scripts/tf.sh bootstrap apply</code>, <code>scripts/aws_init.sh</code>, <code>scripts/tf.sh plan -out=tfplan</code>, <code>scripts/tf.sh apply tfplan</code></td><td>State bucket, then the stack (read the plan first)</td></tr>
+    <tr><td><code>scripts/aws_secrets.sh</code></td><td>JWT signing key and Groq key into SSM</td></tr>
+    <tr><td><code>scripts/release.sh</code></td><td>Push five images to GHCR, record the tag and URL in <code>values-aws.yaml</code>, commit</td></tr>
+    <tr><td><code>scripts/aws_start.sh [--refresh]</code></td><td>Start NAT and server, wait for <code>/api/ready</code>, optionally refresh the demo data</td></tr>
+    <tr><td><code>scripts/aws_extend.sh</code>, <code>scripts/aws_stop.sh</code></td><td>Three more hours, or stop now</td></tr>
+    <tr><td><code>scripts/aws_seed.sh</code></td><td>First time only: seed the demo data</td></tr>
+    <tr><td><code>scripts/aws_shell.sh</code></td><td>Shell on the server through Session Manager</td></tr>
+    <tr><td><code>python scripts/aws_smoke.py</code></td><td>HTTP checks through CloudFront: login, gRPC-Web, tool logins, <code>/argocd</code>, caching</td></tr>
+  </table></div>
+  <p>Cost, at about 10 hours a week: server and NAT about $6, 48 GB of disk about $4.60 (also while stopped), a public IPv4 about $0.20; CloudFront, S3 and SSM are inside the free tiers. About $11 a month, roughly nine months of the $100 credits.</p>
 </section>
 
 <!-- ================================================================== RESOURCES -->
