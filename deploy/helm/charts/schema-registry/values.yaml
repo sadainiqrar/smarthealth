@@ -1,6 +1,9 @@
 workloads:
   main:
     image: confluentinc/cp-schema-registry:7.7.1
+    # Two instances advertising the same host name cannot share the leader group: a rolling
+    # update's new pod fails to join it, so the old one stops first.
+    singleton: true
     service:
       ports: {http: 8081}
     waitFor: ["kafka:29092"]

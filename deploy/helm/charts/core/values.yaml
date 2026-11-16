@@ -108,6 +108,8 @@ workloads:
                   claimName: core-api-documents}
   celery-beat:
     image: *image
+    # Never two schedulers at once, not even during an upgrade.
+    singleton: true
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=INFO",
               "--schedule=/tmp/celerybeat-schedule"]
     waitFor: ["rabbitmq:5672"]

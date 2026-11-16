@@ -68,7 +68,9 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: {{ if $w.volumes }}Recreate{{ else }}RollingUpdate{{ end }}
+    {{- /* Recreate when a volume is ReadWriteOnce, or when the workload says two copies
+         must never overlap (`singleton: true`, e.g. Schema Registry's leader group). */}}
+    type: {{ if or $w.volumes $w.singleton }}Recreate{{ else }}RollingUpdate{{ end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ $name }}
