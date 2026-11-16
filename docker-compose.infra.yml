@@ -46,7 +46,12 @@ services:
       # refused by the app when SMARTHEALTH_ENVIRONMENT=production.
       SMARTHEALTH_JWT_PRIVATE_KEY: ${SMARTHEALTH_JWT_PRIVATE_KEY:-}
       SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
+      # Every process that can enqueue a Celery task needs all four, or it enqueues to
+      # localhost (tests/meta/test_compose_rabbitmq.py).
       SMARTHEALTH_RABBITMQ_HOST: rabbitmq
+      SMARTHEALTH_RABBITMQ_PORT: 5672
+      SMARTHEALTH_RABBITMQ_USER: ${RABBITMQ_USER:-smarthealth}
+      SMARTHEALTH_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-smarthealth}
     ports: ["${APP_PORT:-8000}:8000"]
     # Uploaded reports (spec 9.6), shared with the Celery worker that extracts their text.
     volumes: ["part-a-documents:/var/smarthealth/documents"]
@@ -92,6 +97,11 @@ services:
       SMARTHEALTH_NO_SHOW_GRACE_MINUTES: ${NO_SHOW_GRACE_MINUTES:-15}
       # Billing activities call the payment gateway (spec D-27).
       SMARTHEALTH_PAYMENTS_URL: http://payments-mock:8090
+      # The reminder activity enqueues its message to Celery.
+      SMARTHEALTH_RABBITMQ_HOST: rabbitmq
+      SMARTHEALTH_RABBITMQ_PORT: 5672
+      SMARTHEALTH_RABBITMQ_USER: ${RABBITMQ_USER:-smarthealth}
+      SMARTHEALTH_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-smarthealth}
     depends_on:
       app:
         condition: service_healthy
@@ -155,6 +165,11 @@ services:
       SMARTHEALTH_TEMPORAL_HOST: temporal
       SMARTHEALTH_TEMPORAL_PORT: 7233
       SMARTHEALTH_OTEL_ENDPOINT_HTTP: http://otel-collector:4318
+      # The notifications consumer enqueues each message's send to Celery after its commit.
+      SMARTHEALTH_RABBITMQ_HOST: rabbitmq
+      SMARTHEALTH_RABBITMQ_PORT: 5672
+      SMARTHEALTH_RABBITMQ_USER: ${RABBITMQ_USER:-smarthealth}
+      SMARTHEALTH_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-smarthealth}
     depends_on:
       relay:
         condition: service_started
