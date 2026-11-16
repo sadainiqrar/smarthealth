@@ -3,16 +3,23 @@ analytics reconcile finds no drift, and the live phase books through real workfl
 
 from __future__ import annotations
 
+import contextlib
+from collections import Counter
 from datetime import UTC, timedelta
 
 import pytest
 from sqlalchemy import func, select
 
+from app.components import build_activities, register_all
+from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.ratelimit import InMemoryRateLimiter
+from app.core.temporal import TASK_QUEUE, WORKFLOWS, build_worker, connect_client
 from app.db.engine import create_engine
+from app.db.mongo import create_mongo_client, get_audit_collection
 from app.db.session import create_session_factory
 from app.demo.history import ORIGIN, day_imported, import_day, last_imported_day, plan_day
+from app.demo.live import run_live
 from app.demo.network import (
     LINKED_PATIENT_INDEXES,
     PATIENT_COUNT,
@@ -35,6 +42,7 @@ from app.modules.clinical.storage import FilesystemDocumentStore
 from app.modules.identity.service import authenticate
 from app.modules.identity.sessions import InMemorySessionStore
 from app.modules.patients.models import Patient
+from app.modules.scheduling.contracts import visit_workflow_id
 from app.modules.scheduling.models import (
     Appointment,
     AppointmentStatus,
@@ -238,3 +246,49 @@ async def test_days_that_once_held_upcoming_slots_are_imported_around_live_booki
     await _import(demo_factory, db_settings, days)
     async with demo_factory() as session:
         assert await count(session) == before
+
+
+@pytest.fixture
+async def demo_worker(db_settings, demo_factory):
+    register_all()
+    mongo = create_mongo_client(db_settings)
+    audit = AuditLog(get_audit_collection(mongo, db_settings), Clock())
+    client = await connect_client(db_settings, lazy=False)
+    worker = build_worker(
+        client, db_settings.task_queue(TASK_QUEUE), workflows=list(WORKFLOWS),
+        activities=build_activities(demo_factory, audit, Clock(), timedelta(minutes=15),
+                                    settings=db_settings))
+    try:
+        async with worker:
+            yield
+            # The visit timers booking started would otherwise run on, past this test.
+            async with demo_factory() as session:
+                ids = (await session.scalars(
+                    select(Appointment.id).join(Patient, Patient.id == Appointment.patient_id)
+                    .where(Patient.mrn.like("DEMO-%")))).all()
+            for appointment_id in ids:
+                with contextlib.suppress(Exception):
+                    await client.get_workflow_handle(visit_workflow_id(appointment_id)).cancel()
+    finally:
+        await mongo.close()
+
+
+async def test_live_activity_goes_through_the_real_workflows(api, demo_factory, demo_worker):
+    async with demo_factory() as session:
+        net, _ = await build_network(session, password=PASSWORD)
+        today = Clock().now().astimezone(net.tz).date()
+        await ensure_slots(session, net, first_day=today + timedelta(days=1),
+                           last_day=today + timedelta(days=14))
+        await session.commit()
+    summary = await run_live(api, net, password=PASSWORD, target=4, existing_upcoming=0,
+                             existing_waitlist=0, now=Clock().now())
+    assert summary.booked >= 3 and summary.cancelled == 1 and summary.rescheduled == 1
+    assert summary.waitlisted == 2
+    async with demo_factory() as session:
+        live = (await session.scalars(select(Appointment).where(
+            Appointment.provider_id.in_(net.provider_ids.values()),
+            Appointment.origin.in_(("front_desk", "web"))))).all()
+        statuses = Counter(a.status for a in live)
+        assert statuses[AppointmentStatus.CONFIRMED] >= 2
+        assert statuses[AppointmentStatus.CANCELLED] == 1
+        assert statuses[AppointmentStatus.RESCHEDULED] == 1

@@ -28,6 +28,10 @@ async def purge_demo(session: AsyncSession) -> None:
               "emails": [e for e, _ in STAFF_LOGINS] + [p.email for p in PROVIDERS]
               + [patient_identity(i).email for i in LINKED_PATIENT_INDEXES]}
     statements = (
+        # Live activity writes events keyed by appointment and patient (nothing here has a
+        # foreign key to them, so they would outlive the rows and inflate other tests' counts).
+        f"DELETE FROM outbox_events WHERE key IN (SELECT id::text FROM appointments WHERE "
+        f"{_DEMO_APPOINTMENT}) OR key IN ({_PATIENTS.replace('SELECT id', 'SELECT id::text')})",
         f"DELETE FROM test_orders WHERE patient_id IN ({_PATIENTS})",
         f"DELETE FROM prescriptions WHERE patient_id IN ({_PATIENTS})",
         f"DELETE FROM clinical_notes WHERE patient_id IN ({_PATIENTS})",
