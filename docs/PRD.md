@@ -144,7 +144,7 @@ for D-9 onwards in `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows
 D-12 (the visit lifecycle) was added here when slice 3 landed; D-13, D-14 and D-16
 (waitlist promotion, reschedule ordering, synchronous cancel) when slice 4 did.
 D-17 … D-31 are argued in full in `docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md`
-and D-32 … D-36 in its Week 5 section; the rows below record each as built. Where the build
+and D-32 … D-36 in its Week 5 section; D-37 … D-41 (Kubernetes) in `docs/superpowers/specs/2026-11-17-helm-charts-k3d-design.md` §2; the rows below record each as built. Where the build
 departed from the spec, the row says so (D-17, D-24, D-31). The table is grouped by topic,
 not sorted by id.
 
@@ -186,6 +186,11 @@ not sorted by id.
 | **D-34** | *Week 5.* **Conversation checkpoints and transcripts in the assistant's own Postgres (`assistant-db`)** through LangGraph's `AsyncPostgresSaver`, not `assistant-redis` as spec 9.2 said | `langgraph-checkpoint-redis` | It needs Redis Stack modules the plain image lacks, and a paused booking must survive a restart; Redis keeps the short-lived turn streams |
 | **D-35** | *Week 5.* **Per-user usage is joined in the admin's browser**: the assistant records only the token's subject and role; Part A's admin-only `GET /users` names them | Copying names and emails into Part B; a per-user Prometheus label | The copy would be a second store of personal data and a coupling D-19 forbids; a per-user label has unbounded cardinality |
 | **D-36** | *Week 5.* **Reports run as a task in the assistant process, streamed through a Redis Stream and kept in `assistant-db`**; a restart marks an interrupted report failed (`fail_running` at start, R-31) | A separate `assistant-worker` (spec 9.1, D-17) | Not needed at this load; the job/stream split is what a worker would need, so it can be split out unchanged when load asks for it |
+| **D-37** | *Kubernetes.* **Our own Helm charts for everything**, sharing a library chart `sh-lib`, with the same images, versions and settings as compose | Bitnami or official community charts for infrastructure; one generic chart installed N times | Bitnami's free images moved behind a paid catalogue in 2025, the official Temporal chart defaults to Cassandra and Elasticsearch, and all are sized for real clusters, so the overrides to fit 8 GB would outweigh our charts. One generic chart is not the umbrella-plus-components structure asked for |
+| **D-38** | *Kubernetes.* **One host, path routing** through the Traefik ingress bundled with k3s | One hostname per tool | A hostname per UI needs a CloudFront distribution or DNS record each |
+| **D-39** | *Kubernetes.* **Tool UIs are public under sub-paths behind one basic-auth login** (a Traefik middleware) | Port-forward only; public with no login | A reviewer cannot port-forward alone, and Mailpit shows every email while Temporal UI and RabbitMQ can change state |
+| **D-40** | *Kubernetes.* **Images are built and pushed from the laptop** (`scripts/push_images.sh`), tagged with the git SHA | GitHub Actions on push | Declined by the user |
+| **D-41** | *Kubernetes.* **Credentials come from one Kubernetes Secret** that every chart references: created from the development defaults on k3d, from SSM Parameter Store on AWS, never committed | Secrets in values files | A values file is committed, a Secret is not |
 
 ## 9. Known gaps and accepted risks
 

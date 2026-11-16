@@ -49,7 +49,7 @@ scripts/k3d_up.sh, k3d_down.sh, k3d_smoke.py
 scripts/sync_chart_files.py   copy ops/ config files into the charts that need them
 ```
 
-- 21 component charts plus `sh-lib` and the umbrella. Part A's six processes share one chart,
+- 21 component charts plus `sh-lib` and the umbrella, deploying 29 pods (one per compose service). Part A's six processes share one chart,
   `core` (named for what it is; its README notes it is "Part A" of the assignment), because
   they ship as one image and are deployed together. The API's Service keeps the compose name
   `app`, like every other Service (below).
@@ -136,7 +136,7 @@ Every container has memory requests and limits.
 | Knowledge (embedding model), assistant | ~0.8 GB |
 | OTel collector, Jaeger (in-memory, max 20k traces), Prometheus (2-day retention), Grafana, kafka-exporter | ~0.6 GB |
 | Envoy, frontend, Mailpit, payments-mock | ~0.25 GB |
-| **Total** | **~6.2 GB** |
+| **Total** | **~6.2 GB** (as built, measured on k3d: limits 6.36 GiB, requests 3.2 GiB) |
 
 About 1.3 GB remains for k3s, Traefik and the OS. Requests sum to under 5 GB so the
 scheduler never refuses a pod. The exact per-container numbers are set from `kubectl top`

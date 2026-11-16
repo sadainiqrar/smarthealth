@@ -135,6 +135,51 @@ Default host ports; each can be moved with the variable named in
 databases are published too (Postgres 5432, Mongo 27017, Redis 6379, Kafka 9092, Temporal
 7233), all with the `smarthealth` development credentials from the compose file.
 
+## Kubernetes (k3d)
+
+The same system on Kubernetes: 29 pods (one per compose service) installed by one
+`helm upgrade --install` into a local k3d cluster capped at 8 GB, the stand-in for a single
+8 GB server. Design: `docs/superpowers/specs/2026-11-17-helm-charts-k3d-design.md`.
+
+**Prerequisites:** Docker Desktop, and the `helm` and `k3d` binaries on your `PATH`
+(`winget install Helm.Helm k3d.k3d`; if winget is unavailable, download them from
+get.helm.sh and the k3d GitHub releases). Stop the compose stacks first -- Docker Desktop
+needs the memory (about 10 GB):
+`docker compose -p smarthealth -f docker-compose.infra.yml --profile app --profile partb stop`
+(`... start` brings the dev stack back afterwards).
+
+```bash
+bash scripts/k3d_up.sh          # cluster, five images built and imported, helm install (~15 min first time)
+python scripts/k3d_smoke.py     # every pod Ready, login, gRPC-Web, tool logins, demo seed, memory vs budget
+bash scripts/k3d_down.sh        # delete the cluster
+```
+
+| URL | What |
+| --- | --- |
+| <http://localhost:8080/> | Demo client |
+| <http://localhost:8080/api/docs> | Part A API -- Swagger UI |
+| <http://localhost:8080/grafana> | Grafana |
+| <http://localhost:8080/jaeger> | Jaeger |
+| <http://localhost:8080/temporal> | Temporal UI |
+| <http://localhost:8080/mailpit> | Mailpit |
+| <http://localhost:8080/rabbitmq> | RabbitMQ management |
+| <http://localhost:8080/prometheus> | Prometheus |
+
+The tool paths (everything except `/` and `/api`) sit behind one basic-auth login,
+`reviewer` / `smarthealth` (k3d only; set `toolsAuth` in `values-local.yaml`). Qdrant stays
+internal: `kubectl -n smarthealth port-forward svc/qdrant 6333`. Demo data (the smoke script
+does this itself): `helm upgrade smarthealth deploy/helm/smarthealth -n smarthealth -f
+deploy/helm/smarthealth/values-local.yaml --set demoSeed.enabled=true`.
+
+**Chart layout:** `deploy/helm/smarthealth` is the umbrella (`values.yaml` is the 8 GB
+profile with the measured memory budget in comments; `values-local.yaml` is k3d);
+`deploy/helm/sh-lib` is a library chart every component shares (deployment, PVC, service,
+probes, wait-for init container); `deploy/helm/charts/` holds 21 component charts, `core`
+being Part A's six processes from one image (`core-api` is the Service `app`); the umbrella
+installs `postgres` three times and `redis` twice by alias. Config files under `ops/` are
+copied into charts by `python scripts/sync_chart_files.py` (a meta-test fails on drift).
+Persistent data lives in PVCs kept on `helm uninstall`.
+
 ## Architecture
 
 The three services, and what connects them. Part A is one deployable; `knowledge` and

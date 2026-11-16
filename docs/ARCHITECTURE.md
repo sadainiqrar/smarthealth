@@ -2476,3 +2476,68 @@ recorded embeddings. Declarative `ai` cases (`tests/cases/ai-*.yaml`) are run by
 `tests/runner/ai.py`, and `python -m tests.judge.run_judge` judges the recorded run with a
 different model — report only, never gating. The real key lives only in the git-ignored
 `.env`; the test stack runs with none.
+
+## 7. Deployment (Kubernetes)
+
+Compose stays the development environment. The same system also installs on one 8 GB
+Kubernetes node with one `helm upgrade --install`, proven on a k3d cluster capped at 8 GB
+(`scripts/k3d_up.sh`, `scripts/k3d_smoke.py`). Design and rejected alternatives:
+`docs/superpowers/specs/2026-11-17-helm-charts-k3d-design.md`; decisions D-37 ... D-41.
+
+### 7.1 Charts
+
+`deploy/helm/smarthealth` is the umbrella and depends on every chart by `file://`;
+`deploy/helm/sh-lib` is a library chart (deployment, PVC, service, config map, secret
+references, probes, resources, the wait-for init container); `deploy/helm/charts/` holds 21
+component charts. `core` is Part A's six processes from one image (`core-api`, whose Service
+keeps the compose name `app`, `core-worker`, `core-relay`, `core-consumers`,
+`core-celery-worker`, `core-celery-beat`). `postgres` is installed three times
+(`postgres`, `knowledge-db`, `assistant-db`) and `redis` twice (`redis`,
+`assistant-redis`) by alias. That makes 29 pods, one per compose service, and every Service
+carries its compose name so no setting that names a host changes. We write our own charts
+(D-37) because community charts are sized for real clusters or have left free images, and
+overriding them to fit 8 GB would be more than our charts.
+
+### 7.2 Routing and the tool login
+
+One host, one Traefik ingress (bundled with k3s), routes by path (D-38): `/` is the
+frontend, `/api/*` the API with the prefix stripped (FastAPI `root_path=/api` keeps
+Swagger working), the two gRPC-Web service paths go to Envoy with no buffering and no
+response timeout, and `/grafana`, `/jaeger`, `/temporal`, `/mailpit`, `/rabbitmq`,
+`/prometheus` are the tool UIs, each configured for its sub-path. The tool paths sit behind
+one Traefik basic-auth middleware (D-39); a request without the login gets 401. Qdrant's
+dashboard does not serve under a sub-path and stays internal (`kubectl port-forward`).
+
+### 7.3 Secrets
+
+Every chart reads credentials from one Secret, `smarthealth-secrets` (D-41). With
+`secrets.create: true` (k3d) the umbrella renders it from `values-local.yaml`, whose values
+are the public development defaults; with `false` it is expected to exist already. No
+non-development secret is in git. Images are built and imported or pushed from the laptop,
+tagged with the git SHA (D-40, `scripts/push_images.sh`).
+
+### 7.4 Startup order and jobs
+
+A wait-for init container (busybox, polls host:port) holds back workloads that cannot start
+without a dependency; the rest restart with backoff. Migrations stay in the API container's
+entrypoint (one replica, so nothing races). `core-relay` runs `python -m app.relay --setup`
+as an init container before relaying. Workloads that must never overlap during an upgrade
+(`singleton: true`: Schema Registry, Celery beat) use `Recreate`. The demo seed is a Job
+(`demoSeed.enabled`, `mode: seed|refresh`) that runs the CLI against `http://app:8000`.
+
+### 7.5 Storage and the budget
+
+k3s's `local-path` provisioner backs standalone PVCs annotated
+`helm.sh/resource-policy: keep` (so `helm uninstall` never deletes data), mounted by
+one-replica Deployments with `strategy: Recreate` rather than StatefulSets: with one replica
+a StatefulSet adds nothing. Persistent: the three Postgres, Mongo, Kafka, Qdrant, the
+knowledge model cache and Part A's documents. Part A's documents are shared by `core-api` and
+`core-celery-worker`, which works only because there is **one node** (local-path volumes are
+node-local). Redis, RabbitMQ, Prometheus and Jaeger are not persisted, as in compose.
+
+Every container has memory requests and limits, kept in the umbrella's `values.yaml` with
+the measurements as comments. Measured on k3d (k3s 1.30.6, cluster capped at 8 GB) after the
+demo seed: limits total 6.36 GiB, requests 3.2 GiB; `core-celery-worker` needed 448Mi (two
+forks extracting documents). `tests/meta/test_helm_charts.py` renders the umbrella and fails
+if a compose service has no workload, a container has no limit, or the limits exceed 6.5 GiB.
+Running k3d needs the compose stacks stopped.

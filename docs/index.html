@@ -39,6 +39,7 @@
     <li><a href="#tools">Tools &amp; alternatives</a></li>
     <li class="group">Operate</li>
     <li><a href="#run">Run it</a></li>
+    <li><a href="#deployment">Deployment (Kubernetes)</a></li>
     <li><a href="#resources">Where everything is</a></li>
     <li><a href="#testing">Testing</a></li>
     <li><a href="#decisions">Decisions &amp; open items</a></li>
@@ -795,6 +796,49 @@ docker compose --profile app --profile partb -f docker-compose.infra.yml down -v
     <tr><td><code>python -m app.worker --check</code></td><td>Is a Temporal worker polling and executing?</td></tr>
     <tr><td><code>python scripts/gen_docs_data.py</code></td><td>Regenerate this site's API, schema and event data</td></tr>
   </table></div>
+</section>
+
+<!-- ================================================================== DEPLOYMENT -->
+<section id="deployment">
+  <h2>Deployment (Kubernetes)</h2>
+  <p class="lede">The same 29 services as the compose stack, installed by one <code>helm upgrade --install</code>
+  and reached through one address. Proven on a local k3d cluster capped at 8 GB, the stand-in for a single 8 GB server.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  B(["Browser"]) --> T["Traefik ingress<br/>localhost:8080"]
+  T -->|"/"| FE["frontend"]
+  T -->|"/api/*"| API["app :8000<br/>Part A API"]
+  T -->|"gRPC-Web paths"| EN["envoy :8088"]
+  EN --> AS["assistant"]
+  EN --> KN["knowledge"]
+  T -->|"basic-auth login"| BA{{"tool login"}}
+  BA -->|"/grafana"| GR["grafana"]
+  BA -->|"/jaeger"| JA["jaeger"]
+  BA -->|"/temporal"| TU["temporal-ui"]
+  BA -->|"/mailpit"| MP["mailpit"]
+  BA -->|"/rabbitmq"| RM["rabbitmq"]
+  BA -->|"/prometheus"| PR["prometheus"]
+  </pre></div>
+  <h3>The charts</h3>
+  <ul>
+    <li><code>smarthealth</code> — the umbrella: depends on every chart by <code>file://</code>; <code>values.yaml</code> is the slim 8 GB profile with the measured memory budget, <code>values-local.yaml</code> is k3d.</li>
+    <li><code>sh-lib</code> — a library chart: deployment, PVC, service, config map, probes, resources and a wait-for init container.</li>
+    <li>21 component charts — <code>core</code> (Part A's six processes from one image: core-api with the Service <code>app</code>, core-worker, core-relay, core-consumers, core-celery-worker, core-celery-beat), <code>knowledge</code>, <code>assistant</code>, <code>payments-mock</code>, <code>frontend</code>, <code>envoy</code>, <code>postgres</code>, <code>redis</code>, <code>mongo</code>, <code>rabbitmq</code>, <code>kafka</code>, <code>schema-registry</code>, <code>kafka-exporter</code>, <code>temporal</code>, <code>temporal-ui</code>, <code>qdrant</code>, <code>mailpit</code>, <code>otel-collector</code>, <code>jaeger</code>, <code>prometheus</code>, <code>grafana</code>.</li>
+    <li>Aliases, not copies: <code>postgres</code> is installed three times (<code>postgres</code>, <code>knowledge-db</code>, <code>assistant-db</code>) and <code>redis</code> twice (<code>redis</code>, <code>assistant-redis</code>).</li>
+  </ul>
+  <p>Persistent data lives in PVCs annotated <code>helm.sh/resource-policy: keep</code>, mounted by one-replica
+  Deployments with <code>strategy: Recreate</code>. Measured on k3d (k3s 1.30.6) after the demo seed: memory limits
+  total 6.36 GiB, requests 3.2 GiB. Tool UIs are public under sub-paths behind one basic-auth login
+  (<code>reviewer</code> / <code>smarthealth</code>, k3d only); Qdrant stays internal.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What</th></tr>
+    <tr><td><code>bash scripts/k3d_up.sh</code></td><td>Create the 8 GB k3d cluster, build and import the five images, install the umbrella</td></tr>
+    <tr><td><code>python scripts/k3d_smoke.py</code></td><td>Pods Ready, login, gRPC-Web, tool logins, demo seed, memory against the budget</td></tr>
+    <tr><td><code>bash scripts/k3d_down.sh</code></td><td>Delete the cluster</td></tr>
+    <tr><td><code>python scripts/sync_chart_files.py [--check]</code></td><td>Copy <code>ops/</code> config files into the charts that need them</td></tr>
+    <tr><td><code>helm upgrade smarthealth deploy/helm/smarthealth -n smarthealth -f deploy/helm/smarthealth/values-local.yaml --set demoSeed.enabled=true</code></td><td>Run the demo-seed Job</td></tr>
+  </table></div>
+  <p>Stop the compose stacks before running k3d (Docker Desktop memory); see the README's "Kubernetes (k3d)" section.</p>
 </section>
 
 <!-- ================================================================== RESOURCES -->
