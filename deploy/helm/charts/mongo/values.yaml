@@ -1,0 +1,11 @@
+workloads:
+  main:
+    image: mongo:7
+    args: ["--wiredTigerCacheSizeGB", "0.25"]
+    service:
+      ports: {mongo: 27017}
+    readinessProbe:
+      tcpSocket: {port: 27017}
+      periodSeconds: 5
+    volumes:
+      data: {mountPath: /data/db, persistent: true, size: 2Gi}

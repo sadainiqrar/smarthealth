@@ -1,0 +1,22 @@
+workloads:
+  main:
+    image: rabbitmq:3.13-management-alpine
+    service:
+      ports: {amqp: 5672, management: 15672, metrics: 15692}
+    secretEnv:
+      RABBITMQ_DEFAULT_PASS: rabbitmq-password
+    env:
+      RABBITMQ_DEFAULT_USER: smarthealth
+      RABBITMQ_DEFAULT_VHOST: part-a
+    readinessProbe:
+      tcpSocket: {port: 5672}
+      periodSeconds: 10
+    volumes:
+      config: {mountPath: /etc/rabbitmq/conf.d/20-smarthealth.conf, configMap: rabbitmq-config,
+               subPath: 20-smarthealth.conf}
+configMaps:
+  config:
+    data:
+      # The management UI lives under /rabbitmq behind the ingress (spec section 4).
+      20-smarthealth.conf: |
+        management.path_prefix = /rabbitmq

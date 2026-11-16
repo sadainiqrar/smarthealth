@@ -6,3 +6,12 @@ version: 0.1.0
 appVersion: "1.0"
 dependencies:
   - {name: payments-mock, version: 0.1.0, repository: file://../charts/payments-mock}
+  - {name: postgres, alias: postgres, version: 0.1.0, repository: file://../charts/postgres}
+  - {name: postgres, alias: knowledge-db, version: 0.1.0, repository: file://../charts/postgres}
+  - {name: postgres, alias: assistant-db, version: 0.1.0, repository: file://../charts/postgres}
+  - {name: redis, alias: redis, version: 0.1.0, repository: file://../charts/redis}
+  - {name: redis, alias: assistant-redis, version: 0.1.0, repository: file://../charts/redis}
+  - {name: mongo, version: 0.1.0, repository: file://../charts/mongo}
+  - {name: rabbitmq, version: 0.1.0, repository: file://../charts/rabbitmq}
+  - {name: qdrant, version: 0.1.0, repository: file://../charts/qdrant}
+  - {name: mailpit, version: 0.1.0, repository: file://../charts/mailpit}

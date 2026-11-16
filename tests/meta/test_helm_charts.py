@@ -79,3 +79,19 @@ def test_a_registry_prefixes_our_own_images():
                                              "global.image.tag=abc123"))
     assert container(docs, "payments-mock")["image"] == \
         "ghcr.io/example/smarthealth-payments-mock:abc123"
+
+
+@needs_helm
+def test_aliased_charts_install_one_workload_per_alias():
+    docs = render("values-local.yaml")
+    names = {d["metadata"]["name"] for d in of_kind(docs, "Deployment")}
+    assert {"postgres", "knowledge-db", "assistant-db", "redis", "assistant-redis",
+            "mongo", "rabbitmq", "qdrant", "mailpit"} <= names
+    db = container(docs, "knowledge-db")
+    env = {e["name"]: e for e in db["env"]}
+    assert env["POSTGRES_USER"]["value"] == "knowledge"
+    assert env["POSTGRES_PASSWORD"]["valueFrom"]["secretKeyRef"]["key"] == \
+        "knowledge-db-password"
+    claims = {p["metadata"]["name"] for p in of_kind(docs, "PersistentVolumeClaim")}
+    assert {"postgres-data", "knowledge-db-data", "assistant-db-data", "mongo-data",
+            "qdrant-data"} <= claims

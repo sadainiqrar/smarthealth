@@ -14,3 +14,47 @@ payments-mock:
   workloads:
     main:
       resources: {requests: {memory: 48Mi, cpu: 10m}, limits: {memory: 96Mi}}
+
+postgres:
+  workloads:
+    main:
+      secretEnv: {POSTGRES_PASSWORD: postgres-password}
+      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 320Mi}}
+knowledge-db:
+  user: knowledge
+  database: knowledge
+  workloads:
+    main:
+      secretEnv: {POSTGRES_PASSWORD: knowledge-db-password}
+      resources: {requests: {memory: 64Mi, cpu: 10m}, limits: {memory: 160Mi}}
+assistant-db:
+  user: assistant
+  database: assistant
+  workloads:
+    main:
+      secretEnv: {POSTGRES_PASSWORD: assistant-db-password}
+      resources: {requests: {memory: 64Mi, cpu: 10m}, limits: {memory: 160Mi}}
+redis:
+  workloads:
+    main:
+      resources: {requests: {memory: 32Mi, cpu: 10m}, limits: {memory: 96Mi}}
+assistant-redis:
+  workloads:
+    main:
+      resources: {requests: {memory: 16Mi, cpu: 5m}, limits: {memory: 64Mi}}
+mongo:
+  workloads:
+    main:
+      resources: {requests: {memory: 224Mi, cpu: 50m}, limits: {memory: 384Mi}}
+rabbitmq:
+  workloads:
+    main:
+      resources: {requests: {memory: 160Mi, cpu: 50m}, limits: {memory: 256Mi}}
+qdrant:
+  workloads:
+    main:
+      resources: {requests: {memory: 96Mi, cpu: 20m}, limits: {memory: 256Mi}}
+mailpit:
+  workloads:
+    main:
+      resources: {requests: {memory: 24Mi, cpu: 5m}, limits: {memory: 64Mi}}

@@ -1,0 +1,10 @@
+# Installed twice by alias
+workloads:
+  main:
+    image: redis:7-alpine
+    args: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    service:
+      ports: {redis: 6379}
+    readinessProbe:
+      exec: {command: ["redis-cli", "ping"]}
+      periodSeconds: 5

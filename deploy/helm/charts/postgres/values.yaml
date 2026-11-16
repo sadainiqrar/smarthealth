@@ -1,0 +1,19 @@
+# Installed three times by alias
+user: smarthealth
+database: smarthealth
+passwordKey: postgres-password     # key in the shared Secret
+workloads:
+  main:
+    image: postgres:16-alpine
+    service:
+      ports: {postgres: 5432}
+    secretEnv: {}                  # set per alias by the umbrella (POSTGRES_PASSWORD)
+    env:
+      POSTGRES_USER: "{{ .Values.user }}"
+      POSTGRES_DB: "{{ .Values.database }}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    readinessProbe:
+      exec: {command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}
+      periodSeconds: 5
+    volumes:
+      data: {mountPath: /var/lib/postgresql/data, persistent: true, size: 5Gi}

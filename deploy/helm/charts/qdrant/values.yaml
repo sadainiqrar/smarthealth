@@ -1,0 +1,10 @@
+workloads:
+  main:
+    image: qdrant/qdrant:v1.12.4
+    service:
+      ports: {http: 6333, grpc: 6334}
+    readinessProbe:
+      tcpSocket: {port: 6333}
+      periodSeconds: 10
+    volumes:
+      data: {mountPath: /qdrant/storage, persistent: true, size: 2Gi}

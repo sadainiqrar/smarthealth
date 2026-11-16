@@ -1,0 +1,10 @@
+workloads:
+  main:
+    image: axllent/mailpit:v1.20.0
+    service:
+      ports: {smtp: 1025, http: 8025}
+    env:
+      MP_WEBROOT: mailpit       # served under /mailpit behind the ingress
+    readinessProbe:
+      tcpSocket: {port: 1025}
+      periodSeconds: 10
