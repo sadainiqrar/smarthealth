@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from dataclasses import asdict
 
 from pydantic import EmailStr, TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -35,6 +36,8 @@ from app.modules.providers import service as providers_service
 from app.seed import USERS as SEED_USERS
 from app.seed import clear as seed_clear
 from app.seed import seed as seed_data
+from app.demo import DemoRefused, demo_refresh, demo_seed
+from app.demo.network import DEFAULT_TIMEZONE
 from app.settings import Settings
 
 #: The unique index backing `users.email` (see migrations/versions/0001_baseline.py:
@@ -227,6 +230,39 @@ async def run_seed(
         await engine.dispose()
 
 
+async def run_demo(*, settings: Settings, command: str, password: str, api_url: str,
+                   timezone: str) -> None:
+    """`demo-seed` or `demo-refresh`, reporting what changed. Mongo is opened here because
+    the import writes one audit entry per run. Exits non-zero if any live booking failed."""
+    mongo = create_mongo_client(settings)
+    try:
+        audit = AuditLog(get_audit_collection(mongo, settings), Clock())
+        if command == "demo-seed":
+            summary = await demo_seed(settings=settings, password=password, api_url=api_url,
+                                      audit=audit, timezone=timezone)
+        else:
+            summary = await demo_refresh(settings=settings, password=password,
+                                         api_url=api_url, audit=audit, timezone=timezone)
+    except DemoRefused as refused:
+        raise _fail(str(refused)) from refused
+    finally:
+        await mongo.close()
+    print(f"network created: {summary.created}")
+    print(f"upcoming slots added: {summary.slots}")
+    print(f"history days imported: {summary.days_imported} -> {asdict(summary.history)}")
+    live = summary.live
+    if live is not None:
+        print(f"live activity: booked={live.booked} cancelled={live.cancelled} "
+              f"rescheduled={live.rescheduled} waitlisted={live.waitlisted} "
+              f"failed={live.failed}")
+    else:
+        print("live activity: none")
+    if summary.failed > 0:
+        for failure in summary.failures:
+            print(f"  failed: {failure}", file=sys.stderr)
+        raise _fail(f"{summary.failed} live booking(s) did not confirm")
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -307,6 +343,20 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="Print a new Ed25519 private key (PEM) for SMARTHEALTH_JWT_PRIVATE_KEY.",
     )
 
+    for name, help_text in (
+        ("demo-seed", "Build the demo network, import 6 months of history, book live activity."),
+        ("demo-refresh", "Bring the demo up to date: history to yesterday, slots, live activity."),
+    ):
+        demo_parser = subparsers.add_parser(name, help=help_text)
+        demo_parser.add_argument("--password", required=True,
+                                 help="Password for every demo login. Required; no default.")
+        demo_parser.add_argument("--api-url", default="http://localhost:8000",
+                                 help="Part A's base URL, for the live bookings.")
+        demo_parser.add_argument("--allow-demo-data", action="store_true",
+                                 help="Required: confirms this database is for demo data.")
+        demo_parser.add_argument("--timezone", default=DEFAULT_TIMEZONE,
+                                 help="IANA timezone of the demo clinics.")
+
     return parser.parse_args(argv)
 
 
@@ -345,6 +395,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 clear=args.clear,
             )
         )
+    elif args.command in ("demo-seed", "demo-refresh"):
+        if not args.allow_demo_data:
+            print("error: refusing to write demo data without --allow-demo-data",
+                  file=sys.stderr)
+            raise SystemExit(1)
+        asyncio.run(run_demo(
+            settings=Settings(), command=args.command, password=args.password,
+            api_url=args.api_url, timezone=args.timezone))
 
 
 if __name__ == "__main__":  # pragma: no cover

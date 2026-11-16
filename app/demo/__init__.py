@@ -92,13 +92,13 @@ async def demo_seed(*, settings: Settings, password: str, api_url: str, audit,
 
 
 async def demo_refresh(*, settings: Settings, password: str, api_url: str, audit,
-                       http: httpx.AsyncClient | None = None,
+                       timezone: str = DEFAULT_TIMEZONE, http: httpx.AsyncClient | None = None,
                        clock: Clock | None = None) -> DemoSummary:
     engine = create_engine(settings)
     try:
         factory = create_session_factory(engine)
         async with factory() as session:
-            net, created = await build_network(session, password=password)
+            net, created = await build_network(session, password=password, timezone=timezone)
             await session.commit()
         return await _top_up(factory, net, created, settings=settings, password=password,
                              api_url=api_url, audit=audit, http=http, clock=clock)
