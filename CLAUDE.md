@@ -45,7 +45,7 @@ links a patient login to its record (audited), which `GET /patients/me` needs. T
 client gained an Appointments page with cancel. All five slices are designed in
 `docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`.
 
-**Week 3 is in progress**, in seven slices designed with Weeks 4–5 in
+**Week 3 is complete**, built in seven slices designed with Weeks 4–5 in
 `docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md` (three services: Part
 A stays one monolith; Part B is `knowledge`, the RAG service, and `assistant`; they share
 Kafka, Envoy and the observability stack and never a store — decisions D-17 … D-31).
@@ -143,22 +143,41 @@ A; `scripts/grpcweb_smoke.py` speaks gRPC-Web through it. Compose profile `partb
 import `tests.harness.partb` for the services' paths; `tests/meta/test_service_independence.py`
 fails on any import, setting or compose variable that crosses services. Week 3's Part A scope is complete: every Week 2 stand-in
 (billing pre-check, reminder scheduling, refund) is now real, and cancel/reschedule have events.
-Not built in Week 2, by decision: a provider availability generator (slots are seeded, PRD
-`PART-A-FR-2.1`), clinic/department endpoints (PRD `PART-A-FR-1.5`), and handling a
-deactivated provider's existing appointments (PRD R-25, Week 3 — new bookings for one are
-already refused, R-24). Closed after the Week 2 audit (2026-10-29): a patient can no
-longer hold two overlapping appointments (R-23), and Swagger `/docs` has an Authorize button.
+Not built, by decision (PRD R-32): a provider availability generator (slots are seeded, PRD
+`PART-A-FR-2.1`) and clinic/department endpoints (PRD `PART-A-FR-1.5`). A deactivated
+provider's existing appointments are cancelled by `ProviderDeactivationWorkflow` (R-25,
+closed in Week 3); new bookings for one are refused (R-24). Closed after the Week 2 audit
+(2026-10-29): a patient can no longer hold two overlapping appointments (R-23), and Swagger
+`/docs` has an Authorize button. Fixed after a live end-to-end run (2026-11-16): `consumers`
+and `worker` lacked RabbitMQ settings in compose (R-27, `a37778a`), and four Part B findings
+— providers missing from Qdrant, the trace breaking at assistant → Part A, no model-call
+span, over-generous citations (R-28, `5f91d39`). Open, stated in the PRD: no SQL spans in
+Jaeger (R-29), the analytics drift metric is unwatched (R-30), reports are in-process tasks
+(R-31).
 
-`README.md` carries the endpoint/role table and the architecture diagrams. The design and
-the list of what was deliberately deferred are in
+**Documentation is a deliverable and is kept in step with the code.** The site
+`docs/index.html` (GitHub Pages from `/docs` on `main`; `docs/assets/`, `docs/.nojekyll`)
+renders `docs/data/*.json` — the OpenAPI document, every table, and the Kafka / Celery /
+Temporal catalogue — which `python scripts/gen_docs_data.py` generates from the code and
+`tests/meta/test_docs_data.py` keeps current (a new endpoint, column, topic, consumer, task or
+workflow fails the suite until regenerated; a consumer, task or workflow with no docstring
+needs a line in the generator's `DESCRIPTIONS`). A second `Stop` hook,
+`.claude/hooks/docs_stop.py` (logic `tests/runner/docs_gate.py`, map `docs/doc-map.txt`),
+blocks when application code changed and no doc did, or when the generated data is stale;
+waive with `DOCS_WAIVE="<reason>"`, logged to `tests/waivers.log`. Preview the site with
+`python -m http.server -d docs` (it fetches its data, so `file://` will not do).
+
+`README.md` carries the endpoint/role table, how to run it and where every UI is. The design
+and the list of what was deliberately deferred are in
 `docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`.
 
 Two documents carry the things code cannot state, and are the first stop for "why":
 
 | Document | Use it for |
 | --- | --- |
-| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-16), and the known gaps with dispositions (§9, R-1 … R-22) |
-| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every built endpoint, the **built** booking workflow (§3.2), visit lifecycle (§2.9, §3.2a) and cancel/reschedule/waitlist flows (§3.3, which carries their data flows), and the **designed** event flows — the Temporal/Kafka/Celery split, the event catalogue |
+| `docs/PRD.md` | Numbered requirement ids (`PART-A-FR-1` …, `PART-B-…`) that `tests/cases/*.yaml` reference, the design decisions with their rejected alternatives (§8, D-1 … D-36), and the known gaps with dispositions (§9, R-1 … R-32) |
+| `docs/ARCHITECTURE.md` | Module-by-module breakdown with import rules, data flows for every endpoint, the booking workflow (§3.2), visit lifecycle (§2.9, §3.2a), cancel/reschedule/waitlist (§3.3), the Temporal/Kafka/Celery split and the event catalogue, and Part B |
+| `docs/index.html` | The documentation site: features, architecture diagrams (monolith vs services), every flow, generated API/schema/event reference, tools and their alternatives, how to run it and where every UI is |
 
 **Treat every document here as a source, not as proof.** Docs drift from code, and a stale
 claim is worse than a missing one because it gets trusted. Two real examples found on
@@ -177,6 +196,7 @@ Commands that work today:
 | `python -m tests.runner.route_check` | validate and route the case catalog |
 | `python -m ruff check app tests services` | lint (generated bindings excluded) |
 | `python scripts/gen_proto.py` | regenerate each Part B service's gRPC bindings from `contracts/proto/` |
+| `python scripts/gen_docs_data.py [--check]` | regenerate the documentation site's API, schema and event/task/workflow data (`docs/data/*.json`) from the code |
 | `docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait` | Part A and the Part B skeletons together |
 | `python -m app.cli create-user --email … --password … --role …` | create a login |
 | `python -m app.cli link-patient --email … --mrn …` | link a patient-role login to the patient record with that MRN (audited as `system:cli`; refuses a non-patient login, an unknown email or MRN, or a record or login already linked elsewhere; repeating it is a no-op) |
@@ -328,7 +348,7 @@ stages, and conflating them misleads — including in conversation with a review
 | Harness | What it is | Status |
 | --- | --- | --- |
 | **Agent harness** | Context and tooling for the coding agent: this file, `.claude/skills/`, the `Stop` hook, `.claude/settings.json`. Spec §10, "Agent-facing layer" | **Built**, in daily use |
-| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1220 fast tests (plus 1 skip) in ~78s (78.16s on a run of `python -m pytest -m "not docker" -q`) and 255 docker-lane tests (`-m docker`, ~7 min with the full dev stack also running), measured 2026-11-10; 80 cases; the journey tier has no cases yet |
+| **Test harness** | Five tiers, run isolation, the case catalog, the gate. Spec §§5–8, §10.2 | **Built** — 1361 fast tests passing (plus 2 skips; `python -m pytest -m "not docker" -q`, about 2.5 min, measured 2026-11-16) and 255 docker-lane tests (`-m docker`, measured 2026-11-10); 105 cases; the journey tier has no cases yet |
 | **AI harness** | LLM determinism: `SMARTHEALTH_LLM_MODE` ∈ `fixture\|record\|live`, and the offline judge. Spec §9 and §11 | **Built in part (Week 5).** The assistant's model factory (`services/assistant/assistant_service/llm.py`, `ASSISTANT_LLM_MODE`) has fixture, record and live modes, and the knowledge service replays recorded embeddings. Agent tests script the model; the golden set (`tests/tiers/t1_contract/test_assistant_golden.py`) replays Groq's recorded answers from `services/assistant/eval/fixtures/llm.jsonl` — re-record with `ASSISTANT_GOLDEN=record ASSISTANT_LLM_API_KEY=... python -m pytest tests/tiers/t1_contract/test_assistant_golden.py`. Declarative `ai` cases (`tests/cases/ai-*.yaml`, executed by `tests/runner/ai.py`) write `tests/reports/ai-run.json`; `python -m tests.judge.run_judge` judges them (a different model, quoted evidence or UNCERTAIN, report only — never gates; `tests/judge/calibration.md`) |
 
 The AI harness is *specified in detail* and its expensive-to-retrofit seams already exist
@@ -365,11 +385,11 @@ constrain.
   `app/core/temporal.py:TASK_QUEUE`); and Kafka: every topic and subject goes through
   `Settings.topic()` (`app/events/kafka.py:broker_topic`); and RabbitMQ: every queue through
   `Settings.queue()` (`app/celery_app.py:queues`).
-- **3** — for Temporal only: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
+- **3** — Temporal: `WORKFLOWS` / `ACTIVITIES` in `app/core/temporal.py`, populated
   solely by `app/components.py`, and `tests/meta/test_temporal_registry.py` discovers every
   `@workflow.defn` / `@activity.defn` in `app/` and fails if one is unregistered. Registered:
-  the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow`, and the thirteen scheduling activities (seven `booking.*`, two `visit.*`, `cancel.refund`, `reschedule.complete`, `waitlist.candidates`, `waitlist.fulfil`). Kafka consumers
-  and Celery tasks have no registries yet.
+  the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow`, `PostVisitWorkflow`, `ProviderDeactivationWorkflow`, and eighteen scheduling activities (the full list is generated into `docs/data/catalog.json`). Kafka consumers
+  register in `app/events/consumer.py:CONSUMERS` and Celery tasks in `app/celery_app.py:TASKS`.
 - **5** — `app/core/telemetry.py`: `build_telemetry` takes span processors and metric
   readers, and `install` lets the first install win, so the suite's in-memory providers
   (`tests/harness/telemetry.py`, imported by `tests/conftest.py` before the app) replace
@@ -439,8 +459,8 @@ Proven by integration tests, not by convention:
   overlapping another live appointment of the patient (`_ensure_patient_is_free`), the
   reschedule predecessor excepted.
 - **A deactivated provider** is refused by `validate_booking` and hidden from `GET /slots`
-  through `providers.public` (R-24); their *existing* appointments are untouched (R-25,
-  Week 3).
+  through `providers.public` (R-24); their *existing* appointments are cancelled by
+  `ProviderDeactivationWorkflow`, started by the `providers.state` consumer (R-25).
 - **A past slot is still bookable** at the database level — `CHECK (starts_at > now())` is
   impossible, Postgres requires check constraints to be immutable. Closed in code (R-3):
   `service.ensure_slot_bookable`, and a `starts_at > now` predicate in `claim_slot`'s UPDATE.

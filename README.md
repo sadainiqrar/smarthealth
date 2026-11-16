@@ -10,6 +10,10 @@ The project is delivered in two parts:
 - **Part B — GenAI Layer** (Weeks 4–5): operational data ingestion and embeddings, semantic
   retrieval, an AI healthcare assistant, generated patient communication, streaming responses.
 
+> **Documentation website:** [`docs/index.html`](docs/index.html) — an illustrated tour of the
+> architecture, the flows and the decisions, published with GitHub Pages from the `/docs`
+> folder of `main`.
+
 ## Status
 
 **All five weeks are complete.** Three services share Kafka, Envoy and one observability
@@ -29,18 +33,75 @@ stack, and never a store:
   drafts staff approve, background reports, and per-user usage — see [The assistant](#the-assistant-part-b).
 
 A demo web client ([Frontend](#frontend)) sits on top. See [API surface](#api-surface) for
-Part A's endpoints.
+Part A's endpoints. The fast suite (`python -m pytest -m "not docker"`) is 1361 passed,
+2 skipped; the docker lane runs against the compose test stack.
+
+## Run it
+
+Docker and Docker Compose are all you need. One command builds and starts everything —
+Part A, its workers, the Part B services, the infrastructure and the demo client:
+
+```bash
+docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait
+
+# a demonstrable clinic network: clinics, departments, providers, patients, slots,
+# and one login per role, all with the password you choose here
+docker compose -f docker-compose.infra.yml exec app python -m app.cli seed --password "..."
+```
+
+Then open the demo client at <http://localhost:5173> and log in as one of the seeded users
+below. For the assistant to answer typed questions with a live model, put
+`ASSISTANT_LLM_API_KEY` (and the provider/model, see [The assistant](#the-assistant-part-b))
+in a git-ignored `.env` beside the compose file before `up`; without a key it still runs
+every guided flow. `--build` matters: without it compose reuses an existing image and runs
+old code. To stop, keeping the data: the same command with `down` in place of
+`up -d --build --wait`; `down -v` also deletes the volumes.
+
+**Seeded logins** (every one has the password given to `seed`):
+
+| Login | Role |
+| --- | --- |
+| `admin@medinova.example` | `admin` |
+| `frontdesk@medinova.example` | `front_desk` |
+| `a.osei@medinova.example` | `provider` (linked to provider `LIC-100001`) |
+| `j.okonkwo@example.com` | `patient` (linked to record `MRN-000001`) |
+
+### Where everything is
+
+Default host ports; each can be moved with the variable named in
+[`docker-compose.infra.yml`](docker-compose.infra.yml) (e.g. `APP_PORT`, `FRONTEND_PORT`).
+
+| URL | What | Profile |
+| --- | --- | --- |
+| <http://localhost:5173> | Demo client (nginx: `/api/*` to the API, the assistant's gRPC-Web path to Envoy) | `app` |
+| <http://localhost:8000/docs> | Part A API — Swagger UI (also `/redoc`, `/openapi.json`, `/health`, `/ready`) | `app` |
+| <http://localhost:8088> | Envoy, the front door — gRPC-Web to `assistant` and `knowledge`, `/api/*` to Part A | `partb` |
+| <http://localhost:8080> | Temporal UI — every workflow's history (`booking-<id>`, `visit-<id>`, …) | `app` |
+| <http://localhost:3000> | Grafana — anonymous read-only; log in as `admin` / `GRAFANA_ADMIN_PASSWORD` (default `smarthealth`). Folder **SmartHealth**: Service overview, Async backbone, Platform analytics, Assistant | — |
+| <http://localhost:16686> | Jaeger — traces | — |
+| <http://localhost:9090> | Prometheus — metrics | — |
+| <http://localhost:15672> | RabbitMQ management — `smarthealth` / `smarthealth`, vhost `part-a` | — |
+| <http://localhost:8025> | Mailpit — every email the platform sends | — |
+| <http://localhost:8081> | Schema Registry — the Avro schemas of every topic (`/subjects`) | — |
+| <http://localhost:6333/dashboard> | Qdrant dashboard — the knowledge service's vectors | `partb` |
+| <http://localhost:8090> | `payments-mock`, the fake card gateway (`POST /_chaos` makes it misbehave) | — |
+
+"—" means the service is in the plain infrastructure stack and needs no profile. The
+databases are published too (Postgres 5432, Mongo 27017, Redis 6379, Kafka 9092, Temporal
+7233), all with the `smarthealth` development credentials from the compose file.
 
 ## Architecture
 
-Solid lines are wired and exercised by tests today; dashed lines are provisioned
-infrastructure that no code connects to yet.
+The three services, and what connects them. Part A is one deployable; `knowledge` and
+`assistant` each own their stores and reach Part A only over its HTTP API, its public key and
+Kafka.
 
 ```mermaid
 flowchart TB
-    client["Client<br/><i>staff · patient · provider</i>"]
+    client["Demo client / Swagger<br/><i>staff · patient · provider</i>"]
+    envoy["<b>Envoy</b> :8088<br/>gRPC-Web · /api/*"]
 
-    subgraph app["SmartHealth API (FastAPI)"]
+    subgraph app["Part A — SmartHealth API (FastAPI)"]
         direction TB
         routers["<b>Routers</b> — the HTTP layer<br/>auth · role gate · transaction boundary<br/><i>app/api · app/modules/*/router.py</i>"]
         services["<b>Services</b> — business rules<br/>no framework imports; raise domain errors<br/><i>app/modules/*/service.py</i>"]
@@ -48,33 +109,48 @@ flowchart TB
         routers --> services --> models
     end
 
-    pg[("<b>PostgreSQL</b><br/>system of record<br/>10 tables · constraints<br/>enforce the invariants")]
+    pg[("<b>PostgreSQL</b><br/>system of record<br/>constraints enforce the invariants<br/>+ the event outbox")]
     mongo[("<b>MongoDB</b><br/>audit trail only<br/>append-only · who/what/before/after")]
-    redis[("<b>Redis</b><br/><i>wired, not yet used</i>")]
+    redis[("<b>Redis</b><br/>sessions · login throttling<br/>booking rate limit")]
 
-    temporal["<b>Temporal</b> + worker<br/>booking · visit no-show timer<br/>cancel follow-up · reschedule"]
-    kafka["<b>Kafka</b> + Schema Registry<br/><i>Week 3</i><br/>domain events"]
-    celery["<b>Celery</b> + RabbitMQ<br/><i>Week 3</i><br/>notifications · rollups"]
-    otel["<b>OpenTelemetry</b><br/>Prometheus · Grafana · Jaeger<br/><i>Week 3</i>"]
+    temporal["<b>Temporal</b> + worker<br/>booking · visit timer · cancel follow-up<br/>reschedule · post-visit · deactivation"]
+    relay["<b>relay</b><br/>outbox → Kafka"]
+    kafka["<b>Kafka</b> + Schema Registry<br/>domain and state events (Avro)"]
+    consumers["<b>consumers</b><br/>start workflows · queue messages<br/>analytics rollups"]
+    celery["<b>Celery</b> + RabbitMQ<br/>notifications (Mailpit) · document text<br/>Beat sweeps and reconcilers"]
+    otel["<b>OpenTelemetry</b> Collector<br/>Jaeger · Prometheus · Grafana"]
 
-    client -->|HTTPS| routers
+    subgraph partb["Part B"]
+        assistant["<b>assistant</b><br/>LangGraph · Groq<br/>own Postgres + Redis"]
+        knowledge["<b>knowledge</b><br/>hybrid retrieval<br/>own Postgres + Qdrant"]
+        assistant -->|gRPC Search| knowledge
+    end
+
+    client -->|HTTP| routers
+    client -->|gRPC-Web| envoy
+    envoy --> assistant
+    envoy -->|/api/*| routers
+    assistant -->|"REST, with the user's own token"| routers
     models --> pg
     services -->|awaited audit write| mongo
-    app -.-> redis
+    routers --> redis
 
-    routers -->|"starts the booking, cancel<br/>follow-up and reschedule<br/>workflows · signals check-in"| temporal
+    routers -->|"starts booking and reschedule<br/>· signals check-in"| temporal
     temporal -->|"activities call the same services<br/>with no HTTP request"| services
-    services -.-> kafka
-    kafka -.-> celery
+    pg --> relay --> kafka --> consumers
+    consumers -->|"starts cancel follow-up,<br/>post-visit, deactivation"| temporal
+    consumers --> celery
+    kafka -->|providers.state| knowledge
     app -.-> otel
+    partb -.-> otel
 
     classDef done fill:#e8f4ea,stroke:#2f5d3f,stroke-width:2px,color:#14301f
-    classDef todo fill:#f4f2ee,stroke:#a9a49a,stroke-width:1px,stroke-dasharray:4 3,color:#55534e
     classDef store fill:#eef2f8,stroke:#3c5a80,stroke-width:2px,color:#1d2c40
-    class routers,services,models,temporal done
-    class pg,mongo store
-    class redis,kafka,celery,otel todo
+    class routers,services,models,temporal,relay,consumers,celery,assistant,knowledge,envoy done
+    class pg,mongo,redis,kafka store
 ```
+
+Dotted lines are telemetry: every process exports traces and metrics to the collector.
 
 **This is a modular monolith, deliberately.** One deployable, one schema, one migration
 history — and an import graph with a shape that two meta-tests enforce rather than
@@ -171,6 +247,7 @@ CHECK) — the assignment's headline invariant, made structural.
 
 | Document | Purpose |
 | --- | --- |
+| [`docs/index.html`](docs/index.html) | **The documentation website** (GitHub Pages, served from `/docs` on `main`) — the guided tour; start here |
 | [`docs/PRD.md`](docs/PRD.md) | **Product requirements** — use cases, numbered requirements, milestones, and feature traceability |
 | [`docs/requirements/part-a-core-platform.md`](docs/requirements/part-a-core-platform.md) | Part A problem statement, functional requirements, tech stack |
 | [`docs/requirements/part-b-genai-layer.md`](docs/requirements/part-b-genai-layer.md) | Part B GenAI scope and requirements |
@@ -179,7 +256,8 @@ CHECK) — the assignment's headline invariant, made structural.
 | [`docs/superpowers/specs/2026-09-02-week1-foundation-design.md`](docs/superpowers/specs/2026-09-02-week1-foundation-design.md) | Domain model and schema decisions |
 | [`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md`](docs/superpowers/specs/2026-09-03-week1-management-apis-design.md) | Management API design, and what Week 1 deliberately deferred |
 | [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md) | Week 2 scheduling workflows — booking, visit, cancel/reschedule, waitlist and patient self-service (all built) |
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking, visit, cancel and reschedule workflows, and the designed event flows |
+| [`docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md`](docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md) | Weeks 3–5 — the event backbone, billing, notifications, analytics, observability, and the Part B services (decisions D-17 … D-31) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Module breakdown, data flows for every built endpoint, the booking, visit, cancel and reschedule workflows, and the event flows |
 | [`tests/README.md`](tests/README.md) | How to run and author tests |
 
 The original `.docx` files are kept in `docs/requirements/` and are authoritative.
@@ -231,7 +309,7 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | GET | `/appointments` | `patient` (always their own: another `patient_id` is a **403**, a login with no linked record a **404**), `provider`, `front_desk`, `admin` (filters `patient_id`, `provider_id`, `status`, `from`, `to`; `from`/`to` bound the slot's start, inclusive and exclusive, and must carry a timezone or the answer is a 422). Paginated, newest slot first, appointments with no slot last; each item carries `starts_at` |
 | GET | `/appointments/{id}` | the owning `patient`, `provider`, `front_desk`, `admin` |
 | POST | `/appointments/{id}/check-in` | `front_desk`, `admin` — answers **200** `VisitRead`; 409 on an illegal step |
-| POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider`, `admin` — answer **200** `VisitRead`; 409 on an illegal step |
+| POST | `/appointments/{id}/seen`, `/appointments/{id}/complete` | `provider` (the appointment's own; another provider gets a 404), `admin` — answer **200** `VisitRead`; 409 on an illegal step, and `complete` is a 409 until the visit's note is signed |
 | GET | `/appointments/{id}/visit` | the owning `patient`, `provider`, `front_desk`, `admin` — 404 until a check-in exists |
 | POST | `/appointments/{id}/cancel` | the owning `patient`, `front_desk`, `admin` — body `{reason}`; answers **200** with the appointment; 409 unless it is `pending` or `confirmed` with no visit, and also while the reschedule that created it is still completing |
 | POST | `/appointments/{id}/reschedule` | the owning `patient`, `front_desk`, `admin` — body `{new_slot_id, reason?}`; answers **202** with the new appointment's id; only a `confirmed` appointment (no visit); 409 otherwise; optional `Idempotency-Key` header |
@@ -241,7 +319,7 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | POST | `/appointments/{id}/note/sign`, `/note/amend` | `provider` (the appointment's own) — sign the draft (creates its prescriptions and test orders); amend starts a new draft version |
 | GET | `/patients/me/record`, `/patients/{id}/record` | `patient` (own, no clinician-only notes); `provider` with a care relationship; `front_desk` sees test-order status only — every read audited |
 | POST | `/patients/{id}/documents` | `patient` (own), `front_desk`, the treating `provider` — body is the file (PDF, PNG, JPEG, ≤ 10 MB); text is extracted in the background |
-| GET | `/patients/{id}/documents/{doc}` | as the record — with the extracted text |
+| GET | `/patients/{id}/documents/{doc}` | `patient` (own), the treating `provider` — with the extracted text |
 | POST | `/test-orders/{id}/review` | `provider` (who ordered it) |
 | GET | `/analytics/summary`, `/analytics/timeseries` | `admin`, `front_desk` — the five Part A metrics over `from`/`to` |
 | GET | `/analytics/utilisation` | `admin`, `front_desk` — per department: slots offered over `from`/`to`, how many are booked, and the share |
@@ -268,10 +346,12 @@ check-in. Details: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §2.9 and §3.
 
 **Cancel is synchronous; reschedule is not.** A cancel writes the appointment and its slot
 in one transaction and answers `200`; a repeat, a checked-in patient, or an appointment
-that is not `pending` or `confirmed` is a `409`. A workflow then stops the visit timer,
-issues the refund (a stand-in until Week 3) and offers the freed slot to the waitlist; if
-that workflow cannot be started the cancel still stands, and the refund and the promotion
-are lost until Week 3 (PRD R-17). A reschedule answers `202` with the **new** appointment's
+that is not `pending` or `confirmed` is a `409`. The same transaction writes an
+`appointments.cancelled` event to the outbox; the request touches no Temporal at all. The
+`relay` publishes the event and the `appointments.cancelled` consumer starts
+`CancelFollowUpWorkflow`, which stops the visit timer, releases the card authorisation at
+the payment gateway and offers the freed slot to the waitlist — so a follow-up can no longer
+be lost (PRD R-17, closed). The patient is told by email. A reschedule answers `202` with the **new** appointment's
 id: poll `GET /appointments/{id}` on it. The new slot is booked first and the old one
 released only when that confirmed, so a failed reschedule leaves the original appointment;
 the old one then reads `rescheduled`. A patient acts only on their own appointments (another's
@@ -280,8 +360,9 @@ provider or department); every release is offered to up to three matching entrie
 first, each as a booking that confirms or fails by itself. Details:
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §3.3.
 
-**Not built by cancel and reschedule:** a notification to the patient, a billing update on
-reschedule, and the domain events (Week 3); the known limits are PRD R-17 to R-22.
+A completed reschedule releases the old appointment's authorisation and writes an
+`appointments.rescheduled` event, from which the patient is notified. The remaining known
+limits of these flows are in PRD §9 (R-18 to R-22).
 
 **Try it in a browser.** With the stack running, FastAPI serves interactive API
 documentation generated from the route definitions and response models:
@@ -303,9 +384,10 @@ transaction boundary; services flush.
 **Every mutation is audited** to Mongo with actor, action and before/after, awaited so a
 Mongo outage fails the request rather than silently dropping the record.
 
-**Not built by the visit lifecycle:** billing and follow-up on completion (Week 3), and a
-provider being restricted to their own patients' visits (any provider may mark any visit seen
-or complete — PRD R-14).
+**A visit completes with its record.** `seen` and `complete` belong to the appointment's own
+provider (PRD R-14, closed), and `complete` needs a signed clinical note. Completion writes a
+`visits.completed` event, and its consumer starts `PostVisitWorkflow`, which captures the
+charge authorised at booking.
 
 **Patient self-service.** A patient reads their own record (`GET /patients/me`), an
 appointment they own, and their own list (`GET /appointments`), which is forced to their
@@ -314,10 +396,13 @@ record server-side. All of it needs the login to be linked to a patient record
 record and the visit actions are scoped to the provider's own patients (PRD R-14, closed
 in Week 4).
 
-### Running it
+### Running it by hand
+
+[Run it](#run-it) above starts everything. Part A alone, without the Part B services, is the
+`app` profile:
 
 ```bash
-# the whole system in containers
+# Part A in containers
 docker compose --profile app -f docker-compose.infra.yml up -d --build --wait
 curl http://localhost:8000/health
 
@@ -328,8 +413,6 @@ docker compose --profile app -f docker-compose.infra.yml exec app \
 curl -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
   -d '{"email": "you@example.com", "password": "..."}'
 ```
-
-`--build` matters: without it compose reuses an existing image and runs old code.
 
 **Sessions.** An access token lives ten minutes and is honoured only while its session
 exists in Redis; refresh it with the `refresh_token` from the login
@@ -345,13 +428,18 @@ refuses that key when `SMARTHEALTH_ENVIRONMENT=production`.
 handy for a debugger. `Settings` defaults to the dev stack's ports on `localhost` and its
 `smarthealth` credentials; a different stack needs `SMARTHEALTH_POSTGRES_PORT` and friends
 (every variable is in `.env.example`, which `cp .env.example .env` turns into config). Stop
-the `app` profile's `app` and `worker` first, or they share the task queue and port 8000:
+the `app` profile's containers first, or they share the task queue, the consumer groups and
+port 8000:
 
 ```bash
 docker compose -f docker-compose.infra.yml up -d --wait     # infrastructure only, no profile
 python -m alembic upgrade head
+python -m app.relay --setup                                 # create topics, register schemas
 python -m app.worker                                        # terminal 1
 uvicorn app.main:app --port 8000                            # terminal 2
+python -m app.relay                                         # terminal 3: outbox -> Kafka
+python -m app.consumers                                     # terminal 4: events -> workflows, messages
+celery -A app.celery_app worker -Q notifications,maintenance,documents   # terminal 5
 ```
 
 A `--role patient` login also needs linking to its patient record before it can read its own
@@ -378,20 +466,22 @@ foreign-key error, by design (PRD R-10). To start over, remove the dev stack's v
 `docker compose --profile app -f docker-compose.infra.yml down -v`; `-v` deletes all dev data.
 
 It deliberately seeds **no appointments, visits or waitlist entries**. Those are
-workflow outputs that Week 2 produces: an appointment reaches `confirmed` only after
+workflow outputs: an appointment reaches `confirmed` only after
 slot reservation, the billing pre-check and notification scheduling have all succeeded,
-so hand-writing one would fabricate state no workflow ever ran — and Week 2 would then
-be tested against fiction. See [`app/seed.py`](app/seed.py).
+so hand-writing one would fabricate state no workflow ever ran — and the workflows would
+then be tested against fiction. See [`app/seed.py`](app/seed.py).
 
-`--profile app` starts two services from the same image: `app` (the API) and `worker`
-(the Temporal worker, `python -m app.worker`), plus `frontend`, the demo client (its own
-image; see [Frontend](#frontend)). They sit behind a compose profile so the
+`--profile app` starts six services from the same image — `app` (the API), `worker` (the
+Temporal worker, `python -m app.worker`), `relay` (outbox to Kafka), `consumers` (the Kafka
+consumers), `celery-worker` and `celery-beat` — plus `temporal-ui` and `frontend`, the demo
+client (its own image; see [Frontend](#frontend)). They sit behind a compose profile so the
 test stack, which uses the same file, does not start them — the tests drive the
 application in-process. The worker starts only once `app` is healthy, because the `app`
 container applies the migrations. Its healthcheck, `python -m app.worker --check`,
 executes a canary workflow, so `--wait` returns only when a worker is actually polling
-and executing — not merely when the process is up. It runs the booking, visit, cancel follow-up and
-reschedule workflows. The design of all five Week 2 slices is in
+and executing — not merely when the process is up. It runs the booking, visit, cancel
+follow-up, reschedule, post-visit and provider-deactivation workflows. The design of the
+Week 2 scheduling slices is in
 [`docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md`](docs/superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md).
 
 **Book an appointment.** After seeding (above), log in as the seeded front-desk user with
@@ -400,8 +490,9 @@ know, create your own logins with
 `python -m app.cli create-user --email … --password … --role front_desk` (and again with
 `--role provider` for the visit demo below) and use those instead.
 `GET /slots?provider_id=…` lists a provider's free slots, but
-the snippet below picks a slot and a patient straight from Postgres, which needs no
-provider id (bash / Git Bash):
+the snippet below picks a slot and a patient straight from Postgres (bash / Git Bash). The
+slot is one of the seeded provider login's own (licence `LIC-100001`), because only the
+appointment's own provider may run its visit later:
 
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: application/json' \
@@ -410,7 +501,7 @@ TOKEN=$(curl -s -X POST http://localhost:8000/auth/login -H 'Content-Type: appli
 
 sql() { docker compose --profile app -f docker-compose.infra.yml exec -T postgres \
   psql -U smarthealth -d smarthealth -tAc "$1"; }
-SLOT=$(sql "select id from provider_slots where status = 'free' and starts_at > now() order by starts_at limit 1")
+SLOT=$(sql "select s.id from provider_slots s join providers p on p.id = s.provider_id where p.license_number = 'LIC-100001' and s.status = 'free' and s.starts_at > now() order by s.starts_at limit 1")
 PATIENT=$(sql "select id from patients order by created_at limit 1")
 
 KEY=demo-$(date +%s)   # once per run: the same key with a different slot is a 422
@@ -445,10 +536,11 @@ docker compose -f docker-compose.infra.yml exec temporal \
   temporal workflow show -w booking-$APPOINTMENT --address temporal:7233
 ```
 
-**Part B, the skeletons.** `--profile partb` adds the two Part B services, each with its
-own stores: `knowledge` (gRPC `Search`; its own Postgres and Qdrant; a provider directory it
-builds from Part A's `providers.state` topic) and `assistant` (server-streaming gRPC `Chat`;
-its own Redis for resumable turns and a revoked-session deny-list). **Envoy** on
+**Part B, the transport.** `--profile partb` adds the two Part B services, each with its
+own stores: `knowledge` (gRPC `Search`; its own Postgres and Qdrant; the clinic's documents
+and a provider directory it builds from Part A's `providers.state` topic, re-indexed on
+start) and `assistant` (server-streaming gRPC `Chat`; its own Postgres for conversation
+checkpoints and its own Redis for resumable turns and a revoked-session deny-list). **Envoy** on
 <http://localhost:8088> is the front door: gRPC-Web to Part B, `/api/*` to Part A. Neither
 Part B service holds anything of Part A's but its public key, fetched from
 `/.well-known/jwks.json`.
@@ -461,9 +553,9 @@ python scripts/grpcweb_smoke.py --email you@example.com --password "..." --messa
 ```
 
 The smoke script speaks gRPC-Web exactly as a browser would and prints the streamed turn:
-the echoed message, then citations from `knowledge`'s directory of the seeded providers.
-The answer is an echo until Week 5 brings the LLM; the transport, the auth, the resume and
-the trace (`assistant` -> `knowledge`, in Jaeger) are real. After editing a `.proto` in
+the assistant's answer, then its citations from `knowledge`. The trace runs `assistant` ->
+`knowledge` and `assistant` -> Part A (`Part A <METHOD>` spans), with every model call an
+`llm chat` span carrying its token counts, in Jaeger. After editing a `.proto` in
 `contracts/proto/`, run `python scripts/gen_proto.py`.
 
 **Seeing events and messages.** Every domain change writes an event to the outbox in its
@@ -482,9 +574,9 @@ Prometheus. These run in the plain infrastructure stack — no profile needed:
 
 | URL | What |
 | --- | --- |
-| <http://localhost:16686> | Jaeger — pick service `part-a-api` (or `part-a-worker`). A request's trace holds its SQL statements, and its `StartWorkflow:<type>` span is the parent of the workflow's `RunWorkflow` and `RunActivity` spans on the worker (proved for the canary by case `obs-002`) |
-| <http://localhost:9090> | Prometheus — e.g. `http_server_duration_milliseconds_count{job="smarthealth/part-a-api"}`, `temporal_workflow_completed_total` |
-| <http://localhost:3000> | Grafana, anonymous read-only (admin password `GRAFANA_ADMIN_PASSWORD`, default `smarthealth`) — folder **SmartHealth**, dashboard **Service overview**; Jaeger is a datasource under Explore |
+| <http://localhost:16686> | Jaeger — services `part-a-api`, `part-a-worker`, `part-a-relay`, `part-a-consumers`, `part-a-celery`, `assistant`, `knowledge`. A request's `StartWorkflow:<type>` span is the parent of the workflow's `RunWorkflow` and `RunActivity` spans on the worker (proved for the canary by case `obs-002`). SQL statements do **not** show up yet — see [Known open items](#known-open-items) |
+| <http://localhost:9090> | Prometheus — e.g. `http_server_duration_milliseconds_count{job="smarthealth/part-a-api"}`, `temporal_workflow_completed_total`; it also scrapes RabbitMQ and `kafka-exporter` |
+| <http://localhost:3000> | Grafana, anonymous read-only (admin password `GRAFANA_ADMIN_PASSWORD`, default `smarthealth`) — folder **SmartHealth**: **Service overview**, **Async backbone**, **Platform analytics**, **Assistant**, and provisioned alert rules; Jaeger is a datasource under Explore |
 
 Every JSON log line written inside a request or an activity carries `trace_id` and
 `span_id`, so a log line leads to its trace. The test stack publishes the same four on
@@ -494,10 +586,11 @@ offset ports (`.env.test`: Jaeger 26686, Prometheus 19090, Grafana 13000, collec
 metrics, `SMARTHEALTH_OTEL_ENDPOINT_GRPC=http://localhost:4317`); unset, nothing is exported.
 
 **Run a visit.** Continue from the booking above once `$APPOINTMENT` reads `confirmed`.
-Check-in is the front desk's; `seen` and `complete` are a provider's, and the seeded
-provider login `a.osei@medinova.example` (same password as the other seeded logins) can
-do both. To use a login of your own instead, create one the way the admin was created above,
-with `--role provider`.
+Check-in is the front desk's; `seen`, the clinical note and `complete` belong to the
+appointment's own provider — the seeded provider login `a.osei@medinova.example` (same
+password as the other seeded logins), whose slot the booking above picked. A visit
+completes only once its note is signed, and a note is signed with at least one diagnosis
+and a patient summary.
 
 ```bash
 : "${APPOINTMENT:?booking failed}"
@@ -510,6 +603,13 @@ act() { curl -s -X POST http://localhost:8000/appointments/$APPOINTMENT/$1 -H "A
 act check-in  $TOKEN            # 200 {"status":"checked_in", "checked_in_at":"…", …}
 act check-in  $TOKEN            # 409 — a repeat is refused, not silently accepted
 act seen      $PROVIDER_TOKEN   # 200 {"status":"in_progress", "seen_at":"…", …}
+act complete  $PROVIDER_TOKEN   # 409 — the visit's note is not signed yet
+
+curl -s -X PUT http://localhost:8000/appointments/$APPOINTMENT/note \
+  -H "Authorization: Bearer $PROVIDER_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"presenting_complaint": "demo", "diagnoses": [{"description": "Routine check-up"}],
+       "patient_summary": "All well; nothing to do."}'                       # 200, a draft
+act note/sign $PROVIDER_TOKEN   # 200 {"status":"signed", …}
 act complete  $PROVIDER_TOKEN   # 200 {"status":"completed", "completed_at":"…", …}
 
 curl -s http://localhost:8000/appointments/$APPOINTMENT/visit -H "Authorization: Bearer $TOKEN"
@@ -687,7 +787,9 @@ Vite proxies `/api` to `http://localhost:8000` and the assistant's gRPC-Web path
 
 **Compose mode** — the `frontend` service is in the `app` profile, so the command above
 that starts the system also serves the client, at <http://localhost:5173>: nginx serves the
-built client and proxies `/api/*` to `app`. If 5173 is taken (a local Vite dev server, say),
+built client, proxies `/api/*` to `app` and the assistant's gRPC-Web path to `envoy` (the
+Assistant page needs `--profile partb` as well; without it the rest of the client works and
+the assistant answers 502). If 5173 is taken (a local Vite dev server, say),
 pass `FRONTEND_PORT=5174`:
 
 ```bash
@@ -711,3 +813,17 @@ It refuses (exit 1, with the reason) an unknown email or MRN, a login whose role
 same pair does nothing. A successful link is audited, with actor `system:cli`. Until a
 login is linked, `/patients/me` and `GET /appointments` answer 404 for it. The seeded
 patient login (`j.okonkwo@example.com`) is already linked, to `MRN-000001`.
+
+## Known open items
+
+Stated rather than hidden; each is small and none breaks a flow.
+
+- **SQL spans do not appear in Jaeger.** `instrument_engine` is called for the API and the
+  consumers (`app/main.py`, `app/consumers.py`), yet a request's trace shows its HTTP,
+  Temporal and outbound spans but no SQL statements. The cause is not yet found.
+- **`smarthealth_analytics_drift` has no dashboard panel or alert.** The nightly analytics
+  reconcile records it (`app/modules/analytics/tasks.py`) and Prometheus collects it, but no
+  Grafana panel shows it and no alert rule watches it.
+- **Assistant reports run in-process.** A background report is an asyncio task inside the
+  `assistant` process (`services/assistant/assistant_service/reports.py`), not a durable
+  worker: a restart mid-report marks that report failed, and it must be asked for again.

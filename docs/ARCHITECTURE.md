@@ -8,22 +8,29 @@ tradeoffs.
 **Companion documents.** [`docs/PRD.md`](PRD.md) owns requirements and traceability;
 [`README.md`](../README.md) owns the orientation diagrams and how to run the thing. This
 document owns the internals: what each module is for, what happens inside a request, and
-how the asynchronous half of Part A is designed to work before any of it is written.
+how the asynchronous half of Part A and the two Part B services work.
+
+The documentation site, [`docs/index.html`](index.html) (GitHub Pages), is the guided entry
+point to this document, the PRD and the README.
 
 ---
 
 ## Status and scope
 
-**All five weeks are complete** (2026-11-11). This document was written alongside Weeks 1-2,
-and its §1-§3 describe Part A's monolith in that depth; Weeks 3-5 are designed in
-`docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md` (decisions D-17 ... D-31,
-each section annotated *as built*), and **§6 below describes the Part B services as built**.
-`docs/PRD.md` is the status of record, requirement by requirement.
+**All five weeks are complete** (2026-11-11), and this document describes the system as it
+runs today (revised 2026-11-16). §1-§3 cover Part A's monolith — its modules, its request
+paths, and its asynchronous half (Temporal workflows, the Kafka event backbone, Celery jobs);
+§6 covers the Part B services. The Weeks 3-5 design, with decisions D-17 ... D-36, is
+`docs/superpowers/specs/2026-11-10-weeks3-5-architecture-design.md`; `docs/PRD.md` is the
+status of record, requirement by requirement. Where an earlier design was replaced, the
+section says so and keeps the reason.
 
-Everything in §1, §2 and §6 describes code that exists and is exercised by tests, with one
-exception: the worker's signal handling depends on POSIX signals and is not exercised by
-tests (verified manually with `docker stop`). In §3, sections marked BUILT are code; the
-rest of §3 predates Week 3 and is kept as the design it was, labelled at its top.
+Everything described here is code that exists and is exercised by tests, with these
+exceptions, stated where they apply: the worker's signal handling depends on POSIX signals
+and is verified manually with `docker stop`, not by tests; SQLAlchemy spans are installed
+(`instrument_engine`) but do not show up in Jaeger (§3.8); the analytics drift counter has
+no Grafana panel or alert yet (§3.8); and assistant reports are in-process asyncio tasks, not
+a separate worker (§6.4).
 
 What runs, and where its code is:
 
@@ -32,9 +39,11 @@ What runs, and where its code is:
 | PostgreSQL | `postgres` (Part A), `knowledge-db`, `assistant-db` | Part A: `app/db`, every module's `models.py`, migrations `0001`-`0009`; Part B: each service's own tables |
 | MongoDB | `mongo` | the audit trail (`app/core/audit.py`) |
 | Redis | `redis` (Part A state: sessions, throttles), `assistant-redis` (turn and report streams, the revoked-session deny-list) | `app/modules/identity/sessions.py`, `app/core/ratelimit.py`; `services/assistant/assistant_service/stores.py` |
-| Temporal | `temporal`, `worker` | `app/core/temporal.py`, `app/worker.py`, `app/modules/scheduling/{booking,visits,followups,workflows,activities}.py` |
-| Kafka + Schema Registry | `kafka`, `schema-registry`, `relay`, `consumers` | `app/events/` (outbox, relay, consumer runtime, catalogue), `contracts/events/`; Part B consumes `providers.state` and `identity.sessions_revoked` |
-| Celery + RabbitMQ | `rabbitmq`, `celery-worker`, `celery-beat` | `app/celery_app.py`, `app/modules/notifications/`, `app/modules/clinical/tasks.py`, maintenance tasks |
+| Temporal | `temporal`, `temporal-ui`, `worker` | `app/core/temporal.py`, `app/worker.py`, `app/components.py`, `app/modules/scheduling/{booking,visits,followups,workflows,activities,contracts}.py` |
+| Kafka + Schema Registry | `kafka`, `schema-registry`, `relay`, `consumers` | `app/events/` (outbox, relay, consumer runtime, catalogue), `app/relay.py`, `app/consumers.py`, every module's `consumers.py`, `contracts/events/`; Part B consumes `providers.state`, `identity.sessions_revoked` and `appointments.booked` |
+| Celery + RabbitMQ | `rabbitmq`, `celery-worker`, `celery-beat` | `app/celery_app.py`; tasks in `app/modules/{notifications,scheduling,analytics,clinical}/tasks.py` and `app/events/maintenance.py` |
+| Payment gateway (a mock) | `payments-mock` | `services/payments_mock`; the client is `app/modules/billing/gateway.py` |
+| Email (a local inbox) | `mailpit` | `app/modules/notifications/channels.py` (SMTP; SMS is a logging fake) |
 | Qdrant | `qdrant` | `services/knowledge/knowledge_service/index.py` |
 | The LLM (Groq) | none — an external API | `services/assistant/assistant_service/llm.py` |
 | Envoy (gRPC-Web edge) | `envoy` | `ops/envoy/envoy.yaml` |
@@ -50,8 +59,50 @@ and set `fulfilled` by a promotion; no code sets `expired` or `cancelled`, PRD R
 
 ---
 
+## At a glance: where it is a monolith, and where it is microservices
+
+SmartHealth is both, on purpose, and the line falls exactly where the data does.
+
+```mermaid
+flowchart LR
+  subgraph MONO["MONOLITH · Part A"]
+    direction TB
+    IMG[/"one codebase app/ · one Docker image"/]
+    IMG --> P1["app<br/>(HTTP API)"]
+    IMG --> P2["worker<br/>(Temporal)"]
+    IMG --> P3["relay<br/>(outbox → Kafka)"]
+    IMG --> P4["consumers<br/>(Kafka)"]
+    IMG --> P5["celery-worker"]
+    IMG --> P6["celery-beat"]
+    P1 & P2 & P3 & P4 & P5 & P6 --> DB[("ONE PostgreSQL<br/>one transaction boundary")]
+  end
+  subgraph MS["MICROSERVICES · Part B"]
+    direction TB
+    K["knowledge<br/>own code · own image"] --> KS[("knowledge-db + Qdrant")]
+    A["assistant<br/>own code · own image"] --> AST[("assistant-db + assistant-redis")]
+  end
+  MONO <== "Kafka events · public HTTP API (JWKS) · gRPC" ==> MS
+```
+
+| | Part A — modular monolith | Part B — microservices |
+| --- | --- | --- |
+| Code | One package `app/`, eight modules (§1) | `services/knowledge`, `services/assistant`, no shared imports |
+| Deployable | One image run as six processes, each scaled on its own | One image per service |
+| Data | One PostgreSQL: the invariants are constraints and single transactions | Each owns its stores; never reads Part A's |
+| Talks by | Published interfaces (`public.py`) in-process, and domain events | gRPC (`contracts/proto`), Part A's public HTTP API, Kafka |
+| Why | "Confirm only after every step", "slot and appointment change together" need one transaction; constraints do not cross a service boundary | Different runtime (models, LLM calls) and failure profile; nothing transactional crosses the line |
+| Enforced by | `tests/meta/test_import_boundaries.py` | `tests/meta/test_service_independence.py` |
+
+Six processes is not six services: they share one codebase and one database, so they are one
+monolith whose parts scale independently. Part B is genuinely separate: own code, own image,
+own stores, contracts at the boundary. The documentation site (`docs/index.html`) draws the
+rest — the request paths, every flow, the generated event map and schemas.
+
+---
+
 ## Contents
 
+- [At a glance: where it is a monolith, and where it is microservices](#at-a-glance-where-it-is-a-monolith-and-where-it-is-microservices)
 - [1. Service / module breakdown](#1-service--module-breakdown)
   - [1.1 Dependency direction](#11-dependency-direction)
   - [1.2 The framework-free rule](#12-the-framework-free-rule)
@@ -68,55 +119,86 @@ and set `fulfilled` by a promotion; no code sets `expired` or `cancelled`, PRD R
   - [2.8 POST /appointments and GET /appointments/{id}](#28-post-appointments-and-get-appointmentsid)
   - [2.9 POST /appointments/{id}/check-in, and the other visit actions](#29-post-appointmentsidcheck-in-and-the-other-visit-actions)
   - [2.10 GET /appointments — a patient's own list, and staff's filtered one](#210-get-appointments--a-patients-own-list-and-staffs-filtered-one)
-- [3. Event flows — booking, visits and cancellation built, the rest design](#3-event-flows--booking-visits-and-cancellation-built-the-rest-design)
+- [3. Event flows](#3-event-flows)
   - [3.1 The three-way split](#31-the-three-way-split)
-  - [3.2 The booking workflow — BUILT](#32-the-booking-workflow--built)
-  - [3.2a The visit lifecycle — BUILT](#32a-the-visit-lifecycle--built)
-  - [3.3 Cancellation, reschedule and the waitlist — BUILT](#33-cancellation-reschedule-and-the-waitlist--built)
-  - [3.4 Domain event catalogue](#34-domain-event-catalogue)
-  - [3.5 Idempotency](#35-idempotency)
+  - [3.2 The booking workflow](#32-the-booking-workflow)
+  - [3.2a The visit lifecycle](#32a-the-visit-lifecycle)
+  - [3.3 Cancellation, reschedule, the waitlist, and what follows a visit](#33-cancellation-reschedule-the-waitlist-and-what-follows-a-visit)
+  - [3.4 Domain event catalogue, the outbox and the relay](#34-domain-event-catalogue-the-outbox-and-the-relay)
+  - [3.5 Consumers and idempotency](#35-consumers-and-idempotency)
   - [3.6 Open inconsistencies](#36-open-inconsistencies)
+  - [3.7 Celery jobs and the beat sweeps](#37-celery-jobs-and-the-beat-sweeps)
+  - [3.8 Observability](#38-observability)
 - [4. Key design decisions](#4-key-design-decisions)
 - [5. Assumptions and tradeoffs](#5-assumptions-and-tradeoffs)
 - [6. Part B — `knowledge` and `assistant`, as built](#6-part-b--knowledge-and-assistant-as-built)
+  - [6.1 `knowledge`](#61-knowledge-servicesknowledgeknowledge_service)
+  - [6.2 `assistant`](#62-assistant-servicesassistantassistant_service)
+  - [6.3 One chat turn](#63-one-chat-turn)
+  - [6.4 Reports](#64-reports)
+  - [6.5 Usage and observability](#65-usage-and-observability)
+  - [6.6 Degradation](#66-degradation)
+  - [6.7 How Part B is tested](#67-how-part-b-is-tested)
 
 ---
 
 ## 1. Service / module breakdown
 
-SmartHealth is one codebase and one image, run as two processes today: the FastAPI
-application (`app/main.py:50`) and the Temporal worker (`app/worker.py`, the `worker`
-compose service, which runs the scheduling workflows and their activities), plus an operational CLI
-(`app/cli.py`) that is deliberately not part of the request path. Week 3 adds a Celery
-worker. Under `--profile app` compose also runs a third service, `frontend`, the demo client
-in its own nginx image (§1.4), which is not part of that codebase. Several processes sharing one codebase is the
+Part A is one codebase and one image, run as six processes, each its own compose service:
+
+| Process | Entry point | Does |
+| --- | --- | --- |
+| `app` | `app/main.py` (`create_app`) | the FastAPI HTTP API |
+| `worker` | `python -m app.worker` | the Temporal worker: every scheduling workflow and activity |
+| `relay` | `python -m app.relay` | publishes outbox rows to Kafka (§3.4) |
+| `consumers` | `python -m app.consumers` | every registered Kafka consumer (§3.5) |
+| `celery-worker` | `celery -A app.celery_app worker -Q notifications,maintenance,documents` | fire-and-forget jobs: sending messages, sweeps, text extraction |
+| `celery-beat` | `celery -A app.celery_app beat` | the schedule for the four sweeps (§3.7) |
+
+plus an operational CLI (`app/cli.py`) that is deliberately not part of the request path.
+Every process that can enqueue a Celery task — `app`, `worker` and `consumers` — is given
+`SMARTHEALTH_RABBITMQ_*` in compose (commit `a37778a`: without it they fell back to
+defaults, and patient emails arrived one to two minutes late, through the stuck-row sweep
+rather than the direct enqueue). Under `--profile app` compose also runs `frontend`, the demo
+client in its own nginx image (§1.4), which is not part of that codebase; under `--profile
+partb` it runs the two Part B services (§6). Several processes sharing one codebase is the
 reason the internal layering is stricter than a single-process application would need.
 
-Inside the deployable, modules are grouped **by domain, not by technical layer**
-(`identity`, `patients`, `providers`, `scheduling`), so a feature's router, schemas,
-service and models change together and live together
-(`docs/superpowers/specs/2026-09-02-week1-foundation-design.md` §4).
+Inside the deployable, modules are grouped **by domain, not by technical layer** —
+`identity`, `patients`, `providers`, `scheduling` (Weeks 1-2), `billing`, `notifications`,
+`analytics` (Week 3) and `clinical` (Week 4) — so a feature's router, schemas, service and
+models change together and live together
+(`docs/superpowers/specs/2026-09-02-week1-foundation-design.md` §4). Cross-cutting
+infrastructure that is not a domain lives beside them: `app/core`, `app/db`, `app/api`, and
+`app/events` (the outbox, relay and consumer runtime).
 
 ### 1.1 Dependency direction
 
-Dependencies point inward. Nothing in `app/core` imports anything else in `app`, except
-`app/core/audit.py` importing `app/core/clock.py`, and `app/core/temporal.py` importing
-`app/core/registry.py`, `app/core/temporal_canary.py` and `app/settings.py`.
+Dependencies point inward. Inside `app/core` the only imports of the rest of `app` are
+`app/settings.py` (from `ratelimit.py`, `telemetry.py`, `temporal.py`) and one edge into
+`app/db`: `app/core/ratelimit.py` uses `app.db.redis.namespaced_key`. The rest are within
+`app/core` itself (`audit` → `clock`, `circuit` and `ratelimit` → `errors`, `temporal` →
+`registry` and `temporal_canary`).
 
 ```mermaid
 flowchart TD
     main["app/main.py — app factory and lifespan"]
     cli["app/cli.py — operational entry point"]
     worker["app/worker.py — Temporal worker process"]
-    components["app/components.py — the one Temporal registration site"]
+    procs["app/relay.py, app/consumers.py — relay and consumer processes"]
+    components["app/components.py — the one registration site: workflows, activities, Kafka consumers"]
     api["app/api — HTTP wiring: router assembly, deps, error handlers, health"]
     routers["app/modules/*/router.py — HTTP shape and authz"]
     schemas["app/modules/*/schemas.py — request and response bodies"]
     services["app/modules/*/service.py — business rules, framework-free"]
-    temporalmod["app/modules/scheduling/booking.py, visits.py, followups.py, workflows.py, activities.py — start and run the four workflows: booking, visit (no-show timer), cancel follow-up, reschedule"]
+    temporalmod["app/modules/scheduling/booking.py, visits.py, followups.py, workflows.py, activities.py — the six workflows: booking, visit (timer), cancel follow-up, reschedule, post-visit, provider deactivation"]
+    async["app/modules/*/consumers.py and tasks.py — Kafka handlers and Celery tasks"]
+    public["app/modules/*/public.py — each module's published interface"]
+    events["app/events — outbox emit, relay, consumer runtime, catalogue"]
+    celery["app/celery_app.py — the Celery app, queues, beat schedule, TASKS"]
     models["app/modules/*/models.py — SQLAlchemy tables and constraints"]
     db["app/db — engine, session, base, constraints, mongo, redis"]
-    core["app/core — errors, audit, clock, pagination, registry, logging, temporal"]
+    core["app/core — errors, audit, clock, ids, pagination, registry, logging, telemetry, circuit, ratelimit, temporal"]
     settings["app/settings.py — every DSN and resource name"]
 
     main --> api
@@ -127,11 +209,22 @@ flowchart TD
     worker --> components
     worker --> core
     worker --> settings
+    procs --> components
+    procs --> events
     components --> core
     components --> temporalmod
+    components --> async
+    components --> events
     routers --> temporalmod
+    routers --> public
     temporalmod --> services
+    temporalmod --> public
+    temporalmod --> celery
     temporalmod --> core
+    async --> services
+    async --> public
+    async --> events
+    async --> celery
     api --> core
     api --> db
     routers --> schemas
@@ -139,30 +232,38 @@ flowchart TD
     routers --> api
     routers --> core
     services --> models
+    services --> events
     services --> core
     services --> db
+    events --> core
+    events --> db
+    celery --> core
     models --> db
     db --> settings
     core --> settings
 ```
 
 Read the arrows as "may import". The rule that matters is the absence of the reverse
-arrows: `app/core` never imports `app/modules` or `app/api`, and `app/modules/*/service.py`
-never imports `app/api` or `fastapi`.
+arrows: `app/core` never imports `app/modules` or `app/api`, `app/events` never imports a
+module, and `app/modules/*/service.py` never imports `app/api`, `fastapi`, or another
+module. A service writes events through `app/events/outbox.py:emit` and nothing else of
+the event machinery.
 
 ### 1.2 The framework-free rule
 
-**`app/core/**`, `app/db/*`, `app/modules/*/models.py`, every `app/modules/*/service.py`,
-and the Temporal code (`app/modules/scheduling/workflows.py`, `activities.py`, `booking.py`)
-must not import FastAPI or Starlette.** Verified — the complete set of FastAPI imports in
-the application is:
+**`app/core/**`, `app/db/*`, `app/events/*`, `app/modules/*/models.py`, every
+`app/modules/*/service.py`, every `public.py`, `consumers.py` and `tasks.py`, and the
+Temporal code (`app/modules/scheduling/workflows.py`, `activities.py`, `booking.py`) must
+not import FastAPI or Starlette.** Verified — the complete set of framework-bound modules
+(`FRAMEWORK_BOUND` in `tests/meta/test_import_boundaries.py`) is:
 
 ```
-app/api/deps.py, app/api/error_handlers.py, app/api/health.py, app/api/router.py,
-app/main.py,
+app/main.py, app/api/deps.py, app/api/error_handlers.py, app/api/health.py,
+app/api/router.py,
 app/modules/identity/deps.py, app/modules/identity/router.py,
-app/modules/patients/router.py, app/modules/providers/router.py,
-app/modules/scheduling/router.py
+app/modules/analytics/router.py, app/modules/clinical/router.py,
+app/modules/notifications/router.py, app/modules/patients/router.py,
+app/modules/providers/router.py, app/modules/scheduling/router.py
 ```
 
 `app/db` has no exception. `get_session`, a FastAPI dependency because it takes a
@@ -172,8 +273,9 @@ the CLI and the worker use. `tests/meta/test_import_boundaries.py` lists the fra
 modules (`FRAMEWORK_BOUND`) and fails if anything else reaches FastAPI, directly or
 transitively.
 
-**Why the rule exists.** Week 2's Temporal activities call the same service functions from
-a worker process that has no ASGI stack, no `Request`, and no exception handlers. An
+**Why the rule exists.** Temporal activities, Kafka consumers and Celery tasks call the same
+service functions from processes that have no ASGI stack, no `Request`, and no exception
+handlers. An
 activity that caught `HTTPException` would be nonsense — and worse, a status code cannot
 express the distinction the workflow engine actually needs: *permanent* failure ("this slot
 is already taken, stop retrying") versus *retryable* failure ("the connection dropped, try
@@ -203,32 +305,43 @@ difference is whether the import graph has a deliberate shape. Verified — the 
 of cross-module edges in the application is:
 
 ```
-app/modules/patients/router.py      → identity.deps, identity.models, identity.security
-app/modules/providers/router.py     → identity.deps, identity.models, identity.security
-app/modules/scheduling/router.py    → identity.deps, identity.models, identity.security,
-                                      patients.public, providers.public
-app/modules/scheduling/activities.py → patients.public, providers.public
+patients.router, providers.router      → identity.{deps, models, security}
+scheduling.router                      → identity.{deps, models, security},
+                                         patients.public, providers.public, clinical.public
+analytics.router                       → identity.{deps, models, security},
+                                         patients.public, providers.public, scheduling.public
+clinical.router                        → identity.{deps, models, security},
+                                         patients.public, providers.public, scheduling.public
+notifications.router                   → identity.{deps, models, security},
+                                         providers.public, scheduling.public
+identity.router                        → patients.public, providers.public
+scheduling.activities                  → patients.public, providers.public,
+                                         billing.public, notifications.public
+scheduling.tasks                       → billing.public
+analytics.tasks                        → scheduling.public
+notifications.public                   → patients.public
 ```
 
-Thirteen edges, every one declared as an explicit `(importer, imported)` pair in
-`CROSS_MODULE_ALLOWED` (`tests/meta/test_import_boundaries.py`). Nine are auth at the router
-layer: `require_role`, `UserRole`, `TokenClaims`. The other four are scheduling's reach into
-`patients` and `providers`, and each goes through one file, that module's published
-interface — `app/modules/patients/public.py` and `app/modules/providers/public.py` (PRD
-D-15, R-24) — which returns ids or flags and raises domain errors, never an ORM object:
+Thirty-eight edges, every one declared as an explicit `(importer, imported)` pair, with a
+comment saying why, in `CROSS_MODULE_ALLOWED` (`tests/meta/test_import_boundaries.py`).
+Eighteen are auth at the router layer: `require_role`, `UserRole`, `TokenClaims`, imported
+by the six routers that are not identity's own. The other twenty go through exactly one kind
+of file, the owning module's published interface — `app/modules/<x>/public.py` (PRD D-15) —
+which returns ids, flags or plain dataclasses and raises domain errors, never an ORM object.
+Six modules publish one:
 
-- `scheduling.activities` → `ensure_bookable_patient` — the `validate_booking` activity
-  checks the patient exists (`app/modules/scheduling/activities.py:119`).
-- `scheduling.router` → `patient_id_for_user` — a `patient` caller may book and read only
-  their own appointments (`app/modules/scheduling/router.py:74-75`).
-- `scheduling.activities` → `ensure_bookable_provider` — the same activity refuses a
-  deactivated provider (R-24), for the provider id `service.slot_provider_id` reads off the
-  slot (`app/modules/scheduling/activities.py:126-128`).
-- `scheduling.router` → `is_active_provider` — `GET /slots` lists nothing for an inactive
-  provider (`app/modules/scheduling/router.py:378-379`).
+| Interface | What it answers | Used by |
+| --- | --- | --- |
+| `patients/public.py` | `ensure_bookable_patient`, `patient_id_for_user`, `contact_for`, `count_patients`, `names_for_users` | booking's `validate_booking`; ownership checks in scheduling and clinical; notifications' recipient; analytics' Total Patients; `GET /users` |
+| `providers/public.py` | `ensure_bookable_provider`, `is_active_provider` (R-24), `provider_id_for_user`, `names_for_users`, `clinic_and_department_names` | booking; `GET /slots`; a provider's own-visit check (R-14); `GET /users`; utilisation names |
+| `scheduling/public.py` | `daily_counts`, `visit_facts`, `appointment_parties`, `has_care_relationship`, `slot_use_by_department` | the analytics reconcile and utilisation; the clinical record's and `POST /notifications`'s care-relationship check |
+| `billing/public.py` | the gateway client and `authorize` / `capture` / `release` | booking pre-check and compensation, cancel refund, reschedule, post-visit capture, the stale-pending reconciler |
+| `notifications/public.py` | `recipient_for`, `queue_reminder` | the visit workflow's reminder activity |
+| `clinical/public.py` | `has_signed_note` | `POST /appointments/{id}/complete` (a visit completes only with a signed note) |
 
-Every `service.py` imports only `app/core`, `app/db` and its own module — no exceptions,
-`scheduling/service.py` included. Week 1 expected that file to be the first with a real
+Every `service.py` imports only `app/core`, `app/db`, `app/events` (to `emit`) and its own
+module (identity's also reads `app/settings.py`) — no exceptions, `scheduling/service.py`
+included. Week 1 expected that file to be the first with a real
 reason to cross the boundary; it was not, because the cross-module work was pushed up a
 layer. The activity performs the patient and provider checks and then calls the service
 with ids only, so `service.py` never needs to know a patient or provider table exists. That was not optional: rule 4
@@ -237,8 +350,8 @@ allowlist or not.
 
 **Two rules, not one, and they are asymmetric.**
 `test_modules_do_not_import_each_other` takes an allowlist (`CROSS_MODULE_ALLOWED`, the
-thirteen pairs above) because a router or an activity is a composition point and a declared
-exception there is legitimate. `test_the_service_layer_never_crosses_a_module_boundary` takes none: a
+thirty-eight pairs above) because a router, an activity, a task or a published interface is a
+composition point and a declared exception there is legitimate. `test_the_service_layer_never_crosses_a_module_boundary` takes none: a
 `service.py`, `models.py` or `schemas.py` edge is always a bug, because the service layer
 is the unit of extraction and the models are what it owns. An allowlist entry for a service
 would grant precisely the coupling the boundary exists to prevent. Both lists are checked
@@ -262,10 +375,13 @@ to work from.
 Week 2's booking needs patient, provider, slot and clinic data; a direct import is the path
 of least resistance and looks entirely reasonable in a diff. The three ways to get that data
 are a direct import (the modular monolith silently becomes a monolith), a published
-interface on the owning module, or a domain event once Week 3's Kafka exists. Booking used
-the second for patients, and needed nothing for the rest: slots moved into `scheduling`
-(PRD D-9), and provider, clinic and department ids are copied from the slot row by
-`create_pending`, so no Python edge onto `providers` exists.
+interface on the owning module, or a domain event. Booking used the second for patients,
+and needed nothing for the rest: slots moved into `scheduling` (PRD D-9), and provider,
+clinic and department ids are copied from the slot row by `create_pending`. Since Week 3 the
+third is used wherever one module must *react* to another rather than ask it something:
+deactivating a provider reaches scheduling as a `providers.state` event (R-25), a completed
+visit reaches billing's capture as `visits.completed`, and notifications and analytics learn
+everything they know from events (§3.4, §3.5).
 
 ### 1.4 Module by module
 
@@ -276,8 +392,8 @@ false in a worker process.
 
 | File | Public surface | Notes |
 | --- | --- | --- |
-| `router.py:13-19` | `api_router` | The only place a module's router is mounted. |
-| `deps.py:31,46,54,77` | `get_audit_log`, `page_params`, `get_session`, `get_temporal` | The framework / framework-free seam (§1.2). `get_audit_log` declares `clock` as a `Depends` rather than calling `get_clock()` inline, because only a declared dependency can be replaced through `app.dependency_overrides` (`app/api/deps.py:32-40`). `get_temporal` hands routers the app's lazy Temporal client, and is what contract tests override so they never reach a real server. |
+| `router.py:16-28` | `api_router` | The only place a module's router is mounted: health, the three identity routers (`/auth`, `/.well-known/jwks.json`, `/users`), analytics, clinical, notifications, patients, providers, and scheduling's three (`/appointments`, `/slots`, `/waitlist`). |
+| `deps.py:32,47,55,78,84` | `get_audit_log`, `page_params`, `get_session`, `get_temporal`, `get_rate_limiter` | The framework / framework-free seam (§1.2). `get_audit_log` declares `clock` as a `Depends` rather than calling `get_clock()` inline, because only a declared dependency can be replaced through `app.dependency_overrides` (`app/api/deps.py:32-40`). `get_temporal` hands routers the app's lazy Temporal client, and is what contract tests override so they never reach a real server. |
 | `error_handlers.py:33` | `register_error_handlers` | One handler on `DomainError` covers every subclass via Starlette's MRO walk; a second on `Exception` keeps `{"error", "detail"}` as the shape of *every* failure, including unanticipated ones. |
 | `health.py:37,89` | `GET /health`, `GET /ready` | See §2.6. |
 
@@ -296,12 +412,17 @@ pagination, registries, logging — with no dependency on how the process was st
 | `audit.py:70-124` | `AuditEvent`, `AuditLog.record()` | Takes a `_Collection` **protocol** (`audit.py:82`), not a pymongo type, so it does not even import `app.db.mongo`. `_normalise` (`audit.py:31`) converts exactly the types BSON cannot encode and passes everything else through, so an unsupported type fails loudly rather than being silently stringified. |
 | `clock.py:13-35` | `Clock`, `FixedClock`, `get_clock` | Harness requirement 6: no `datetime.utcnow()` inline anywhere. |
 | `pagination.py:23-38` | `PageParams`, `Page[T]`, `MAX_LIMIT=200`, `DEFAULT_LIMIT=50` | The maximum exists so one request cannot ask for every row. |
-| `registry.py:17-54` | `Registry[T]` | Harness requirement 3. Duplicate names raise, because two handlers silently claiming one name is exactly how an event gets processed twice (`registry.py:20-22`). Two instances exist in `temporal.py`: `WORKFLOWS` holds the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow` and `RescheduleWorkflow`, `ACTIVITIES` the thirteen scheduling activities (seven `booking.*`, two `visit.*`, `cancel.refund`, `reschedule.complete`, `waitlist.candidates` and `waitlist.fulfil`). Kafka consumers and Celery tasks get registries when they land in Week 3. |
+| `registry.py:17-54` | `Registry[T]` | Harness requirement 3. Duplicate names raise, because two handlers silently claiming one name is exactly how an event gets processed twice (`registry.py:20-22`). Four instances: `WORKFLOWS` and `ACTIVITIES` in `temporal.py` (seven workflows with the canary, eighteen activities — see `app/components.py` below), `CONSUMERS` in `app/events/consumer.py` (five Kafka consumers) and `TASKS` in `app/celery_app.py` (six Celery tasks). Each is enumerated by a meta-test. |
 | `temporal.py` | `WORKFLOWS`, `ACTIVITIES`, `TASK_QUEUE`, `connect_client`, `build_worker`, `check_worker`, `bind_activities` | `bind_activities` binds each registered activity method to the instance of its class built at worker start, which holds the session factory, audit log and clock. The client is lazy by default so the API boots with Temporal down. `build_worker` always includes the canary. `check_worker` is true only if a worker on the queue executed the canary within `CANARY_TIMEOUT` (5 s). `tests/meta/test_temporal_registry.py` discovers every `@workflow.defn` / `@activity.defn` in `app/` by `ast` and fails if one is unregistered or a registered workflow fails sandbox validation. |
 | `temporal_canary.py` | `CanaryWorkflow` (type name `Canary`) | A workflow with no activities, used only as the worker's readiness probe. Free of import-time side effects because Temporal re-imports it inside the sandbox. |
-| `logging.py:19-55` | `JsonFormatter`, `configure_logging` | JSON lines. `configure_logging` removes only handlers it previously installed, never pytest's `caplog` handler (`logging.py:41-45`). OpenTelemetry trace/span ids join the record in Week 3. |
+| `logging.py` | `JsonFormatter`, `configure_logging` | JSON lines. `configure_logging` removes only handlers it previously installed, never pytest's `caplog` handler. A line written inside an OpenTelemetry span carries its `trace_id` and `span_id` (`logging.py:41`), so a log line leads to its trace in Jaeger. |
+| `telemetry.py` | `build_telemetry`, `install`, `setup_telemetry`, `instrument_engine` | One tracer and meter provider per process, exporting OTLP/HTTP to the collector (spec D-28). **The first install wins**: the test suite installs in-memory providers before the app is imported (`tests/harness/telemetry.py`), and the app reuses them — harness requirement 5. Export is off unless `SMARTHEALTH_OTEL_ENDPOINT_HTTP` is set. `instrument_engine` attaches SQLAlchemy instrumentation to an engine (called by the API, relay, consumers and worker); see §3.8 for why its spans do not reach Jaeger. FastAPI is instrumented in `app/main.py`, which excludes `/health` and `/ready`. |
+| `circuit.py` | `CircuitBreaker`, `CircuitOpen` | Per-process, in memory: after `threshold` consecutive failures calls fail at once for `cooldown`, then one trial call. Used by the payment gateway client so a gateway outage does not fill the worker's activity slots with calls that cannot succeed. |
+| `ratelimit.py` | `RedisRateLimiter`, `InMemoryRateLimiter`, `enforce`, `RateLimited` (429) | Fixed-window counters in Redis: the login throttle (five failures lock an address, answered exactly like a wrong password) and the per-user booking/reschedule limit. |
+| `ids.py` | `uuid7` | Time-ordered primary keys (`PART-A-NFR-5`). |
 
-Must not import: `fastapi`, `starlette`, `app.api`, `app.modules`, `app.db`.
+Must not import: `fastapi`, `starlette`, `app.api`, `app.modules`. The one edge into `app.db`
+is `ratelimit.py` → `app.db.redis.namespaced_key` (§1.1).
 **Status: implemented.**
 
 #### `app/db` — persistence plumbing
@@ -316,7 +437,7 @@ domain.
 | `session.py:20` | `create_session_factory` | `expire_on_commit=False`. Framework-free: the request-scoped `get_session` lives in `app/api/deps.py`, so the CLI and the worker can build sessions without importing FastAPI. |
 | `constraints.py:17` | `violated_constraint(IntegrityError) -> str \| None` | Reads the constraint name off a failed write. Non-obvious and empirically verified: the asyncpg error carrying `constraint_name` hangs off `exc.orig.__cause__`, not `exc.orig` — matching on `exc.orig` alone turned a duplicate MRN into a 500. |
 | `mongo.py:21-43` | `create_mongo_client`, `get_audit_collection`, `ensure_audit_indexes`, `AUDIT_COLLECTION` | PyMongo's async driver, not Motor (deprecated May 2026). Indexes are created by explicit tooling, not at startup, so boot needs no database. |
-| `redis.py:10-26` | `create_redis_client`, `namespaced_key` | Constructed, health-checked, and **used by no feature** (PRD R-7). |
+| `redis.py:10-26` | `create_redis_client`, `namespaced_key` | Part A's *state* Redis: sessions and refresh-token families (`identity/sessions.py`), login-throttle and booking-limit counters (`core/ratelimit.py`), and the notification send throttle. No cache is built (PRD R-7, partly closed): slots are read from Postgres. |
 | `all_models.py:14-22` | `ALL_TABLES`, `Base` | The single import site that makes `Base.metadata` complete; without it Alembic autogenerate silently drops tables. |
 
 Must not import: `app.modules` (except `all_models.py`, whose whole job is to import them),
@@ -330,18 +451,18 @@ Must not import: `app.modules` (except `all_models.py`, whose whole job is to im
 
 | File | Public surface | Status |
 | --- | --- | --- |
-| `models.py:18-45` | `UserRole` (`patient`/`provider`/`front_desk`/`admin`), `User`, `role_column` | implemented |
-| `security.py:34-102` | `hash_password`, `verify_password`, `create_access_token`, `decode_access_token`, `TokenClaims`, `InvalidToken` | implemented — pure functions over explicit inputs, no global settings and no implicit clock |
-| `service.py:29` | `authenticate(session, *, email, password, settings, now)` | implemented — see §2.2 |
-| `router.py:16` | `POST /auth/login` | implemented |
-| `deps.py:36` | `require_role(*allowed)` | implemented — a dependency factory, so enforcement happens before the handler body runs |
+| `models.py` | `UserRole` (`patient`/`provider`/`front_desk`/`admin`), `User`, `role_column` | implemented |
+| `security.py` | `hash_password`, `verify_password`, `create_access_token` / `decode_access_token` (EdDSA — **Ed25519** — signed, ten minutes, naming a session as `sid`), `public_jwk`, `generate_signing_key`, `TokenClaims`, `InvalidToken` | implemented — pure functions over explicit inputs, no implicit clock. The committed default key is a development key, refused at start-up when `SMARTHEALTH_ENVIRONMENT=production` (`app/main.py`) |
+| `sessions.py` | `SessionStore` (`RedisSessionStore`, `InMemorySessionStore`) | implemented — one server-side session per login, which is also one refresh-token family; rotation is one Lua script, and a spent refresh token presented again revokes the session (spec D-25) |
+| `service.py` | `authenticate`, `refresh`, `logout`, `logout_everywhere`, `deactivate_user` | implemented — see §2.2. `deactivate_user` writes `identity.sessions_revoked` through the outbox, which the assistant consumes into its deny-list (§6.2) |
+| `router.py` | `POST /auth/login`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all`; `GET /.well-known/jwks.json` (the public key, for Part B); `GET /users` (admin directory, names from `patients.public` / `providers.public`) | implemented |
+| `deps.py:54` | `require_role(*allowed)` | implemented — a dependency factory, so enforcement happens before the handler body runs; it verifies the token **and** that its session still exists, so logout and deactivation take effect on the next request |
 
-`require_role` is the one place that deliberately raises `HTTPException` rather than a
-domain error: it is HTTP-layer machinery and 401 has no domain meaning
-(`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md` §3.1). The cost is
-PRD R-6, now closed — 401/403 bodies carry the same `{error, detail}` envelope as every
-other failure, because `require_role` raises `DomainError` subclasses rather than
-`HTTPException`, which Starlette would have handled itself.
+`require_role` was first written to raise `HTTPException`, on the reasoning that it is
+HTTP-layer machinery and 401 has no domain meaning
+(`docs/superpowers/specs/2026-09-03-week1-management-apis-design.md` §3.1). The cost was
+PRD R-6, now closed: it raises `DomainError` subclasses instead, so 401/403 bodies carry the
+same `{error, detail}` envelope as every other failure rather than Starlette's own.
 
 #### `app/modules/patients` — patient records
 
@@ -370,16 +491,19 @@ moved to `scheduling` in Week 2 (PRD D-9).
 | File | Public surface | Status |
 | --- | --- | --- |
 | `models.py:26-86` | `Clinic`, `Department`, `Provider`, `provider_departments` | **models implemented; only `Provider` has a service and endpoints** |
-| `service.py:54,87,103,151` | `register_provider`, `get_provider`, `list_providers`, `update_provider` | implemented |
-| `router.py:35,49,59,78` | `POST /providers`, `GET /providers/{id}`, `GET /providers`, `PATCH /providers/{id}` | implemented — writes admin-only, reads open to any authenticated role |
+| `service.py:116,150,166,214` | `register_provider`, `get_provider`, `list_providers`, `update_provider` | implemented — every provider write also emits `providers.state` (the full current row, keyed by provider id) through the outbox |
+| `service.py:63-112` | `emit_provider_state`, `emit_clinic_state`, `emit_department_state`, `republish_all` | implemented — the producers of the three compacted state topics; `republish_all` (`python -m app.cli republish`, and the seed) back-fills a downstream copy |
+| `router.py:34,48,58,77` | `POST /providers`, `GET /providers/{id}`, `GET /providers`, `PATCH /providers/{id}` | implemented — writes admin-only, reads open to any authenticated role |
 
-**Clinic and department management is schema-only** (PRD `PART-A-FR-1.5`, deliberately
-deferred): the tables and their constraints exist, no endpoint touches them, and they are
-seeded directly for now.
+**Clinic and department management has no endpoints** (PRD `PART-A-FR-1.5`, deliberately
+deferred): the tables and their constraints exist, they are seeded by `python -m app.cli
+seed`, and their state is published on `clinics.state` / `departments.state` by the seed
+and the `republish` command.
 
-**`app/modules/providers/public.py`** is the module's published interface (PRD D-15, R-24):
-`ensure_bookable_provider` and `is_active_provider`, which scheduling's booking activity and
-`GET /slots` use so a deactivated provider takes no new bookings.
+**`app/modules/providers/public.py`** is the module's published interface (PRD D-15, R-24;
+the table in §1.3). Deactivating a provider (`PATCH` with `is_active=false`) refuses new
+bookings through it and, since Week 3, cancels the provider's future appointments through
+the `providers.state` event (R-25, §3.3).
 
 `ProviderUpdate` deliberately omits `license_number`
 (`app/modules/providers/schemas.py:21-26`): it identifies the clinician to a regulator, and
@@ -391,22 +515,27 @@ silently would break the audit trail's link to a real person.
 **Responsibility:** bookable time (`ProviderSlot`), the booking (`Appointment`), what
 actually happened (`Visit`), and who to promote when a slot frees up (`WaitlistEntry`).
 
-**Status: booking, the visit lifecycle, cancel/reschedule, the waitlist and the appointment
-list implemented** (Week 2 slices 2 to 5).
+**Status: implemented** — booking, the visit lifecycle, cancel/reschedule, the waitlist and
+the appointment list (Week 2), and since Week 3 the events every change emits, the three
+Kafka consumers that start workflows, the post-visit charge, provider deactivation, the
+reminder timer and the stale-pending reconciler.
 
 | File | Responsibility |
 | --- | --- |
 | `models.py` | `ProviderSlot` and `SlotStatus` (moved here from `providers`, PRD D-9), `Appointment`, `Visit`, `WaitlistEntry` and their status enums |
 | `state.py` | `APPOINTMENT_TRANSITIONS` as data, `can_transition`, `require_transition` (raises `Conflict`) and `require_cancellable` (`state.py:40`: `pending` or `confirmed`, and no visit row); and for visits `VisitAction`, `VISIT_PRECONDITIONS` / `VISIT_RESULT` as data, `require_visit_action` (`state.py:86`) and `NoShowOutcome` (`state.py:51`). Pure; every status write asks it first |
-| `service.py` | The idempotent booking operations — `create_pending`, `ensure_slot_bookable`, `claim_slot`, `confirm_booking`, `fail_booking`, `get_appointment` — the visit operations (`service.py:509` on): the **strict** staff actions `check_in`, `mark_seen`, `complete_visit` (called only by the endpoints), the **idempotent** timer operations `no_show_deadline` and `mark_no_show` (called only by activities), and the read `get_visit` — the cancel and reschedule operations (`service.py:678` on): `cancel_appointment` (`:618`, **strict**, called only by the endpoint), `complete_reschedule` (`:652`, **idempotent**, called only by the `reschedule.complete` activity), `_release_slot` (`:607`, the one release write both use) and the chain guard `_lock_with_predecessor` / `require_reschedule_settled` (`:186`, `:202`) — the waitlist operations `add_waitlist_entry`, `list_waitlist`, `waitlist_candidates` and `fulfil_waitlist_entry` (`:731`–`:839`) — and the reads `slot_starts_at` (`service.py:111`: one slot's `starts_at`, or `None` for a slot-less appointment) and `list_appointments` (`:118`: appointments joined to their slot, filtered by patient, provider, status and a slot window, newest slot first with slot-less rows last, §2.10), and the read `list_free_slots` (`service.py:931`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
-| `contracts.py` | `BookingRequest`, `VisitRequest`, `FollowUpRequest` and `RescheduleRequest`, frozen dataclasses of strings passed between a workflow and its activities (`BookingRequest.rescheduled_from_id` is last and defaulted, so a request recorded in an older workflow history still decodes), and the three pure workflow-id functions `visit_workflow_id` (`visit-<appointment_id>`), `booking_workflow_id` (`booking-<id>`) and `reschedule_workflow_id` (`reschedule-<new appointment id>`) (`contracts.py:49-65`). The last two live here rather than beside the code that starts those workflows: the workflow sandbox cannot import `booking` (it pulls in the Temporal client), and `booking` must name a reschedule without importing `followups`, which imports `booking`. Pure, so the workflow sandbox imports it directly |
-| `activities.py` | `SchedulingActivities`: thirteen activities — seven `booking.*`, two `visit.*` (`deadline`, `no_show`), `cancel.refund`, `reschedule.complete` and `waitlist.candidates` / `waitlist.fulfil` — each one service call in its own session and transaction, except `cancel.refund`, which makes none; domain errors become non-retryable `ApplicationError`s. Built with the no-show grace, which has no default here — `Settings` is its only source. `billing_precheck`, `schedule_reminders` and `cancel.refund` are stand-ins until Week 3 |
-| `workflows.py` | `BookAppointmentWorkflow` (type name `BookAppointment`): the step sequence, the retry policies, compensation, and the patched start of the visit child; `VisitWorkflow` (type name `Visit`), the no-show timer (§3.2a); `CancelFollowUpWorkflow` (`CancelFollowUp`) and `RescheduleWorkflow` (`Reschedule`), with the shared helpers `_stop_visit` and `_promote_waitlist` (§3.3). No I/O, no clock |
+| `service.py` | The idempotent booking operations — `create_pending` (`:307`), `ensure_slot_bookable` (`:368`), `claim_slot` (`:463`), `confirm_booking` (`:531`, which emits `appointments.booked`), `fail_booking` (`:572`), `get_appointment` (`:97`) — the visit operations: the **strict** staff actions `check_in` (`:670`), `mark_seen` (`:703`), `complete_visit` (`:720`, which emits `visits.completed`), called only by the endpoints; the **idempotent** timer operations `no_show_deadline` (`:655`), `mark_no_show` (`:754`, which emits `appointments.no_show`) and `reminder_facts` (`:144`), called only by activities; and the read `get_visit` — the cancel and reschedule operations: `cancel_appointment` (`:823`, **strict**, emits `appointments.cancelled`), `complete_reschedule` (`:868`, **idempotent**, emits `appointments.rescheduled`), `_release_slot` (`:812`, the one release write both use) and the chain guard `_lock_with_predecessor` / `require_reschedule_settled` (`:252`, `:268`) — provider deactivation's `future_live_appointments` (`:165`) — the waitlist operations `add_waitlist_entry`, `list_waitlist`, `waitlist_candidates` and `fulfil_waitlist_entry` (`:959`–`:1068`) — and the reads `slot_starts_at` (`:112`), `list_appointments` (`:184`, §2.10) and `list_free_slots` (`:1070`): a provider's free slots that have not started, earliest first, the same two conditions `claim_slot` enforces. `GET /slots` takes a required `provider_id` and optional `from`/`to`, which must carry a timezone (`AwareDatetime`) or the answer is a 422; any authenticated role may call it. Framework-free and Temporal-free; flushes, never commits; every event is written with `emit` in the caller's transaction. **The only file in `app/` that writes slot status** (`tests/meta/test_slot_writes.py`) |
+| `public.py` | The published interface (§1.3): `daily_counts` (the analytics reconcile), `visit_facts`, `appointment_parties`, `has_care_relationship` (who may read a clinical record or be messaged), `slot_use_by_department` (utilisation) |
+| `consumers.py` | Three Kafka consumers that start workflows (§3.5): `scheduling.cancel-follow-up` (`appointments.cancelled` → `CancelFollowUpWorkflow`), `scheduling.provider-deactivation` (`providers.state` with `is_active=false` → `ProviderDeactivationWorkflow`), `scheduling.post-visit` (`visits.completed` → `PostVisitWorkflow`). Each start uses a deterministic id and `REJECT_DUPLICATE`, so a redelivered event's `WorkflowAlreadyStartedError` is success |
+| `tasks.py` | `scheduling.reconcile_stale_pending`, the beat sweep that closes PRD R-9 (§3.7) |
+| `contracts.py` | `BookingRequest`, `VisitRequest`, `FollowUpRequest`, `RescheduleRequest`, `PostVisitRequest` and `ProviderDeactivationRequest`, frozen dataclasses of strings passed between a workflow and its activities (fields added later — `BookingRequest.rescheduled_from_id`, `origin`, `conversation_ref` — are last and defaulted, so a request recorded in an older workflow history still decodes), and the pure workflow-id functions `visit_workflow_id` (`visit-<appointment_id>`), `booking_workflow_id` (`booking-<id>`), `reschedule_workflow_id` (`reschedule-<new appointment id>`), `post_visit_workflow_id` (`post-visit-<visit_id>`) and `provider_deactivation_workflow_id` (`provider-deactivation-<provider_id>-<event_id>`, one run per deactivation *event*) (`contracts.py:70-96`). The last two live here rather than beside the code that starts those workflows: the workflow sandbox cannot import `booking` (it pulls in the Temporal client), and `booking` must name a reschedule without importing `followups`, which imports `booking`. Pure, so the workflow sandbox imports it directly |
+| `activities.py` | `SchedulingActivities`: eighteen activities — seven `booking.*`, four `visit.*` (`deadline`, `no_show`, `reminder_due`, `remind`), `cancel.refund`, `reschedule.complete`, `post_visit.charge`, `provider.future_appointments`, `provider.cancel_appointment` and `waitlist.candidates` / `waitlist.fulfil` — each a unit of work in its own session and transaction; domain errors become non-retryable `ApplicationError`s. Built with the no-show grace, the reminder lead, the price and the payment gateway, which have no defaults here — `Settings` (through `app/components.py:build_activities`) is their only source. The money moves through `billing.public` (§3.2): `billing_precheck` authorises (a decline is a non-retryable `PaymentDeclined`), `fail_booking` and `cancel.refund` release, `reschedule.complete` releases the old appointment's hold, `post_visit.charge` captures. `booking.schedule_reminders` is now a logging no-op kept so booking histories replay: the reminder is timed by `VisitWorkflow` (§3.2a) |
+| `workflows.py` | `BookAppointmentWorkflow` (type name `BookAppointment`): the step sequence, the retry policies, compensation, and the patched start of the visit child; `VisitWorkflow` (type name `Visit`), the reminder and no-show timer (§3.2a); `CancelFollowUpWorkflow` (`CancelFollowUp`) and `RescheduleWorkflow` (`Reschedule`), with the shared helpers `_stop_visit` and `_promote_waitlist` (§3.3); `PostVisitWorkflow` (`PostVisit`, the capture) and `ProviderDeactivationWorkflow` (`ProviderDeactivation`) (§3.3). No I/O, no clock |
 | `visits.py` | `notify_checked_in`: the best-effort, 5-second-bounded `checked_in` signal the check-in endpoint sends after its commit, which never raises. Framework-free |
-| `booking.py` | Starting a booking from the API: `appointment_id_for` and `reschedule_appointment_id_for` (id derivation; the reschedule one in its own uuid5 name space, `booking.py:46-56`), `start_booking` (start policy and fingerprint check), `booking_state` (what Temporal knows when no row exists: it asks `booking-<id>`, then `reschedule-<id>`, `booking.py:121-144`). Framework-free |
-| `followups.py` | Starting the cancel follow-up and the reschedule, whose failure policies are opposite: `start_cancel_follow_up` (`followups.py:46-73`, `cancel-<appointment_id>`, **never raises**: the cancel is already committed) and `start_reschedule` (`:87-112`, `reschedule-<new id>`, a failed start is a 503: nothing was written), with `cancel_workflow_id` and `reschedule_fingerprint`. Framework-free |
+| `booking.py` | Starting a booking from the API: `appointment_id_for` and `reschedule_appointment_id_for` (id derivation; the reschedule one in its own uuid5 name space, `booking.py:46-56`), `start_booking` (`:72`, start policy and fingerprint check), `booking_state` (`:121`, what Temporal knows when no row exists: it asks `booking-<id>`, then `reschedule-<id>`). Framework-free |
+| `followups.py` | `start_reschedule` (`reschedule-<new id>`; a failed start is a 503, because nothing was written), `reschedule_fingerprint` and `cancel_workflow_id` (`cancel-<appointment_id>`). The cancel follow-up is no longer started here: until Week 3 slice 4 a best-effort `start_cancel_follow_up` ran after the cancel's commit; now the `scheduling.cancel-follow-up` consumer starts it from the `appointments.cancelled` event (§3.3). Framework-free |
 | `schemas.py` | `BookingCreate`, `BookingAccepted`, `AppointmentRead` (its `starts_at`, `schemas.py:39`, is the slot's start: not an ORM column, filled by the router and `None` until a slot is claimed), `VisitRead`, `CancelRequest`, `RescheduleCreate`, `RescheduleAccepted`, `WaitlistCreate`, `WaitlistRead`, `SlotRead` |
-| `router.py` | `POST /appointments` (202), `GET /appointments` (`:117`, the list, §2.10) and `GET /appointments/{id}` — role gate, patient ownership, and nothing else — with the helper `_read` (`:78`), which builds an `AppointmentRead` and fills `starts_at` through `service.slot_starts_at` for the single-appointment reads (`GET /{id}` and cancel's answer; the list takes `starts_at` from its join instead) — the visit endpoints `POST /appointments/{id}/check-in`, `/seen`, `/complete` (200, `router.py:186-235`) and `GET /appointments/{id}/visit` (`:343`), `POST /appointments/{id}/cancel` (200, `:256`) and `POST /appointments/{id}/reschedule` (202, `:287`), plus two more routers: `slots_router` (`router.py:59`; `GET /slots`, `:362`) and `waitlist_router` (`:60`; `POST /waitlist` 201, `:391`, and `GET /waitlist`, `:411`), mounted at `app/api/router.py:19-20` |
+| `router.py` | `POST /appointments` (202, `:106`; per-user rate limit shared with reschedule, and an optional `X-Conversation-Ref` header the assistant sets, carried on `appointments.booked`), `GET /appointments` (`:153`, the list, §2.10) and `GET /appointments/{id}` (`:188`) — role gate, patient ownership, and nothing else — with the helper `_read` (`:99`), which builds an `AppointmentRead` and fills `starts_at` through `service.slot_starts_at` for the single-appointment reads (`GET /{id}` and cancel's answer; the list takes `starts_at` from its join instead) — the visit endpoints `POST /appointments/{id}/check-in`, `/seen`, `/complete` (200, `router.py:222-294`; seen and complete are the appointment's own provider's, `_treating`, `:242`, and complete needs a signed note) and `GET /appointments/{id}/visit` (`:391`), `POST /appointments/{id}/cancel` (200, `:309`) and `POST /appointments/{id}/reschedule` (202, `:333`), plus two more routers: `slots_router` (`router.py:63`; `GET /slots`, `:410`) and `waitlist_router` (`:64`; `POST /waitlist` 201, `:439`, and `GET /waitlist`, `:459`), mounted in `app/api/router.py` |
 
 | Class | Notes |
 | --- | --- |
@@ -415,6 +544,77 @@ list implemented** (Week 2 slices 2 to 5).
 | `Appointment` (`models.py:149-225`) | Carries the three constraints §3.2 depends on: the composite FK proving the slot belongs to the named provider and clinic, the composite FK proving the department belongs to the named clinic, and `CHECK (status <> 'confirmed' OR slot_id IS NOT NULL)` — and the one-live-replacement index `ux_appointments_live_reschedule` (`models.py:214-224`, §3.2) |
 | `Visit` (`models.py:228-246`) | 1:1 with an appointment via a unique FK. Average Wait Time is `avg(seen_at - checked_in_at)` |
 | `WaitlistEntry` (`models.py:249-269`) | Patient plus an optional provider/department and a time window; `active` until a promotion sets it `fulfilled` (§3.3) |
+
+#### `app/modules/billing` — one billing record per appointment (Week 3)
+
+**Responsibility:** the money side of a booking, as a state machine, not a ledger (spec
+D-27). No HTTP endpoints; it is reached only through `billing/public.py` by scheduling's
+activities and reconciler.
+
+| File | Responsibility |
+| --- | --- |
+| `models.py` | `BillingRecord` (one per appointment, migration `0006`) and `BillingStatus`: `authorized`, `declined`, `captured`, `voided`, `refunded` |
+| `service.py` | `authorize`, `capture`, `release` (void a hold, or refund a capture). Idempotent twice over: by the record's state, and by the gateway's `Idempotency-Key` (`authorize-<id>`, `capture-<id>`, …), which covers the window where the gateway acted but the row was never written. A decline is *returned* and recorded, not raised — the activity raises after its commit. Every change emits `billing.status_updated` |
+| `gateway.py` | `PaymentGateway`: HTTP to `services/payments_mock` (compose `payments-mock`; `POST /_chaos` makes it misbehave), with a timeout and a `CircuitBreaker`. A 5xx, timeout, refused connection or open circuit is `GatewayUnavailable` (retryable: the booking waits); a 4xx is `GatewayRejected` (permanent) |
+
+#### `app/modules/notifications` — patient messages (Week 3)
+
+**Responsibility:** telling a patient something happened, by email (SMTP, to Mailpit in
+compose) or SMS (a logging fake), at least once and never twice.
+
+| File | Responsibility |
+| --- | --- |
+| `models.py` | `Notification` (migration `0007`): one row per message, unique on its key (`<topic>:<event_id>` for event-driven ones), `queued → sending → sent` or `failed` |
+| `consumers.py` | `notifications.patient-messages`: consumes `appointments.booked`, `.cancelled`, `.rescheduled`, `.no_show`, `billing.status_updated` (refunds only), `clinical.note_signed` and `clinical.test_ordered`, and queues one row per event |
+| `service.py` | `queue` (inside the caller's transaction; the Celery enqueue is registered to run **after commit**), `claim` (`queued → sending`, the reason a twice-delivered task sends once), `mark_sent`, `release`, `stuck` |
+| `tasks.py` | `notifications.send` (claim, per-patient throttle in Redis, send, retry with backoff up to five times, then reject to `notifications.dlq`) and `notifications.requeue_stuck` (the beat sweep for a row whose enqueue was lost) |
+| `templates.py`, `channels.py` | The message text per kind; the SMTP and SMS senders |
+| `public.py` | `recipient_for`, `queue_reminder` — what the visit workflow's `visit.remind` activity uses |
+| `router.py` | `POST /notifications` (202; front desk and admin to any patient, a provider only to a patient they treat; `Idempotency-Key` required; audited with its text) — how an assistant draft that staff approved reaches a patient (§6.2) |
+
+#### `app/modules/analytics` — the rollup and its endpoints (Week 3)
+
+**Responsibility:** the five `PART-A-FR-5` metrics, built from events rather than queried
+from the operational tables.
+
+| File | Responsibility |
+| --- | --- |
+| `models.py` | `AnalyticsDaily` (migration `0008`): one row per (day, clinic, provider) with booked, cancelled, no-show and completed counts and `wait_seconds_sum` / `wait_count` (Average Wait Time, PRD D-3). Migration `0008` also creates the read-only `analytics_reader` role Grafana's Postgres datasource uses |
+| `consumers.py` | `analytics.daily-rollup`: `appointments.booked`, `.cancelled`, `.no_show` and `visits.completed` into `analytics_daily` |
+| `router.py` | `GET /analytics/summary`, `/timeseries` and `/utilisation` (admin and front desk). Total Patients is read through `patients.public`; utilisation is the slot inventory through `scheduling.public` |
+| `tasks.py` | `analytics.reconcile`, nightly: recomputes the last seven days from `scheduling.public.daily_counts` and reports each disagreeing cell as `smarthealth_analytics_drift` and a log line. It reports, never overwrites (an in-flight event would be double-counted) |
+
+#### `app/modules/clinical` — the clinical record (Week 4)
+
+**Responsibility:** what a visit produced — the versioned note with diagnoses, prescriptions,
+test orders against `catalogue.py` — and the reports patients upload (spec §9.6, D-31). None
+of its content travels on Kafka: its events carry ids and statuses only, and
+`tests/meta/test_event_catalog.py` refuses clinical field names in any schema.
+
+| File | Responsibility |
+| --- | --- |
+| `models.py` | `ClinicalNote` (versioned: a signed version is never edited; amending opens a new draft, one draft per visit at a time), `Prescription`, `TestOrder`, `PatientDocument` (migration `0009`) |
+| `service.py` | Draft, sign (emits `clinical.note_signed` and, per order, `clinical.test_ordered`), amend, review a test order, upload a document (emits `documents.uploaded`) |
+| `router.py` | `PUT /appointments/{id}/note`, `POST …/note/sign`, `POST …/note/amend`, `GET …/note`, `GET /patients/me/record`, `GET /patients/{id}/record`, `POST /patients/{id}/documents`, `GET /patients/{id}/documents/{document_id}`, `POST /test-orders/{id}/review`. Who may read is decided by role, the patient's and provider's identity, and the care relationship (`scheduling.public.has_care_relationship`) |
+| `storage.py` | `DocumentStore`: a directory on a volume (`part-a-documents`), written file first and row last. The spec named MinIO; its images could not be pulled when this was built, and the interface is what the code depends on |
+| `tasks.py` | `clinical.extract_document` on the `documents` queue: text from an uploaded PDF (`pypdf`); any other type is recorded `not_extractable`, a malformed PDF `failed` |
+| `public.py` | `has_signed_note` — a visit completes only with a signed note (§2.9) |
+
+#### `app/events` — the event backbone (Week 3)
+
+Not a domain module: infrastructure every module writes through, described in §3.4 and §3.5.
+
+| File | Responsibility |
+| --- | --- |
+| `catalog.py` | `TOPICS`: every topic's logical name, kind (`EVENT`, seven-day retention; `STATE`, compacted), schema version and partitions; `<topic>.dlt` for dead letters |
+| `schemas.py` | Loads and checks the Avro schemas in `contracts/events/` |
+| `outbox.py` | `emit(session, topic, key=, payload=)`: validates the payload, adds an `outbox_events` row with the current trace context, never commits |
+| `models.py` | `OutboxEvent`, `ProcessedEvent` (migration `0005`) |
+| `relay.py` | `Relay`: rows to Kafka, in order, at least once |
+| `kafka.py` | Producer and consumer construction, `ensure_topics`, `register_schemas` (compatibility `BACKWARD_TRANSITIVE`), Avro (de)serialisers; every name through `Settings.topic()` |
+| `consumer.py` | `ConsumerSpec`, `CONSUMERS`, `ConsumerRunner`: dedupe, retry, dead-letter, commit |
+| `deadletters.py` | `replay` behind `python -m app.cli dlt-replay` |
+| `maintenance.py` | `events.purge_published`, the daily outbox purge |
 
 #### `frontend/` — a client outside the monolith
 
@@ -427,19 +627,24 @@ the `frontend` service under `--profile app`, which waits for `app` to be health
 Appointments page (`frontend/src/pages/Appointments.tsx`) calls `GET /appointments`: a
 patient sees their own list, staff get status and provider filters, and a Cancel button
 (patient, front desk, admin, on a `pending` or `confirmed` row) calls
-`POST /appointments/{id}/cancel`; the API still decides whether a cancel is allowed. Design:
+`POST /appointments/{id}/cancel`; the API still decides whether a cancel is allowed. Week 5
+added the Assistant, Reports and AI usage pages (shadcn AI Elements, Tailwind v4, React 19),
+which talk to the Part B services through Envoy with a Connect gRPC-Web client generated by
+`npm run gen:proto` (§6). Design:
 `docs/superpowers/specs/2026-10-28-frontend-demo-client-design.md`.
 
 #### Supporting files
 
 | File | Responsibility | Status |
 | --- | --- | --- |
-| `app/settings.py:40-146` | Every DSN and every externally-visible resource name. `topic()`, `queue()`, `task_queue()` (`:99-109`) namespace Kafka/RabbitMQ/Temporal names through one prefix — harness requirement 1, so a test run can isolate itself on a shared stack. No call site may hardcode a name. | implemented; `task_queue()` is called by `app/worker.py` and `app/modules/scheduling/router.py`, `topic()` and `queue()` have **no callers yet** |
-| `app/main.py:27-57` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. | implemented |
+| `app/settings.py` | Every DSN and every externally-visible resource name. `topic()`, `queue()`, `task_queue()` (`:173-183`) namespace Kafka/RabbitMQ/Temporal names through one prefix — harness requirement 1, so a test run can isolate itself on a shared stack. No call site may hardcode a name. | implemented; `task_queue()` is called by the worker, the scheduling router and the scheduling consumers, `topic()` by `app/events/kafka.py:broker_topic` (every topic and subject), `queue()` by `app/celery_app.py:queues` |
+| `app/main.py` | App factory and lifespan. Every client is lazy, so the application boots with no infrastructure running and the contract lane exercises the real startup path without Docker. The lifespan installs telemetry, instruments the engine, and refuses the committed development signing key in production. | implemented |
+| `app/relay.py`, `app/consumers.py` | The relay and consumer processes: `python -m app.relay [--setup]` (`--setup` creates topics and registers schemas, then exits; broker auto-creation is off) and `python -m app.consumers` (every registered consumer, one runner each). | implemented |
+| `app/celery_app.py` | The Celery app: queues `notifications` (dead-lettered to `notifications.dlq`), `maintenance` and `documents`, all through `Settings.queue()`; `acks_late`, `reject_on_worker_lost`, prefetch 1; the beat schedule; `TASKS`. | implemented |
 | `app/worker.py` | The Temporal worker process. `python -m app.worker` registers every component, builds the activities' resources (a Postgres session factory, the Mongo audit log, a `Clock`, and `Settings.no_show_grace_minutes` as a `timedelta`), imports `app/db/all_models.py` so every foreign key resolves in a process that never loads the routers, and polls `Settings.task_queue("scheduling")`; SIGTERM and SIGINT call `worker.shutdown()`, which gives in-flight activities `GRACEFUL_SHUTDOWN` (8 s, `app/core/temporal.py`) to finish before cancelling them, so `docker stop` neither waits out its grace period nor cuts activities off; the compose `stop_grace_period` (15 s) sits above it. `python -m app.worker --check` executes the canary and exits 0/1 — it is the `worker` service's compose healthcheck, connect and canary bounded to 8 s overall (`CHECK_TIMEOUT`) so it fails by exit code inside compose's 12 s timeout. | implemented |
-| `app/components.py` | `register_all()`, the one place Temporal workflows and activities are registered — not in the workflow modules, because the sandbox re-imports those. Idempotent. Registers the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow` and the thirteen scheduling activities (seven `booking.*`, two `visit.*`, `cancel.refund`, `reschedule.complete`, `waitlist.candidates`, `waitlist.fulfil`), each under its Temporal name; `build_activities()` binds them to a `SchedulingActivities` instance at worker start. | implemented |
-| `app/cli.py:53-181` | `create-user` (the way to put a chosen login into the system outside a test fixture), `link-patient` (`link_patient`, `:112`: `--email` and `--mrn`; refuses an unknown email or MRN, a login whose role is not `patient`, and a record or login already linked elsewhere, each with exit 1; calls `patients.service.link_user` as actor `system:cli` in its own transaction, committing only after the audit write, so a Mongo outage fails it rather than linking silently) and `seed` (which also creates one login per role). Must never import `app.main` or a router (`cli.py:6-7`). | implemented |
-| `migrations/versions/` | `0001_baseline` (ten tables, `btree_gist`, the GiST exclusion constraint, `ux_appointments_live_slot`, the `updated_at` trigger on nine tables), `0002_coherence_constraints` (composite FKs and `confirmed_requires_slot`), `0003_updated_at_clock_timestamp`, `0004_live_reschedule_unique` (`ux_appointments_live_reschedule`, §3.2) | implemented |
+| `app/components.py` | `register_all()`, the one place Temporal workflows, activities and Kafka consumers are registered — not in the workflow modules, because the sandbox re-imports those. Idempotent. Registers the canary, `BookAppointmentWorkflow`, `VisitWorkflow`, `CancelFollowUpWorkflow`, `RescheduleWorkflow`, `PostVisitWorkflow`, `ProviderDeactivationWorkflow`, the eighteen scheduling activities, each under its Temporal name, and the five consumers (three scheduling, one notifications, one analytics); `build_activities()` binds the activities to a `SchedulingActivities` instance at worker start, with the payment gateway, price and reminder lead from `Settings`. Celery tasks register themselves in `TASKS` when `app/celery_app.py` includes their modules. | implemented |
+| `app/cli.py` | `create-user` (the way to put a chosen login into the system outside a test fixture), `link-patient` (`link_patient`, `:116`: `--email` and `--mrn`; refuses an unknown email or MRN, a login whose role is not `patient`, and a record or login already linked elsewhere, each with exit 1; calls `patients.service.link_user` as actor `system:cli` in its own transaction, committing only after the audit write, so a Mongo outage fails it rather than linking silently), `seed` (which also creates one login per role), `deactivate-user`, `republish`, `dlt-replay` and `generate-signing-key`. Must never import `app.main` or a router. | implemented |
+| `migrations/versions/` | `0001_baseline` (ten tables, `btree_gist`, the GiST exclusion constraint, `ux_appointments_live_slot`, the `updated_at` trigger on nine tables), `0002_coherence_constraints` (composite FKs and `confirmed_requires_slot`), `0003_updated_at_clock_timestamp`, `0004_live_reschedule_unique` (`ux_appointments_live_reschedule`, §3.2), `0005_outbox_and_booking_origin` (`outbox_events`, `processed_events`, the booking origin), `0006_billing_records`, `0007_notifications`, `0008_analytics_daily` (and the `analytics_reader` role), `0009_clinical_records` | implemented |
 
 ---
 
@@ -454,7 +659,7 @@ an explicit `await session.commit()` — `app/modules/patients/router.py:39,91` 
 `app/modules/providers/router.py:44,89` — and no service function commits. Outside HTTP the
 same rule holds with a different owner: each booking activity opens a session, makes one
 service call and commits (`SchedulingActivities._unit_of_work`,
-`app/modules/scheduling/activities.py:73-95`).
+`app/modules/scheduling/activities.py:84`).
 
 This is not ceremony. It is what lets the caller decide the transaction's extent, which the
 booking workflow requires: claiming a slot and attaching it to the appointment must either
@@ -506,14 +711,15 @@ sequenceDiagram
         S-->>R: raise InvalidCredentials("email or password is incorrect")
         R-->>C: 401 — identical message on every failure path
     else success
-        S->>J: create_access_token(sub=user.id, role=user.role, now)
-        J-->>S: signed JWT
-        S-->>R: (token, expires_in)
-        R-->>C: 200 {access_token, token_type: bearer, expires_in}
+        S->>S: open a session in Redis (sid, refresh-token family)
+        S->>J: create_access_token(sub=user.id, role=user.role, sid, now)
+        J-->>S: EdDSA-signed JWT (ten minutes)
+        S-->>R: (token, expires_in, refresh_token)
+        R-->>C: 200 {access_token, token_type: bearer, expires_in, refresh_token}
     end
 ```
 
-**The constant-time path.** `_DUMMY_PASSWORD_HASH` (`app/modules/identity/service.py:26`) is
+**The constant-time path.** `_DUMMY_PASSWORD_HASH` (`app/modules/identity/service.py:34`) is
 a real argon2 hash of a throwaway string, verified against whenever no user matches.
 
 The timing oracle it defeats is specific. An identical error message is not sufficient,
@@ -523,15 +729,15 @@ because `or` short-circuits: written the obvious way —
 trivially readable over a network, so response time alone would enumerate which email
 addresses are registered, defeating the identical message entirely. Instead
 `verify_password` runs exactly once on every path and its result is consulted afterwards
-(`app/modules/identity/service.py:59-63`). The rationale is written out at
-`service.py:39-48`.
+(`app/modules/identity/service.py:110-113`). The rationale is written out in
+`authenticate`'s docstring (`service.py:80-95`).
 
 Two supporting details:
 
 - `verify_password` treats an unparseable stored hash as a failed login rather than raising
-  (`app/modules/identity/security.py:38-50`), so a corrupted column cannot turn into a 500
+  (`app/modules/identity/security.py:56-68`), so a corrupted column cannot turn into a 500
   that leaks a stack trace and signals that *this* account differs from the others.
-- `decode_access_token` disables `verify_iat` (`security.py:78-88`) because PyJWT checks
+- `decode_access_token` disables `verify_iat` (`security.py:152-165`) because PyJWT checks
   `iat` against the wall clock with zero leeway, and a few seconds of clock skew between
   issuer and validator would reject a good token. `exp` is still fully enforced.
 
@@ -557,7 +763,7 @@ sequenceDiagram
     R->>A: require_role(front_desk, admin)
     A-->>R: TokenClaims(subject, role)
     R->>S: register_patient(session, audit, data, actor_user_id=claims.subject)
-    S->>P: INSERT patients; FLUSH
+    S->>P: INSERT patients, then FLUSH
     alt IntegrityError on ix_patients_mrn
         S-->>R: raise Conflict("a patient with MRN ... already exists")
         R-->>C: 409
@@ -580,8 +786,8 @@ entry for a patient that was never created. The constraint name is read through
 (`service.py:35`) — a unique *index*, not a named constraint, because `Patient.mrn` is
 declared `unique=True, index=True`. Providers are genuinely asymmetric here:
 `Provider.license_number` has no index, so Postgres enforces it with a named UNIQUE
-constraint, `uq_providers_license_number` (`app/modules/providers/service.py:31-36`).
-Anything *other* than the expected constraint is re-raised (`providers/service.py:70-73`),
+constraint, `uq_providers_license_number` (`app/modules/providers/service.py:32-37`).
+Anything *other* than the expected constraint is re-raised (`providers/service.py:132-135`),
 so an unrelated violation surfaces as a 500 that gets investigated rather than a misleading
 409.
 
@@ -633,7 +839,7 @@ Three details, each a corrected mistake rather than a preference:
 `_` are LIKE metacharacters. Without `autoescape=True` a search for `a_b` also matches
 `axb`, and a search for `%` matches every patient in the system — the same
 unescaped-wildcard problem that makes `specialty` filtering use case-insensitive *equality*
-rather than ILIKE on the providers side (`app/modules/providers/service.py:117-119`).
+rather than ILIKE on the providers side (`app/modules/providers/service.py:182`).
 `autoescape=True` escapes `%`, `_` and the escape character itself before wrapping the term
 in wildcards.
 
@@ -646,7 +852,7 @@ The comment says "do not simplify this back to `contains`" for a reason — it w
 (`patients/service.py:124-130`). Filtering one and not the other makes `total` describe a
 different result set than `items`; `created_at` alone is not unique, and offset pagination
 over a non-unique sort key skips and repeats rows across pages
-(`providers/service.py:136-144` spells both out).
+(`providers/service.py:199-208` spells both out).
 
 `MAX_LIMIT = 200` (`app/core/pagination.py:23`) is enforced by the
 `Query(..., le=MAX_LIMIT)` bound in `page_params` (`app/api/deps.py:42-47`), so an
@@ -792,14 +998,21 @@ text goes to the log with a traceback instead.
 Two documented limits: `HTTPException` is handled separately by Starlette, so FastAPI's 404s
 and 422s keep their own shapes — this is why `require_role` raises `DomainError` subclasses
 rather than `HTTPException`, which is what closed PRD R-6; and a `DomainError` raised inside
-a `StreamingResponse` body runs after the response has started and is not caught, which
-Part B's streaming responses will have to handle themselves (`error_handlers.py:9-13`).
+a `StreamingResponse` body runs after the response has started and is not caught
+(`error_handlers.py:9-13`). No Part A endpoint streams: the streaming the system does is
+gRPC server streaming in the assistant service, which reports a failure as an event in the
+stream itself (§6.3).
 
 ### 2.8 POST /appointments and GET /appointments/{id}
 
 The first endpoint whose work does not finish inside the request. The router writes
 nothing: it derives an id, starts a workflow, and answers 202. The workflow (§3.2) creates
 the row and drives it to `confirmed` or `failed`; the client polls `GET` to find out which.
+Two things sit in front of the diagram below since Week 3: a per-user rate limit, shared with
+reschedule, that answers 429 (`_limit_bookings`, `router.py:80`), and an optional
+`X-Conversation-Ref` header the assistant sends when it books for a user, which sets the
+booking's `origin` to `assistant` and travels on `appointments.booked` so conversions can be
+counted (§6.5).
 
 ```mermaid
 sequenceDiagram
@@ -870,7 +1083,7 @@ failed start leaves nothing behind, and a started workflow either confirms or co
 `uuid5(IDEMPOTENCY_NAMESPACE, f"{caller}:{key}")` (`app/modules/scheduling/booking.py:28-43`),
 so the same caller and key always name the same appointment and two callers cannot collide
 on one key. Without one it is a `uuid7`, time-ordered like every other key. An empty header
-is a 422 (`min_length=1`, `router.py:89-92`): an empty key is still a key, and would collapse
+is a 422 (`min_length=1`, `router.py:111-115`): an empty key is still a key, and would collapse
 every such request from one caller onto one booking. The start policies
 (`booking.py:89-94`) make a repeat land on the first workflow whether it is still running
 (`USE_EXISTING`) or has closed (`REJECT_DUPLICATE` — Temporal's default would start a
@@ -942,22 +1155,27 @@ sequenceDiagram
 ```
 
 **The write is the check.** `service.check_in` takes the appointment row lock first
-(`_require`, `service.py:168`), reads the visit under its own lock, and asks
+(`_require`, `service.py:233`), reads the visit under its own lock, and asks
 `require_visit_action` (`state.py:86`) whether the action is legal *now* — so there is no
 separate precheck to go stale between the check and the write. The `ON CONFLICT DO NOTHING`
-(`service.py:591-598`) is a second gate behind the check: if anything ever inserted a visit
+(`service.py:688-695`) is a second gate behind the check: if anything ever inserted a visit
 without the lock, the unique `appointment_id` still allows one, and zero rows affected is a
-`Conflict` too (`service.py:599-600`). The functions are **strict**: a repeat is a 409, not a
+`Conflict` too (`service.py:696-697`). The functions are **strict**: a repeat is a 409, not a
 silent success, because nothing retries them — a duplicate is a human mistake worth
 reporting, and a no-op would tell staff the second check-in "worked".
 
 **The other three differ only in what they write.** `POST /appointments/{id}/seen`
-(`router.py:206`, `service.mark_seen`) sets `seen_at` and the visit `in_progress`;
-`POST /appointments/{id}/complete` (`router.py:222`, `service.complete_visit`) sets
+(`router.py:253`, `service.mark_seen`) sets `seen_at` and the visit `in_progress`;
+`POST /appointments/{id}/complete` (`router.py:270`, `service.complete_visit`) sets
 `completed_at`, the visit `completed` *and* the appointment `completed` in one transaction,
-and writes no slot — completion never frees a slot (it is normally already in the past, and stays `booked`; PRD R-2). Neither signals
-Temporal. Both are gated to `provider` and `admin`; check-in to `front_desk` and `admin`.
-`GET /appointments/{id}/visit` (`router.py:343`) reads: the owning patient, any provider and
+writes no slot — completion never frees a slot (it is normally already in the past, and stays `booked`; PRD R-2) — and
+writes `visits.completed` to the outbox, whose consumer starts the post-visit charge (§3.3). Neither signals
+Temporal. Both are gated to `provider` and `admin`, and a provider must be **the appointment's own**
+(`_treating`, `router.py:242`: anyone else's is a 404, so ids cannot be probed — PRD R-14, closed in Week 4);
+check-in is `front_desk` and `admin`. **Complete also needs a signed clinical note**: the router asks
+`clinical.public.has_signed_note` and answers 409 without one, before the service runs — the check sits in the
+router because `scheduling/service.py` crosses no module boundary.
+`GET /appointments/{id}/visit` (`router.py:391`) reads: the owning patient, any provider and
 front desk, and admin; another patient's appointment is a 404, like `GET /appointments/{id}`,
 and an appointment with no visit yet is a 404 too.
 
@@ -969,7 +1187,7 @@ INFO, an `RPCError`, a `RuntimeError` from a lazy client that cannot connect, an
 of `NOTIFY_TIMEOUT` (5 s, `visits.py:32`) at WARNING. The bound exists because connecting a
 lazy client to a blackholed host takes tens of seconds in the SDK. The contract tier proves a
 failing Temporal still answers 200 with one commit
-(`test_a_cancel_never_touches_temporal_even_when_it_is_down`, renamed in Week 3 slice 4: the request no longer calls Temporal at all); no test exercises the 5-second
+(`test_temporal_failing_after_the_commit_still_answers_200`, `tests/tiers/t1_contract/test_visits_contract.py`); no test exercises the 5-second
 bound itself. The audit write precedes the commit, as everywhere (PRD R-1).
 
 ---
@@ -1011,17 +1229,19 @@ sequenceDiagram
 
 **A patient's list is forced, not filtered** (spec §4.6). For a patient the router
 discards whatever `patient_id` was sent and uses the one it looked up from the login
-(`list_appointments`, `router.py:117`). Naming someone else's id is a 403 rather than a
+(`list_appointments`, `router.py:153`). Naming someone else's id is a 403 rather than a
 silent substitution, so a client that asked for another patient learns it was refused; a
 login with no linked patient record is a 404, because an empty list would hide a misissued
 account. The 403 depends on no lookup of the named patient, so it says nothing about
 whether that patient exists. This differs from `GET /appointments/{id}`, which answers 404
 for another patient's appointment so that appointment ids cannot be probed. Staff
 (`provider`, `front_desk`, `admin`) are not scoped at all: a provider sees every
-appointment, not just their own (PRD R-14). This is inconsistent with `GET /waitlist`,
-which excludes providers entirely. The inconsistency is deliberate only in the sense that
-per-object provider scoping is R-14: until providers can be tied to their own patients,
-neither read can be narrowed, and the appointment list was left open rather than closed.
+appointment, not just their own, and may filter by `provider_id` to see their own. This is
+inconsistent with `GET /waitlist`, which excludes providers entirely. When R-14 was closed
+in Week 4, provider ownership (`providers.public.provider_id_for_user`) was enforced where a
+provider *acts* — marking a visit seen or complete — and where they read clinical content
+(the record, through the care relationship); this list, which carries no clinical content,
+was left as it was.
 
 **Ordering and the slot join.** The list is an outer join to `provider_slots`, so an
 appointment with no slot yet (`pending` before the claim, an early `failed`) still appears.
@@ -1035,29 +1255,27 @@ is given. The query uses `populate_existing`, like `get_appointment`, so it read
 rows rather than the session's identity map.
 
 **`starts_at`** is not an `appointments` column. The list reads it from the join; the single
-read (`_read`, `router.py:78`) asks `service.slot_starts_at`, one extra query, and returns
+read (`_read`, `router.py:99`) asks `service.slot_starts_at`, one extra query, and returns
 `None` for an appointment with no slot. Without it a client would need a second call per
 row to say *when*.
 
-## 3. Event flows — booking, visits and cancellation built, the rest design
+## 3. Event flows
 
-> **Built: the Temporal plumbing and four business workflows** — booking (§3.2), the visit
-> no-show timer (§3.2a), and the cancel follow-up and reschedule (§3.3). The client, the
-> worker process, the `WORKFLOWS` / `ACTIVITIES` registries and a canary workflow used as the
-> worker's readiness probe (`app/core/temporal.py`, `app/core/temporal_canary.py`,
-> `app/components.py`, `app/worker.py`), and `app/modules/scheduling/`'s workflows over its
-> thirteen activities. **Nothing else in this section runs**: §3.4–§3.5 are design. There is
-> no Kafka producer or consumer, no Celery task, and no Kafka or Celery client library in
-> `pyproject.toml`. `Settings.task_queue()` is called by the worker and the scheduling
-> router; `Settings.topic()` and `Settings.queue()` have zero callers.
+> **All built.** Six Temporal workflows run on the `worker` service — booking (§3.2), the
+> visit reminder and no-show timer (§3.2a), the cancel follow-up, reschedule, post-visit
+> charge and provider deactivation (§3.3) — over eighteen activities, with a canary workflow
+> as the worker's readiness probe (`app/core/temporal.py`, `app/core/temporal_canary.py`,
+> `app/components.py`, `app/worker.py`). Every domain change writes an event to the outbox in
+> its own transaction; the relay publishes it to Kafka as Avro under Schema Registry (§3.4);
+> five registered consumers react to it (§3.5). Celery over RabbitMQ delivers notifications,
+> extracts document text and runs four scheduled sweeps (§3.7). Traces, metrics and
+> dashboards cover all of it (§3.8).
 >
-> The design sections describe the rationale and the constraints already in the database
-> that will police them. They were written before the code because the Week 1 schema was
-> shaped by them: the `pending` default, the `failed` status, `provider_slots.version`,
-> `rescheduled_from_id` and `waitlist_entries` were all here for flows that did not yet run
-> (they all do now).
->
-> **Scheduled:** Kafka, Celery and observability in Week 3 (PRD §10).
+> Several of these sections were first written as designs before the code existed, because
+> the Week 1 schema was shaped by them: the `pending` default, the `failed` status,
+> `provider_slots.version`, `rescheduled_from_id` and `waitlist_entries` were all there for
+> flows that did not yet run. They have been rewritten to the built behaviour; where the
+> built design replaced an earlier one, the section says what changed and why.
 
 ### 3.1 The three-way split
 
@@ -1067,7 +1285,7 @@ project", and PRD **D-7** records the split as a decision. This is the reasoning
 
 | | **Temporal** | **Kafka (+ Schema Registry)** | **Celery + RabbitMQ** |
 | --- | --- | --- | --- |
-| **Owns** | Durable multi-step *business* workflows: booking, cancel/reschedule, the visit no-show timer (all built); provider deactivation (designed, **not built** — PRD R-25, Week 3) | Domain events carried *between* modules: something happened, and other modules may care | Fire-and-forget background jobs: notification delivery, analytics rollups, slot generation |
+| **Owns** | Durable multi-step *business* workflows and anything that owns *time*: booking, cancel follow-up, reschedule, the visit reminder and no-show timer, the post-visit charge, provider deactivation | Domain events carried *between* modules: something happened, and other modules may care — the trigger for every follow-up workflow, the source of notifications and of the analytics rollup, and the only channel into Part B | Fire-and-forget commands to one worker: sending a notification, extracting a document's text, and the beat sweeps (stuck notifications, stale pending bookings, the outbox purge, the analytics reconcile) |
 | **Guarantees** | Durable execution state, automatic retry per activity, compensation on failure, deterministic replay after a crash, time-skipping in tests | Durable ordered log, replayable from an offset, many independent consumers, schema-enforced payloads | A job runs, eventually, with retry and a dead-letter path |
 | **Costs** | A worker process, workflow-determinism constraints on the code, operational surface | Eventual consistency, at-least-once delivery, a schema to version, consumer lag to monitor | No ordering, no cross-job state, no compensation — a failed job is just a failed job |
 | **Failure from misusing it** | *Booking as a Celery task:* there is no durable state between steps, so a worker crash after slot reservation and before billing leaves a held slot and a `pending` appointment that nothing will ever finish or compensate. Retrying the task re-runs steps that already succeeded. | *Request-scoped work over Kafka:* the caller must either block on a reply topic or return before the work is done. It adds a network hop, a serialisation round-trip and consumer lag to something that was a function call — latency for no benefit, and the failure is now asynchronous and invisible to the caller. | *A reminder as a Temporal workflow:* a workflow history, a task queue and a worker slot to send one SMS that is allowed to fail and be retried. Correct, and needless overhead at the volume of reminders a clinic network sends. |
@@ -1082,22 +1300,28 @@ The discriminating questions, in order:
 3. **Otherwise**, Celery: work that must not hold the request, whose failure is survivable
    and retryable in isolation.
 
-The three compose rather than compete. The booking workflow (Temporal) publishes
-`appointments.booked` (Kafka) as its last step; a consumer of that event enqueues reminder
-delivery (Celery). Each mechanism does the one thing it is good at. (As built in Week 2 the
-booking workflow ends at confirm: the Kafka step and the Celery delivery are Week 3, and
-reminder scheduling is a stand-in activity until then.)
+The three compose rather than compete, and the built system shows it on every path. The
+booking workflow (Temporal) confirms, and `confirm_booking` writes `appointments.booked` to
+the outbox in the same transaction (Kafka); the `notifications.patient-messages` consumer
+queues a confirmation email, sent by a Celery task; the `analytics.daily-rollup` consumer
+counts it. The reminder 24 hours before the slot is timed by `VisitWorkflow` (Temporal owns
+*when*) and delivered by Celery (Celery owns *how*) — spec D-26. A cancel is a synchronous
+write that emits `appointments.cancelled`; a consumer turns that into a
+`CancelFollowUpWorkflow` (refund, waitlist), and another into an email. Each mechanism does
+the one thing it is good at.
 
-### 3.2 The booking workflow — BUILT
+### 3.2 The booking workflow
 
-> **Built in Week 2 slice 2.** `BookAppointmentWorkflow` (`app/modules/scheduling/workflows.py:64-111`)
-> runs on the `worker` service, with seven `booking.*` activities in
-> `app/modules/scheduling/activities.py` over the service operations in
-> `app/modules/scheduling/service.py`. One part of the diagram below is **not built**:
-> publishing `appointments.booked` needs Week 3's Kafka. Starting the visit workflow after
-> confirmation was added in slice 3 and is built (§3.2a). The billing pre-check and
-> reminder scheduling are **stand-ins** — the first always approves, the second logs — so the workflow has its final
-> shape now and Week 3 replaces their bodies, not the workflow.
+> **Built in Week 2 slice 2; completed in Week 3.** `BookAppointmentWorkflow`
+> (`app/modules/scheduling/workflows.py:66-113`) runs on the `worker` service, with seven
+> `booking.*` activities in `app/modules/scheduling/activities.py` over the service
+> operations in `app/modules/scheduling/service.py`. Week 2 shipped the billing pre-check and
+> reminder scheduling as stand-ins so the workflow had its final shape; Week 3 replaced the
+> bodies, not the workflow: the pre-check authorises with the payment gateway (slice 4,
+> D-27), `appointments.booked` is written to the outbox by `confirm_booking` (slice 3), and
+> the reminder moved to the visit workflow (slice 5, D-26), leaving `schedule_reminders` a
+> logging no-op that stays in the sequence so recorded histories replay. Starting the visit
+> workflow after confirmation was added in Week 2 slice 3 (§3.2a).
 
 The assignment's headline requirement: *"appointment marked confirmed only after successful
 processing"*, and *"partial failures must not corrupt the scheduling state"*
@@ -1113,13 +1337,13 @@ flowchart TD
     rows{"rows affected?"}
     conflict["0 rows = lost: re-read the slot to say why. Permanent, not retried"]
     attach["Attach slot_id to the appointment in the same transaction — the partial unique index is the second gate"]
-    billing["4 billing_precheck (stand-in: approves)"]
-    notify["5 schedule_reminders (stand-in: logs)"]
+    billing["4 billing_precheck: authorise with the payment gateway; a decline is permanent"]
+    notify["5 schedule_reminders: a no-op kept for replay (the visit workflow times the reminder)"]
     confirm["6 confirm: appointment 'confirmed', confirmed_at; slot held → booked, version+1 — one transaction"]
-    publish["Publish appointments.booked — Week 3, NOT BUILT"]
+    publish["appointments.booked written to the outbox in confirm's transaction; the relay publishes it"]
     done["Terminal: confirmed"]
     visit["After confirm, outside the compensated region: start the visit-id child — patched, ABANDON, REJECT_DUPLICATE (§3.2a)"]
-    comp["fail_booking: appointment → 'failed'; slot held → free only if this appointment holds it — one transaction"]
+    comp["fail_booking: appointment → 'failed'; slot held → free only if this appointment holds it — one transaction; then release the authorisation"]
     failed["Terminal: failed — no held slot, no half-confirmed appointment"]
 
     start --> create --> validate --> reserve --> rows
@@ -1134,29 +1358,26 @@ flowchart TD
     notify -. failure .-> comp
     confirm -. permanent failure .-> comp
     comp --> failed
-
-    classDef notbuilt fill:#f4f2ee,stroke:#a9a49a,stroke-dasharray:4 3,color:#55534e
-    class publish notbuilt
 ```
 
 #### The steps, as built
 
 Each activity opens its own session, makes one service call and commits
-(`_unit_of_work`, `activities.py:73-95`), so a retry re-runs exactly one unit of work
+(`_unit_of_work`, `activities.py:84`), so a retry re-runs exactly one unit of work
 against an operation that detects it already ran.
 
 | # | Activity | Service call | Where | Failure |
 | --- | --- | --- | --- | --- |
-| 1 | `booking.create_pending` | `service.create_pending` — insert-or-nothing; audits `booking_requested` only if it inserted | `activities.py:97-112`, `service.py:227-282` | Unknown slot or patient → `NotFound`; the id already used for a different patient, provider or clinic → `Conflict` |
-| 2 | `booking.validate_booking` | `patients.public.ensure_bookable_patient`, then `service.ensure_slot_bookable`, then `service.slot_provider_id` and `providers.public.ensure_bookable_provider` (R-24) | `activities.py:114-128`, `service.py:285-294`, `service.py:371-377`, `app/modules/patients/public.py:20-29`, `app/modules/providers/public.py:28-40` | Unknown patient, slot or provider → `NotFound`; a slot whose `starts_at <= now`, or an inactive provider → `Unprocessable` |
-| 3 | `booking.claim_slot` | `service.claim_slot` — the patient-overlap check under a patient advisory lock (`_ensure_patient_is_free`, R-23), then the conditional UPDATE, then `slot_id` attached and flushed; audits `slot_claimed` | `activities.py:130-139`, `service.py:380-445` (overlap check `:308-368`, UPDATE at `:409-418`) | The slot overlaps another live (`pending` holding a slot, or `confirmed`) appointment of the same patient, its own reschedule predecessor excepted → `Conflict` ("overlaps"), before any write. Zero rows: re-read the slot and raise `NotFound`, `Unprocessable` (it started) or `Conflict` ("no longer free"). A violation of `ux_appointments_live_slot` or `fk_appointments_slot_provider_clinic` on attach → `Conflict`. An appointment no longer `pending`, or already holding another slot → `Conflict`. Re-claiming its own slot is a no-op |
-| 4 | `booking.billing_precheck` | none — stand-in | `activities.py:141-148` | Never fails today. Week 3: a decline must raise a non-retryable `ApplicationError` |
-| 5 | `booking.schedule_reminders` | none — stand-in | `activities.py:150-156` | Never fails today |
-| 6 | `booking.confirm` | `service.confirm_booking` — `require_transition(pending → confirmed)`, slot `held → booked` | `activities.py:158-165`, `service.py:448-472` | Already confirmed → no-op. No slot, slot not `held`, or an illegal transition → `Conflict` |
-| — | `booking.fail_booking` | `service.fail_booking` — the compensation | `activities.py:167-174`, `service.py:475-506` | No row, or no longer `pending` → no-op |
+| 1 | `booking.create_pending` | `service.create_pending` — insert-or-nothing; audits `booking_requested` only if it inserted | `activities.py:115-131`, `service.py:307-365` | Unknown slot or patient → `NotFound`; the id already used for a different patient, provider or clinic → `Conflict` |
+| 2 | `booking.validate_booking` | `patients.public.ensure_bookable_patient`, then `service.ensure_slot_bookable`, then `service.slot_provider_id` and `providers.public.ensure_bookable_provider` (R-24) | `activities.py:133-147`, `service.py:368-379`, `service.py:454-460`, `app/modules/patients/public.py:21-31`, `app/modules/providers/public.py:28-40` | Unknown patient, slot or provider → `NotFound`; a slot whose `starts_at <= now`, or an inactive provider → `Unprocessable` |
+| 3 | `booking.claim_slot` | `service.claim_slot` — the patient-overlap check under a patient advisory lock (`_ensure_patient_is_free`, R-23), then the conditional UPDATE, then `slot_id` attached and flushed; audits `slot_claimed` | `activities.py:149-158`, `service.py:463-528` (overlap check `_ensure_patient_is_free`, `:391-451`; UPDATE at `:491-500`) | The slot overlaps another live (`pending` holding a slot, or `confirmed`) appointment of the same patient, its own reschedule predecessor excepted → `Conflict` ("overlaps"), before any write. Zero rows: re-read the slot and raise `NotFound`, `Unprocessable` (it started) or `Conflict` ("no longer free"). A violation of `ux_appointments_live_slot` or `fk_appointments_slot_provider_clinic` on attach → `Conflict`. An appointment no longer `pending`, or already holding another slot → `Conflict`. Re-claiming its own slot is a no-op |
+| 4 | `booking.billing_precheck` | `billing.public.authorize` — one `billing_records` row, `authorized` or `declined`, with the gateway call keyed `authorize-<id>` | `activities.py:160-176`, `app/modules/billing/service.py:45` | A decline is recorded and committed, then raised as non-retryable `PaymentDeclined`, so the booking compensates. A gateway outage (5xx, timeout, open circuit) is `GatewayUnavailable`, retried under `STEP` — five attempts, then the booking fails and compensates |
+| 5 | `booking.schedule_reminders` | none — a logging no-op since Week 3 slice 5 | `activities.py:178-187` | Never fails. It stays in the sequence because removing it would change the command history of bookings in flight (see "Replay safety" below) |
+| 6 | `booking.confirm` | `service.confirm_booking` — `require_transition(pending → confirmed)`, slot `held → booked` | `activities.py:189-196`, `service.py:531-569` | Already confirmed → no-op. No slot, slot not `held`, or an illegal transition → `Conflict` |
+| — | `booking.fail_booking` | `service.fail_booking` — the compensation | `activities.py:198-210`, `service.py:572-615` | No row, or no longer `pending` → no-op |
 
-The loop over steps 1–5 is `workflows.py:73-80`, confirm is `:82-84`, and the compensation
-handler is `:85-92`. Every activity has an explicit prefixed name — `booking.` for these, `visit.` for slice 3's
+The loop over steps 1–5 is `workflows.py:75-82`, confirm is `:84-86`, and the compensation
+handler is `:87-94`. Every activity has an explicit prefixed name — `booking.` for these, `visit.` for slice 3's
 two, and `cancel.`, `reschedule.` and `waitlist.` for slice 4's: Temporal routes activities by name alone, and the bare method names would collide on the
 shared task queue. `app/components.py` registers each under that name, so a collision
 fails loudly in the registry rather than silently at the worker.
@@ -1165,7 +1386,7 @@ fails loudly in the registry rather than silently at the worker.
 `_unit_of_work` turns every `DomainError` into `ApplicationError(non_retryable=True)` named
 after the error class: a lost slot race or a past slot will not change on retry, and
 retrying only delays compensation. Anything else — a dropped connection — propagates and
-Temporal retries it. Malformed ids are checked by `parse_id` (`activities.py:45-58`)
+Temporal retries it. Malformed ids are checked by `parse_id` (`activities.py:50-63`)
 *before* the unit of work opens and fail as `InvalidRequest`, non-retryable: a `ValueError`
 is not a `DomainError`, so it would otherwise be retried on every step, and forever under
 compensation's unlimited policy.
@@ -1178,9 +1399,11 @@ so compensating a create that never committed costs nothing. `fail_booking` sets
 appointment `failed` and returns its slot to `free` in one transaction — but only a slot
 that is still `held` and held *by this appointment*, so the loser of a race never frees the
 winner's slot. It no-ops on an appointment that is no longer `pending`: something else (a
-cancellation, §3.3) owns it.
+cancellation, §3.3) owns it. The activity then releases the money in a **second**
+transaction (`billing.release`: void the hold, if one was taken), so a gateway outage can
+delay the refund of a hold but never keeps the slot held (`activities.py:198-210`).
 
-**Retry policies** (`workflows.py:38-61`), three of them, because the cost of giving up
+**Retry policies** (`workflows.py:42-63`), three of them, because the cost of giving up
 differs by step:
 
 | Policy | Used by | Retries | Why |
@@ -1198,10 +1421,16 @@ parametrised over every step after create), `test_a_failed_create_is_compensated
 in-process worker, Postgres and Mongo — by
 `tests/tiers/t3_integration/test_booking_round_trip.py` (cases `bkg-004`, `bkg-005`).
 
-**Cancel, never terminate** (PRD R-9). Cancelling a workflow raises inside it, so the
-compensation handler runs. *Terminating* one runs no workflow code at all: a booking
-terminated mid-flight strands a `held` slot and a `pending` row. That is the one case
-workflow-first (D-10) does not cover, and the reconciler that would clean it up is deferred.
+**Cancel, never terminate — and a sweep for when someone does** (PRD R-9, closed in Week 3
+slice 5). Cancelling a workflow raises inside it, so the compensation handler runs.
+*Terminating* one runs no workflow code at all: a booking terminated mid-flight strands a
+`held` slot and a `pending` row — the one case workflow-first (D-10) does not cover on its
+own. The Celery beat task `scheduling.reconcile_stale_pending` (`app/modules/scheduling/tasks.py`,
+every five minutes) finds `pending` appointments older than its threshold whose booking
+workflow is not running, and compensates them exactly as the workflow would have:
+`fail_booking`, then the billing release. It skips any booking whose workflow is still
+running, and `fail_booking` acts only on a `pending` row under its lock, so it cannot race a
+live booking into a wrong answer (§3.7).
 
 **Replay safety — a rule for every future edit to `workflows.py`.** Temporal recovers a
 workflow by replaying its history against the current code, and fails it if the code now
@@ -1211,8 +1440,10 @@ new worker deploys. Such a change must be gated with `workflow.patched("<id>")`,
 executions take the new path and in-flight ones replay the old one, and the patch is retired
 with `workflow.deprecate_patch` once no older booking can still be running. Slice 3's
 "start the visit workflow after confirm" was exactly such a change, gated by
-`workflow.patched("booking-starts-visit")` (`workflows.py:96`, Week 2 spec §8); §3.2a says how
-it is proven.
+`workflow.patched("booking-starts-visit")` (`workflows.py:98`, Week 2 spec §8); §3.2a says how
+it is proven. The reminder Week 3 added to `VisitWorkflow` is gated the same way, by
+`workflow.patched("visit-reminder")` (`workflows.py:176`), and for the same reason the
+now-empty `booking.schedule_reminders` step was kept rather than removed.
 
 #### What the database guarantees independently
 
@@ -1248,7 +1479,7 @@ held two confirmed appointments for the one they moved — with every other cons
 satisfied, because the two rows held different slots; the router's precheck cannot close
 it, since both requests pass it before either workflow writes. With the index the second
 booking's `create_pending` fails on insert and `service.create_pending` raises `Conflict`
-(`LIVE_RESCHEDULE_INDEX`, `service.py:67`, `:262-270`), so it never claims a slot and its
+(`LIVE_RESCHEDULE_INDEX`, `service.py:68`, `:349`), so it never claims a slot and its
 compensation is a no-op (§3.3). Partial on status, like `ux_appointments_live_slot`: a
 replacement that failed or was cancelled does not block another attempt. Unlike
 `ux_appointments_live_slot` it is **declared in the model** (`Index(...,
@@ -1291,14 +1522,18 @@ lock re-evaluates `status = 'free'` once the winner commits and matches nothing
 
 **Why the router returns 202, not 201.** The booking is `pending` when the request returns;
 confirmation happens when the workflow completes. A 201 would claim a resource in a state it
-is not yet in (`app/modules/scheduling/router.py:85`).
+is not yet in (`app/modules/scheduling/router.py:106`).
 
-### 3.2a The visit lifecycle — BUILT
+### 3.2a The visit lifecycle
 
-> **Built in Week 2 slice 3.** Staff actions are synchronous endpoints (§2.9); a
-> `VisitWorkflow` (`app/modules/scheduling/workflows.py:122-174`) is only the durable no-show
-> timer. **Not built:** billing and follow-up on completion, and the `visits.completed` event
-> (Week 3) — completing a visit changes the visit and appointment rows and nothing else.
+> **Built in Week 2 slice 3; extended in Weeks 3 and 4.** Staff actions are synchronous
+> endpoints (§2.9); a `VisitWorkflow` (`app/modules/scheduling/workflows.py:124-199`) owns the
+> appointment's time — since Week 3 slice 5 the **reminder** (behind
+> `workflow.patched("visit-reminder")`, D-26) and, as before, the **no-show** deadline.
+> Completing a visit writes `visits.completed` in its transaction (Week 3 slice 3), whose
+> consumer starts `PostVisitWorkflow`, the charge (§3.3); a no-show writes
+> `appointments.no_show`. Since Week 4 a visit completes only with a signed clinical note,
+> and only the appointment's own provider (or admin) may mark it seen or complete (§2.9).
 
 **The principle (PRD D-12): the database records human actions; the workflow owns time.**
 Each action is recorded the moment staff are told it was, so a timer can never overrule it,
@@ -1324,6 +1559,9 @@ still have to be settled in the database (D-12 (b)).
 flowchart TD
     confirm["booking: confirm commits"]
     start["booking starts visit-id, an abandoned child (patched)"]
+    due["reminder_due activity: slot start - reminder_lead_hours (24), or now; none if not worth one (patched)"]
+    rwait["wait until then, unless a flag is set"]
+    remind["remind activity: queue the reminder row; Celery sends it after commit"]
     deadline["deadline activity: slot end + no_show_grace_minutes"]
     waitq{"neither flag set, and time remains?"}
     wait["wait_condition(flag set, timeout = remaining)"]
@@ -1336,7 +1574,11 @@ flowchart TD
     r2["visit_exists: a check-in landed, its signal did not"]
     r3["closed: cancelled, rescheduled or completed"]
 
-    confirm --> start --> deadline --> waitq
+    confirm --> start --> due --> rwait
+    rwait -->|no flag| remind --> deadline
+    rwait -->|flag set| deadline
+    due -->|no reminder| deadline
+    deadline --> waitq
     waitq -->|yes| wait --> flags
     waitq -->|no| flags
     flags -->|checked_in| ci
@@ -1351,31 +1593,33 @@ flowchart TD
 
 | Step | Where | What |
 | --- | --- | --- |
-| Deadline | `workflows.py:153-158`, `activities.py:176-185`, `service.no_show_deadline` (`service.py:558`) | The `visit.deadline` activity returns the slot's end plus `Settings.no_show_grace_minutes` (default 15, `ge=0`, `settings.py:88`) as an ISO string. The worker passes the grace in as a `timedelta` (`app/worker.py:82`); `SchedulingActivities` has no default of its own, so a second default cannot disagree with `Settings` |
-| Wait | `workflows.py:159-167` | Only if neither flag is set **and** `deadline - workflow.now()` is positive: `wait_condition(…, timeout=remaining)`, with `TimeoutError` caught. Past the deadline it never waits — a zero-length wait would raise even though the condition holds, which is correction (2) above |
-| Flags | `workflows.py:140-146,168-171` | `checked_in` → `"checked_in"`; `cancel` → `"cancelled"`. The handlers only set flags; no I/O happens in one |
-| Ask the database | `workflows.py:172-174`, `activities.py:187-197`, `service.mark_no_show` (`service.py:646-675`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:51`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
+| Reminder | `workflows.py:153-169,176-177`, `activities.py:269-299`, `service.reminder_facts` (`service.py:144`), `notifications.public.queue_reminder` | `visit.reminder_due` returns when to remind — `Settings.reminder_lead_hours` (default 24) before the slot starts, or now if the booking came later — or nothing for a slot already started or an appointment no longer worth one. The workflow waits for that time unless a `checked_in` or `cancel` flag arrives; then `visit.remind` re-checks the appointment and queues one `notifications` row (unique key, so a retried activity queues nothing new), whose Celery send is registered to run after the activity's commit. Temporal owns *when*, Celery *how* (D-26). A cancelled appointment's reminder dies with its timer, with no cancel path of its own |
+| Deadline | `workflows.py:178-183`, `activities.py:212-221`, `service.no_show_deadline` (`service.py:655`) | The `visit.deadline` activity returns the slot's end plus `Settings.no_show_grace_minutes` (default 15, `ge=0`, `settings.py:143`) as an ISO string. The worker passes the grace in as a `timedelta` (`app/worker.py:86`); `SchedulingActivities` has no default of its own, so a second default cannot disagree with `Settings` |
+| Wait | `workflows.py:184-192` | Only if neither flag is set **and** `deadline - workflow.now()` is positive: `wait_condition(…, timeout=remaining)`, with `TimeoutError` caught. Past the deadline it never waits — a zero-length wait would raise even though the condition holds, which is correction (2) above |
+| Flags | `workflows.py:142-148,193-196` | `checked_in` → `"checked_in"`; `cancel` → `"cancelled"`. The handlers only set flags; no I/O happens in one |
+| Ask the database | `workflows.py:197-199`, `activities.py:223-233`, `service.mark_no_show` (`service.py:754-811`) | Otherwise the `visit.no_show` activity, under the appointment lock, returns a `NoShowOutcome` (`state.py:51`) — **three** answers, not a yes/no, because the two ways of *not* being a no-show mean different things — and that string is the workflow's result. `no_show`: marked now, or already was (a retried activity). `visit_exists`: a check-in reached the database first, so it is not a no-show whatever the flags say. `closed`: the appointment left `confirmed` |
 
 The `checked_in` signal is a **hint**, not the record. It lets the timer finish early; if it
 is lost or late, the timer still fires and `mark_no_show` finds the visit row. Because
 `check_in` and `mark_no_show` both take the appointment row lock, a check-in still
 uncommitted when the timer fires makes `mark_no_show` wait for it, and its visit read then
 sees the committed row (READ COMMITTED reads per statement). Only `no_show` writes, once,
-and audits once with the actor `system:visit-workflow`. No slot is written (PRD R-2).
+audits once with the actor `system:visit-workflow`, and emits `appointments.no_show` in the
+same transaction (which notifications and analytics consume). No slot is written (PRD R-2).
 
-**Retries are unlimited** (`VISIT_STEP`, `workflows.py:119`). The timer has no compensation
+**Retries are unlimited** (`VISIT_STEP`, `workflows.py:121`). The timer has no compensation
 to fall back on: a step that gave up would end the workflow failed and leave the appointment
 with no timer at all, so a short database outage would permanently cost it its no-show. Both
 activities are reads or guarded writes, so retrying until the database is back is safe; a
 domain error (`NotFound`) is non-retryable and still ends the workflow.
 
-**Booking starts the visit** (`workflows.py:96-110`) after the `try`/`except` block, so a
+**Booking starts the visit** (`workflows.py:98-112`) after the `try`/`except` block, so a
 failure there can never compensate a confirmed booking. It is gated by
 `workflow.patched("booking-starts-visit")`, started as a child with
-`ParentClosePolicy.ABANDON` (`:102`) — the visit outlives the booking — and
-`WorkflowIDReusePolicy.REJECT_DUPLICATE` (`:105`): a late start must never open a second run
+`ParentClosePolicy.ABANDON` (`:104`) — the visit outlives the booking — and
+`WorkflowIDReusePolicy.REJECT_DUPLICATE` (`:107`): a late start must never open a second run
 under a closed one and arm a second no-show timer for an appointment already settled.
-`WorkflowAlreadyStartedError` (`:107`) is caught and ignored, because nothing but booking
+`WorkflowAlreadyStartedError` (`:109`) is caught and ignored, because nothing but booking
 starts a visit and a confirmed booking must not fail on it.
 
 **Replay safety is a test, not a hope.** `tests/fixtures/histories/booking_pre_visit.json` is
@@ -1394,40 +1638,44 @@ T3 `test_visit_service.py` proves the strictness, the three outcomes and the loc
 against real Postgres (cases `vst-001`, `vst-005`); `test_visit_round_trip.py` runs the whole
 flow over HTTP and the no-show on a real Temporal timer (cases `vst-004`, `vst-008`).
 
-**Known gaps** (PRD §9): any provider may mark any visit seen or complete — role-gating only
-(R-14); a booking confirmed before slice 3 has no timer and is never auto-marked no-show
-(R-15); and a check-in in the instant between confirm and the visit workflow's start is
-recorded but its signal is dropped, so the timer runs to the deadline and ends
-`visit_exists` — correct, only later (R-16).
+**Known gaps** (PRD §9): a booking confirmed before slice 3 has no timer and is never
+auto-marked no-show (R-15); and a check-in in the instant between confirm and the visit
+workflow's start is recorded but its signal is dropped, so the timer runs to the deadline and
+ends `visit_exists` — correct, only later (R-16). R-14 — any provider could mark any visit
+seen or complete — was closed in Week 4 (§2.9).
 
-### 3.3 Cancellation, reschedule and the waitlist — BUILT
+### 3.3 Cancellation, reschedule, the waitlist, and what follows a visit
 
-> **Built in Week 2 slice 4.** `POST /appointments/{id}/cancel` (200),
+> **Built in Week 2 slice 4; completed in Week 3.** `POST /appointments/{id}/cancel` (200),
 > `POST /appointments/{id}/reschedule` (202), `POST /waitlist` (201) and `GET /waitlist`
-> (`app/modules/scheduling/router.py:256,287,391,411`), `CancelFollowUpWorkflow` and
-> `RescheduleWorkflow` (`app/modules/scheduling/workflows.py:243-309`), four activities
-> (`cancel.refund`, `reschedule.complete`, `waitlist.candidates`, `waitlist.fulfil`), and the
-> service operations under them. **Not built:** the `appointments.cancelled` and
-> `appointments.rescheduled` events and every consumer of them (Week 3, §3.4); any notification
-> to the patient; a billing update on reschedule. The refund is a **stand-in**:
-> `cancel.refund` (`activities.py:199-205`) logs and succeeds. Design: Week 2 spec §4.3–§4.5.
+> (`app/modules/scheduling/router.py:309,333,439,459`), `CancelFollowUpWorkflow` and
+> `RescheduleWorkflow` (`app/modules/scheduling/workflows.py:268-339`), the activities
+> `cancel.refund`, `reschedule.complete`, `waitlist.candidates` and `waitlist.fulfil`, and the
+> service operations under them. Week 3 changed three things: the cancel follow-up is started
+> by a Kafka consumer from the `appointments.cancelled` event instead of by the request (slice
+> 4, PRD R-17 closed); the refund is a real void or refund through `app/modules/billing`, and a
+> reschedule releases the old appointment's authorisation (D-27); and cancel and reschedule
+> emit events that notify the patient (slice 5). Week 3 also added the two workflows that
+> follow other events — `PostVisitWorkflow` and `ProviderDeactivationWorkflow` (below). Design:
+> Week 2 spec §4.3–§4.5; Weeks 3–5 spec D-21, D-23, D-27.
 
 `CLAUDE.md` and the requirements both treat these as **first-class flows, not the inverse of
-booking**: cancelling triggers slot release, waitlist movement and a refund — work booking
-never does. The two flows have different shapes, and the difference is PRD D-16. A cancel is
-a **synchronous paired write** that answers 200: the caller needs a definitive answer, and a
-202 followed by an asynchronous write would race the visit timer and a concurrent booking
-exactly as visit check-ins did (D-12). A reschedule is **inherently a workflow** (202),
-because it must book the new slot before it releases the old one (D-14).
+booking**: cancelling triggers slot release, waitlist movement, a refund and a message to the
+patient — work booking never does. The two flows have different shapes, and the difference is
+PRD D-16. A cancel is a **synchronous paired write** that answers 200: the caller needs a
+definitive answer, and a 202 followed by an asynchronous write would race the visit timer and
+a concurrent booking exactly as visit check-ins did (D-12). A reschedule is **inherently a
+workflow** (202), because it must book the new slot before it releases the old one (D-14).
 
-#### Cancel — the paired write, then a best-effort follow-up
+#### Cancel — the paired write, then a follow-up driven by its event
 
-> **Changed in Week 3 slice 4.** The follow-up is no longer started by the request. The cancel's
-> transaction writes `appointments.cancelled` to the outbox; the relay publishes it and the
-> `scheduling.cancel-follow-up` consumer (`app/modules/scheduling/consumers.py`) starts
-> `CancelFollowUpWorkflow` under `cancel-<id>`. The step labelled "start the follow-up" below is
-> that consumer now, and it cannot be lost (PRD R-17, closed). The refund is a real void or
-> refund through `app/modules/billing` (D-27).
+> **Changed in Week 3 slice 4.** Until then the request, after its commit, started
+> `CancelFollowUpWorkflow` itself, best-effort: a Temporal failure was logged and swallowed,
+> because failing the response would tell the caller a recorded cancellation had failed. The
+> cost was PRD R-17 — if that start failed, the follow-up (refund, waitlist, visit-timer stop)
+> was lost for good. Now the cancel's own transaction writes `appointments.cancelled` to the
+> outbox, so the follow-up is as durable as the cancel; the request never touches Temporal
+> (proven by T1 `test_a_cancel_never_touches_temporal_even_when_it_is_down`).
 
 ```mermaid
 sequenceDiagram
@@ -1437,7 +1685,8 @@ sequenceDiagram
     participant S as scheduling.service
     participant P as PostgreSQL
     participant M as MongoDB (audit)
-    participant F as scheduling.followups
+    participant K as relay → Kafka
+    participant F as scheduling.cancel-follow-up consumer
     participant T as Temporal
 
     C->>R: POST /appointments/{id}/cancel {reason}
@@ -1450,30 +1699,33 @@ sequenceDiagram
     S->>S: require_reschedule_settled, require_cancellable(status, has_visit), require_transition
     alt not pending/confirmed, a visit exists, or its reschedule is still completing
         S-->>R: raise Conflict
-        R-->>C: 409 (nothing written, nothing started)
+        R-->>C: 409 (nothing written)
     end
     S->>P: UPDATE provider_slots SET status='free', version=version+1 WHERE id=:slot AND status IN ('held','booked')
     S->>P: appointment status='cancelled', cancelled_at, cancellation_reason (flush)
+    S->>P: INSERT outbox_events (appointments.cancelled)
     S->>M: audit "cancelled" (actor = the token's user)
-    R->>P: COMMIT — the appointment and its slot, together
-    R->>F: start_cancel_follow_up(temporal, FollowUpRequest, task_queue)
-    F->>T: start_workflow("cancel-{id}", REJECT_DUPLICATE)
-    alt already started, an RPC error, cannot connect, or timeout
-        F-->>R: log and return — never raises
-    end
+    R->>P: COMMIT — the appointment, its slot and the event, together
     R-->>C: 200 AppointmentRead
+
+    Note over K,T: later, at least once
+    K->>F: appointments.cancelled (deduped on event_id)
+    F->>T: start CancelFollowUp "cancel-{id}", REJECT_DUPLICATE
+    Note over F,T: already started counts as success, and Temporal down is retried without limit
 ```
 
-**The write is the check.** `service.cancel_appointment` (`service.py:707-738`) locks the
-appointment first (`_lock_with_predecessor`, `:187-200`), then asks `require_reschedule_settled`
-(`:203-224`), reads the visit, and asks `require_cancellable` (`state.py:40-48`): `pending` or
+**The write is the check.** `service.cancel_appointment` (`service.py:823-865`) locks the
+appointment first (`_lock_with_predecessor`, `:252`), then asks `require_reschedule_settled`
+(`:268`), reads the visit, and asks `require_cancellable` (`state.py:40-48`): `pending` or
 `confirmed`, and **no visit row** — a checked-in patient is not cancelled, even though
 `confirmed → cancelled` is a legal transition on its own. The functions are **strict**, like
 the visit actions: a second cancel is a 409, not a silent success, because only the endpoint
-calls it and nothing retries it. Only then does it release the slot with `_release_slot`
-(`:696-704`) and move the appointment; the caller owns the commit (§2.1), so both land
-together or neither does. A cancelled appointment **keeps its `slot_id`** (as a failed one
-does, PRD R-10) so the follow-up can say which slot to offer the waitlist.
+(and provider deactivation, below) calls it and nothing retries it. Only then does it release
+the slot with `_release_slot` (`:812-820`), move the appointment and `emit` the event; the
+caller owns the commit (§2.1), so all three land together or none does. A cancelled
+appointment **keeps its `slot_id`** (as a failed one does, PRD R-10) so the follow-up can say
+which slot to offer the waitlist; the event carries it, with `initiated_by` and `clinic_id`
+(schema v2).
 
 A `pending` appointment that holds a `held` slot is released by the same statement; one that
 has claimed nothing yet writes no slot. Either way its booking workflow then finds the
@@ -1481,18 +1733,19 @@ appointment no longer `pending`, fails permanently at its next step, and `fail_b
 acts only on a `pending` appointment — is a no-op. Whoever takes the row lock first wins, and
 the loser's work is harmless.
 
-**The follow-up is a hint, not the record.** `start_cancel_follow_up`
-(`followups.py:46-73`) starts `cancel-<appointment_id>` with `REJECT_DUPLICATE` — a repeat of
-the same request must not refund or promote twice — after the commit, and swallows every
-failure (a warning is logged): failing the request would tell the caller a recorded
-cancellation failed, and their retry would be a 409. The cost is a **known gap**: if the start
-fails, the cancel stands and the follow-up is lost (PRD R-17; Week 3's transactional outbox
-closes it). `CancelFollowUpWorkflow` (`workflows.py:243-260`) then does, in order: `_stop_visit`
-(signals `cancel` to `visit-<id>`; "no such workflow" is success, `:184-193`), `cancel.refund`
-(stand-in), and — only if the cancel released a slot — `_promote_waitlist`. It returns
+**The follow-up.** The `scheduling.cancel-follow-up` consumer (`consumers.py:67-78`) starts
+`cancel-<appointment_id>` with `REJECT_DUPLICATE`, so a redelivered event cannot refund or
+promote twice: `WorkflowAlreadyStartedError` is success. Temporal being down is an outage, not
+a poison message: the consumer runtime retries it without limit (§3.5).
+`CancelFollowUpWorkflow` (`workflows.py:268-285`) then does, in order: `_stop_visit` (signals
+`cancel` to `visit-<id>`; "no such workflow" is success, `:209-218`), `cancel.refund`
+(`billing.release`: void the hold, or refund a capture; idempotent by the record's state and
+the gateway key), and — only if the cancel released a slot — `_promote_waitlist`. It returns
 `no-slot`, `released` (nobody to promote) or `promoted:<appointment id>`. Every activity in it
-retries without limit (`FOLLOW_UP`, `:181`): each is idempotent, and giving up would lose the
-follow-up the workflow exists to deliver.
+retries without limit (`FOLLOW_UP`, `:206`): each is idempotent, and giving up would lose the
+follow-up the workflow exists to deliver. Independently, `notifications.patient-messages`
+turns the same event into an "appointment cancelled" email, and the refund's
+`billing.status_updated` (`refunded`) into a "refund issued" one.
 
 #### Reschedule — book first, release second
 
@@ -1505,9 +1758,9 @@ flowchart TD
     failed["ChildWorkflowError: return failed. The new appointment is failed; the old one is untouched (D-14)"]
     complete["reschedule.complete: service.complete_reschedule — locks both appointments in id order"]
     super["superseded: nothing released"]
-    release["old: confirmed to rescheduled, and its slot to free — one transaction"]
+    release["old: confirmed to rescheduled, its slot to free, appointments.rescheduled emitted — one transaction; then the old authorisation released"]
     stop["_stop_visit(old)"]
-    promote["_promote_waitlist(old slot) — no refund: a reschedule moves the booking"]
+    promote["_promote_waitlist(old slot) — no refund: the new booking holds its own authorisation"]
     done["return rescheduled"]
 
     req --> pre --> start --> child
@@ -1525,15 +1778,15 @@ The 202 hands the client the **new** appointment's id to poll (`RescheduleAccept
 the first completed (the old appointment is then `rescheduled`), so the router recognises a
 repeat by the new row linking back to this appointment, and `start_reschedule` answers with the
 workflow already started, or 422 if the key now names a different reschedule
-(`reschedule_fingerprint`, `followups.py:76-84`).
+(`reschedule_fingerprint`, `followups.py:41`).
 
-`RescheduleWorkflow.run` (`workflows.py:278-314`) runs the booking as a **child** so it gets
+`RescheduleWorkflow.run` (`workflows.py:303-339`) runs the booking as a **child** so it gets
 booking's compensation for free: `REJECT_DUPLICATE`, because the new id is derived for this
 reschedule alone, so `booking-<id>` can only be this child, and `ParentClosePolicy.ABANDON`,
 so terminating the reschedule cannot kill the booking between its claim and its compensation.
 If the child fails, the workflow returns `failed` and **the old appointment was never
 touched**. If it confirms, `reschedule.complete` runs `service.complete_reschedule`
-(`service.py:741-791`), which locks both appointments in ascending id order, so two
+(`service.py:868-933`), which locks both appointments in ascending id order, so two
 reschedules touching the same pair cannot deadlock, and checks the **new** one first: it must
 still be `confirmed` and still name the old one in `rescheduled_from_id`. If it was cancelled
 in the instant between its booking confirming and this step, releasing the old slot would leave
@@ -1545,8 +1798,10 @@ new booking ran, the new booking stands as the patient's only appointment. If th
 **checked in** at the old one, both stay `confirmed`: the old one is being seen and closes with
 its visit, and staff cancel the new one if it is no longer wanted — the visit settles the
 chain guard below, so that cancel is not refused.
-Otherwise the old appointment becomes `rescheduled`, its slot `free` with `version + 1`, in one
-transaction and audited once. On `superseded` the workflow stops there; otherwise it signals
+Otherwise the old appointment becomes `rescheduled`, its slot `free` with `version + 1`, and
+`appointments.rescheduled` is written to the outbox, in one transaction and audited once; the
+activity then releases the old appointment's authorisation in a second transaction (the new
+appointment took its own in its booking's pre-check). On `superseded` the workflow stops there; otherwise it signals
 the old visit timer to stop and offers the released slot to the waitlist.
 
 **At most one live replacement** (PRD D-5, `0004_live_reschedule_unique.py`). The router's
@@ -1565,27 +1820,27 @@ leave both confirmed. A predecessor with a visit counts as settled even while `c
 would block the new appointment until the old visit closed, while the old one cannot be
 cancelled either. The visit is read under the predecessor's row lock, which `check_in` also
 takes (T3 `test_a_checked_in_predecessor_settles_the_chain_so_the_replacement_can_be_cancelled`,
-case `rsc-004`). `require_reschedule_settled` (`service.py:203-224`) refuses it with a 409 ("the
+case `rsc-004`). `require_reschedule_settled` (`service.py:268-290`) refuses it with a 409 ("the
 reschedule that created this appointment is still completing") in `cancel_appointment`, in
 `create_pending` for a reschedule's new appointment (under the locks, since the router's own
-check at `router.py:323-325` cannot see a reschedule that starts after it), and in the router's
+check at `router.py:371-373` cannot see a reschedule that starts after it), and in the router's
 precheck. A short window; the client retries (PRD R-21).
 
 #### The waitlist
 
 `POST /waitlist` takes `{patient_id, provider_id?, department_id?, window_start, window_end}`
-(`router.py:391-408`) — the same patient-ownership rule as booking, so a patient may join only
-for themselves (403) and staff for anyone — and `GET /waitlist` (`:411-428`) lists oldest first
+(`router.py:439-456`) — the same patient-ownership rule as booking, so a patient may join only
+for themselves (403) and staff for anyone — and `GET /waitlist` (`:459-476`) lists oldest first
 for staff, and for a patient their **own** entries whatever `patient_id` they send (forced, not
 filtered; a patient with no record gets an empty page, never "everyone"). Providers have no
 access: the list names every waiting patient. Window bounds without a timezone are a 422
 (`AwareDatetime`). Entries are `active` until a promotion sets them `fulfilled`; no endpoint
 withdraws one and nothing expires one (PRD R-18).
 
-`_promote_waitlist(slot_id)` (`workflows.py:196-240`) is shared workflow code, run by the
+`_promote_waitlist(slot_id)` (`workflows.py:221-265`) is shared workflow code, run by the
 cancel follow-up and by reschedule (PRD D-13):
 
-1. `waitlist.candidates` → `service.waitlist_candidates` (`service.py:864-904`) returns up to
+1. `waitlist.candidates` → `service.waitlist_candidates` (`service.py:1003-1043`) returns up to
    **three** `(entry, patient)` pairs, oldest first: `active`, window containing the slot's
    `starts_at` (`window_start <= starts_at < window_end`), and provider/department matching
    the slot wherever the entry names one. It returns **nothing** unless the slot is still
@@ -1599,7 +1854,7 @@ cancel follow-up and by reschedule (PRD D-13):
    row lock, is the guard** — a lock cannot be held across a child workflow. A started or
    failed child moves the loop on to the next candidate.
 3. The first child that confirms is followed by `waitlist.fulfil` (`fulfil_waitlist_entry`,
-   `service.py:907-928`, idempotent, `active → fulfilled`), and the loop stops. If the entry
+   `service.py:1046-1067`, idempotent, `active → fulfilled`), and the loop stops. If the entry
    was cancelled or expired meanwhile that activity fails, and is ignored: the booking
    stands and the id already prevents a second promotion.
 
@@ -1624,11 +1879,11 @@ already in the past):
 
 | Path | Service function | Slot | Proven by |
 | --- | --- | --- | --- |
-| Confirm | `confirm_booking` (`service.py:448`) | `held → booked` | T3 `test_confirm_books_the_slot_and_is_idempotent` |
-| Compensate | `fail_booking` (`:475`) | `held → free`, only if held by this appointment | T3 `test_fail_booking_releases_its_held_slot` |
-| Cancel | `cancel_appointment` (`:707`) via `_release_slot` (`:696`) | `held`/`booked → free`, `version + 1` | T3 `test_cancelling_a_confirmed_appointment_frees_its_slot_in_one_write` (case `cnl-001`), `test_cancelling_a_pending_appointment_that_holds_a_slot_releases_it` |
-| Reschedule | `complete_reschedule` (`:741`) via `_release_slot` | the old slot `→ free`, `version + 1`; none when `superseded` | T3 `test_completing_a_reschedule_frees_the_old_slot_and_says_which`, `test_a_reschedule_over_a_cancelled_appointment_is_superseded` |
-| Complete, no-show | `complete_visit` (`:623`), `mark_no_show` (`:646`) | none — stays `booked`, `version` unchanged | T3 `test_complete_finishes_visit_and_appointment_and_leaves_the_slot_booked`, `test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked` |
+| Confirm | `confirm_booking` (`service.py:531`) | `held → booked` | T3 `test_confirm_books_the_slot_and_is_idempotent` |
+| Compensate | `fail_booking` (`:572`) | `held → free`, only if held by this appointment | T3 `test_fail_booking_releases_its_held_slot` |
+| Cancel | `cancel_appointment` (`:823`) via `_release_slot` (`:812`) | `held`/`booked → free`, `version + 1` | T3 `test_cancelling_a_confirmed_appointment_frees_its_slot_in_one_write` (case `cnl-001`), `test_cancelling_a_pending_appointment_that_holds_a_slot_releases_it` |
+| Reschedule | `complete_reschedule` (`:868`) via `_release_slot` | the old slot `→ free`, `version + 1`; none when `superseded` | T3 `test_completing_a_reschedule_frees_the_old_slot_and_says_which`, `test_a_reschedule_over_a_cancelled_appointment_is_superseded` |
+| Complete, no-show | `complete_visit` (`:720`), `mark_no_show` (`:754`) | none — stays `booked`, `version` unchanged | T3 `test_complete_finishes_visit_and_appointment_and_leaves_the_slot_booked`, `test_no_show_with_no_visit_marks_it_and_leaves_the_slot_booked` |
 
 Two things keep it from regressing. Slot status is written **only** in `scheduling/service.py`,
 enforced by `tests/meta/test_slot_writes.py` (§3.2), so there is one file in which to forget
@@ -1644,134 +1899,207 @@ T0 `test_scheduling_state.py` enumerates the cancel preconditions
 (`test_only_a_live_appointment_with_no_visit_is_cancellable`); `test_booking_ids.py` that the
 reschedule id has its own name space; `test_booking_activities.py` that a booking request
 recorded before `rescheduled_from_id` existed still decodes. T1 `test_cancel_reschedule_contract.py`
-proves the role gates, ownership, the 200/202/404/409/422/503 answers, that a failing Temporal
-after the commit still answers 200 (`test_a_cancel_never_touches_temporal_even_when_it_is_down`, renamed in Week 3 slice 4: the request no longer calls Temporal at all)
+proves the role gates, ownership, the 200/202/404/409/422/503 answers, that a cancel never
+calls Temporal even when it is down (`test_a_cancel_never_touches_temporal_even_when_it_is_down`)
 and the waitlist's patient scoping. T2 runs both workflows on the time-skipping server against
 fake activities: `test_cancel_follow_up.py` (the promotion loop: first candidate, a failing first
 candidate, every candidate failing, an entry already promoted, a failed attempt retried) and
 `test_reschedule_workflow.py` (cases `rsc-001`, `rsc-002`, and a superseded reschedule releasing
 and promoting nothing). T3 proves the service against real Postgres (`test_cancel_service.py`,
 `test_waitlist_service.py`, `test_cancel_activities.py`; cases `cnl-001`) and the whole flows
-over HTTP with a real Temporal server (`test_cancel_reschedule_round_trip.py`; cases `rsc-003`,
-`wtl-001`).
+over HTTP with a real Temporal server and, in process, the relay and consumers
+(`scheduling_helpers.event_pipeline`), so a round trip waits for workflows that Kafka starts
+(`test_cancel_reschedule_round_trip.py`; cases `rsc-003`, `wtl-001`).
 
-**Known gaps** (PRD §9): a lost cancel follow-up if its start fails (R-17); waitlist head-of-line
-blocking, with no entry expiry or withdrawal (R-18); promotion ids that are `uuid4`, not uuid7
-(R-19); cancelling after the slot started, whose slot is then not offered to the waitlist (R-20);
-a pending replacement that cannot be cancelled until its reschedule completes (R-21); and a
-reschedule refused inside the workflow, visible only by polling the new id (R-22).
+**Known gaps** (PRD §9): waitlist head-of-line blocking, with no entry expiry or withdrawal
+(R-18); promotion ids that are `uuid4`, not uuid7 (R-19); cancelling after the slot started,
+whose slot is then not offered to the waitlist (R-20); a pending replacement that cannot be
+cancelled until its reschedule completes (R-21); and a reschedule refused inside the
+workflow, visible only by polling the new id (R-22). R-17, the lost cancel follow-up, was
+closed by the outbox in Week 3 slice 4.
 
-### 3.4 Domain event catalogue
+#### After a visit: the charge
 
-> **Built in Week 3 slice 3** except where marked: the topics below exist (`app/events/catalog.py`,
-> schemas in `contracts/events/`), every producer writes through the outbox, and the relay
-> publishes. `billing.status_updated` and `notifications.reminder_due` are not built (slices 4
-> and 5). **No consumer is registered yet** — the consumers listed are slice 4 onwards. The
-> as-built catalogue and payloads are in the Weeks 3–5 spec §3.2, which supersedes the sketch
-> below; `providers.schedule_changed` became the compacted `providers.state`.
+`complete_visit` writes `visits.completed` in the request's transaction. The
+`scheduling.post-visit` consumer starts `PostVisitWorkflow` under `post-visit-<visit_id>`
+(`workflows.py:342-356`), whose one activity, `post_visit.charge`, captures the booking's
+authorisation through `billing.capture` (`activities.py:301-307`). The id refuses a second
+start for a redelivered event, and the capture is idempotent besides (the record's state and
+the `capture-<id>` gateway key). A gateway outage is retried without limit (`FOLLOW_UP`), so
+the charge waits for the gateway rather than being lost; an appointment with no
+authorisation ends `nothing-to-charge`. Proven by T2 `test_post_visit_captures_the_charge`,
+`test_post_visit_retries_a_gateway_outage_until_it_charges` and
+`test_nothing_to_charge_is_an_ending_not_a_failure`
+(`tests/tiers/t2_workflow/test_post_visit_and_deactivation.py`).
 
-`docs/requirements/part-a-core-platform.md` §4 names seven event categories. The table below
-maps each to a producer, consumers, and a payload sketch.
+#### Provider deactivation — cancel and notify (PRD R-25, closed)
 
-**Naming caveat:** the only topic name written down anywhere in the repository is
-`appointments.booked`, in the harness design's example case
-(`2026-09-01-testing-harness-design.md` §7.1). The rest follow its `<entity>.<past-tense>`
-convention but are proposed here, not previously decided. Every one of them must be
-constructed through `Settings.topic()` (`app/settings.py:99-101`) — harness requirement 1
-namespaces a shared stack through that prefix, so a literal at the call site breaks test
-isolation.
+Deactivating a provider (`PATCH /providers/{id}` with `is_active=false`) writes
+`providers.state` through the outbox, like every provider write; providers imports nothing
+from scheduling (D-8). The `scheduling.provider-deactivation` consumer starts
+`ProviderDeactivationWorkflow` for a state with `is_active = false`, under
+`provider-deactivation-<provider_id>-<event_id>` — one run per deactivation *event*, so a
+provider deactivated, reactivated and deactivated again gets a run each time while a
+redelivery is refused. The workflow (`workflows.py:359-381`) lists the provider's future live
+appointments (`provider.future_appointments`) and cancels each with its own
+`provider.cancel_appointment` activity — the ordinary paired write, reason
+`provider_unavailable`, actor `system:provider-deactivation` — so the history shows each one,
+and a crash resumes after the last. An appointment no longer cancellable (checked in,
+cancelled meanwhile) is `skipped`, not a failure. Each cancel emits `appointments.cancelled`,
+so the follow-up above refunds and tells the patient, with no deactivation-specific code
+(policy D-23). It also offers the freed slot to the waitlist, but `waitlist_candidates` does not
+look at the provider's status, so any matching candidate's booking is then refused by
+`validate_booking` (R-24) and the slot stays free — wasted work, not a wrong booking. The workflow returns `cancelled:<n>,skipped:<m>`.
+Proven by T2 `test_deactivation_cancels_each_future_appointment_once` (case `prv-001`) and T3
+`test_deactivating_a_provider_cancels_their_future_appointments` (case `prv-002`).
 
-| Topic | Producer | Consumers | Payload sketch |
+### 3.4 Domain event catalogue, the outbox and the relay
+
+> **Built in Week 3 slice 3**, with consumers from slice 4 on. This section replaces the
+> Week 2 sketch it started as: that sketch proposed `providers.schedule_changed` and
+> `notifications.reminder_due` topics, left the outbox undesigned, and deferred
+> `billing_records`. As built, provider state travels on the compacted `providers.state`;
+> reminders are timed by the visit workflow and need no topic (D-26); and the outbox and
+> billing records both exist (migrations `0005`, `0006`). The Weeks 3–5 spec §3.2 has the
+> derivation.
+
+**How an event is written: the outbox (D-21).** A business change and a Kafka publish cannot
+be made atomic — publishing after the commit loses the event on a crash, exactly PRD R-17 —
+but a business change and an INSERT into the same database can. So every producer calls
+`app/events/outbox.py:emit(session, topic, key=, payload=)` inside its own transaction: it
+validates the payload against the topic's Avro schema (an event nobody can serialise rolls
+the business change back with it), captures the current trace context into the row's
+`headers`, and adds one `outbox_events` row. It never commits; the caller does. No other code
+path publishes a domain event.
+
+**How it reaches Kafka: the relay.** `python -m app.relay` (`app/events/relay.py`, the
+`relay` compose service) loops: in one transaction it locks the oldest unpublished rows in
+`seq` order (`FOR UPDATE SKIP LOCKED`, so a second replica takes different rows), produces
+each to `Settings.topic(<name>)` keyed by its subject, Avro-encoded under its Schema Registry
+subject and carrying the stored trace context in the headers, waits for delivery reports,
+marks the delivered rows `published_at` and records the error on the rest. A crash between
+produce and mark sends those rows again: **at least once**, and every consumer dedupes on
+`event_id`. Order holds **per key**, because rows go in `seq` order and a key maps to one
+partition. The relay exports `smarthealth_outbox_published`, `smarthealth_outbox_failed` and
+`smarthealth_outbox_oldest_unpublished_age` — the backlog age is the event system's health
+signal and has an alert (§3.8). Broker auto-creation is off: `python -m app.relay --setup`
+creates the topics (configuration from `catalog.topic_config`) and registers every schema with
+compatibility `BACKWARD_TRANSITIVE`. Published rows are purged after seven days by the
+`events.purge_published` beat task, matching the event topics' retention.
+
+**Every event shares one envelope** — `event_id` (uuid7), `event_type`, `schema_version`,
+`occurred_at`, `producer`, `subject_id`, `payload` — and the payload never carries clinical
+content (`tests/meta/test_event_catalog.py:test_no_event_carries_clinical_content`; D-31).
+Schemas live in `contracts/events/*.avsc`; the meta-test keeps them in step with
+`app/events/catalog.py`, requires a default on every optional field, and checks that state
+topics are compacted and event topics are not.
+
+| Topic | Kind | Producer (all through `emit`) | Consumers |
 | --- | --- | --- | --- |
-| `appointments.booked` | Booking workflow (Temporal), final step | analytics rollup; notification scheduler; (Part B) ingestion | `{event_id, appointment_id, patient_id, provider_id, clinic_id, department_id, slot_id, starts_at, booked_at}` |
-| `appointments.cancelled` | Cancellation flow | waitlist promoter; billing/refund; notifications; analytics (cancellation rate) | `{event_id, appointment_id, slot_id, patient_id, provider_id, cancelled_at, reason, initiated_by}` |
-| `appointments.rescheduled` | Reschedule flow | waitlist promoter; notifications; analytics | `{event_id, old_appointment_id, new_appointment_id, old_slot_id, new_slot_id, patient_id, rescheduled_at}` |
-| `providers.schedule_changed` | Slot generation / provider availability edit | availability cache invalidation (Redis, PRD R-7); waitlist promoter; notifications for affected bookings | `{event_id, provider_id, clinic_id, affected_window: {from, to}, slots_added, slots_removed, changed_at}` |
-| `notifications.reminder_due` | Scheduler — Celery beat or a Temporal cron workflow, undecided (foundation spec §10) | notification dispatcher (Celery) | `{event_id, appointment_id, patient_id, channel, send_at, template}` |
-| `billing.status_updated` | Billing pre-check / refund activities | appointment status projection; notifications; analytics | `{event_id, appointment_id, patient_id, billing_status, amount, updated_at}` |
-| `visits.completed` | Visit completion — `service.complete_visit`, written in the request (§3.2a, D-12); the publish is Week 3 | analytics (Completed Visits, Average Wait Time); follow-up scheduler; billing | `{event_id, visit_id, appointment_id, patient_id, provider_id, checked_in_at, seen_at, completed_at}` |
-| analytics processing | — | Analytics is modelled as a **consumer** of the above, not a producer of its own events | — |
+| `appointments.booked` | event | `scheduling.service.confirm_booking` | `notifications.patient-messages` (confirmation), `analytics.daily-rollup`; Part B `assistant` (conversions, by `origin` and `conversation_ref`) |
+| `appointments.cancelled` (v2: `clinic_id`) | event | `cancel_appointment` (the endpoint, and provider deactivation) | `scheduling.cancel-follow-up` → `CancelFollowUpWorkflow`; notifications; analytics |
+| `appointments.rescheduled` | event | `complete_reschedule` | notifications |
+| `appointments.no_show` (v2: `clinic_id`) | event | `mark_no_show` | notifications; analytics |
+| `visits.completed` | event | `complete_visit` | `scheduling.post-visit` → `PostVisitWorkflow`; analytics (Completed Visits, Average Wait Time) |
+| `billing.status_updated` | event | `billing.service` on every status change | notifications (refunds only) |
+| `identity.sessions_revoked` | event | `identity.service.deactivate_user` | Part B `assistant` (its deny-list) |
+| `clinical.note_signed`, `clinical.test_ordered` | event | `clinical.service` (signing a note) | notifications ("visit summary ready", "test ordered") |
+| `documents.uploaded` | event | `clinical.service` (upload) | none yet |
+| `providers.state` | state (compacted) | every provider write; `republish_all` | `scheduling.provider-deactivation` → `ProviderDeactivationWorkflow`; Part B `knowledge` (its provider directory) |
+| `clinics.state`, `departments.state` | state (compacted) | the seed and `republish_all` | none yet — published so a downstream copy can be built from offset 0 |
 
-Every payload carries `event_id`. See §3.5.
+Every topic has a `<topic>.dlt` dead-letter twin. Schema evolution has happened once:
+`appointments.cancelled` and `appointments.no_show` gained an optional `clinic_id` (v2) for
+analytics, a backward-compatible change Schema Registry accepted.
 
-As built in slice 4, the cancel follow-up and the reschedule workflow do directly what the
-`appointments.cancelled` / `appointments.rescheduled` consumers above are designed to do —
-promote the waitlist and (for a cancel) refund — as activities and child bookings (§3.3, PRD
-D-13). Week 3 replaces the start of `CancelFollowUpWorkflow` with an event written in the
-cancel's own transaction, which also closes R-17.
+The five analytics metrics (`PART-A-FR-5`) all come from this catalogue or the register:
+Appointments Booked Over Time from `appointments.booked`; Completed Visits and Average Wait
+Time from `visits.completed` (`avg(seen_at - checked_in_at)`, which is exactly why a visit is
+a separate entity — PRD D-3); Cancellation Rate from `appointments.cancelled` against
+`appointments.booked`; Total Patients is read from the register through `patients.public`.
 
-The five analytics metrics (`PART-A-FR-5`) are all derivable from this catalogue against the
-existing schema: Total Patients from `patients`; Appointments Booked Over Time from
-`appointments.booked`; Completed Visits and Average Wait Time from `visits.completed`
-(`avg(seen_at - checked_in_at)`, which is exactly why a visit is a separate entity — PRD
-D-3); Cancellation Rate from `appointments.cancelled` against `appointments.booked`.
-
-**Two things deliberately not designed yet**, because guessing would guarantee a rewrite:
-
-- **The outbox.** Publishing to Kafka inside the same transaction as the business write is
-  not atomic, which is the same class of problem as PRD R-1. The standard answer is a
-  transactional outbox table, and the foundation spec §2 explicitly defers it: *"No Kafka
-  `outbox` table. It lands with the producer in Week 3."* The harness already lists "no
-  outbox row left unpublished" among its post-condition invariants (§7.5), so the shape is
-  anticipated; the table is not designed.
-- **`billing_records`.** Deferred for the same reason (foundation spec §2): its shape
-  follows the billing pre-check activity, and inventing columns now guarantees a rewrite.
-  Billing is a pre-check and a status, not a payment gateway (PRD §2, non-goals).
-
-### 3.5 Idempotency
-
-> **The runtime is built (Week 3 slice 3)**: `app/events/consumer.py` inserts the
-> `(consumer, event_id)` mark into `processed_events` in the handler's own transaction, retries,
-> and dead-letters. No consumer is registered yet, so `test_consumers_idempotent.py` arrives with
-> the first one (slice 4).
+### 3.5 Consumers and idempotency
 
 **Every consumer assumes at-least-once delivery and takes an explicit idempotency key.**
-This is harness requirement 4 (`CLAUDE.md`; `2026-09-01-testing-harness-design.md` §6.4):
-*"Consumers accept an explicit idempotency key surface (event id / dedupe key), rather than
-inferring uniqueness ad hoc."* PRD **PART-A-NFR-3** states it as a requirement.
-
-The word *explicit* is the whole point. Inferring uniqueness ad hoc — "we will dedupe on
-appointment_id and timestamp" — works until two legitimate events for one appointment
-collide, at which point the consumer silently drops a real event. A dedicated `event_id`
-carried on the envelope, and checked against a store before the side effect, has one meaning
-and one failure mode.
+This is harness requirement 4 (`CLAUDE.md`; `2026-09-01-testing-harness-design.md` §6.4) and
+PRD **PART-A-NFR-3**. The word *explicit* is the whole point. Inferring uniqueness ad hoc —
+"we will dedupe on appointment_id and timestamp" — works until two legitimate events for one
+appointment collide, at which point the consumer silently drops a real event. A dedicated
+`event_id` carried on the envelope, and checked before the side effect, has one meaning and
+one failure mode.
 
 **What goes wrong without it.** Kafka, RabbitMQ and Temporal all deliver at least once;
-redelivery after a consumer crash between the side effect and the acknowledgement is normal
-operation, not an edge case.
+redelivery after a crash between the side effect and the acknowledgement is normal
+operation. A duplicated `visits.completed` would double-count Completed Visits and corrupt
+Average Wait Time — analytics is the one surface where nobody notices a wrong number until
+someone acts on it; a duplicated `appointments.cancelled` would refund twice; a duplicated
+`appointments.booked` would send the same confirmation twice.
 
-- A duplicated `visits.completed` double-counts **Completed Visits** and corrupts **Average
-  Wait Time** — and analytics is the one surface where nobody notices a wrong number until
-  someone acts on it.
-- A duplicated `billing.status_updated` double-bills a patient.
-- A duplicated `notifications.reminder_due` sends the same patient the same reminder twice.
+**The runtime gives every consumer the same guarantees** (`app/events/consumer.py`), so no
+handler re-implements them. A consumer is a `ConsumerSpec` — a name, its topics, an async
+handler `(session, event, context)` and the kind of effect — registered in `CONSUMERS` by
+`app/components.py`; `python -m app.consumers` runs one `ConsumerRunner` per spec.
 
-Only the third is merely embarrassing.
+```mermaid
+flowchart TD
+    poll["poll a message"] --> decode{"Avro decode"}
+    decode -->|fails| dlt["produce the exact bytes to topic.dlt with the error; move on"]
+    decode --> tx["open a transaction: INSERT processed_events (consumer, event_id)"]
+    tx -->|primary key exists| dup["duplicate: skip the handler"]
+    tx --> handle["run the handler in the same transaction, in a span parented on the relay's trace context"]
+    handle -->|ok| commit["COMMIT the mark and the side effect together"]
+    handle -->|ServiceUnavailable, or the database unreachable| outage["outage: roll back, back off to 30 s, retry without limit"]
+    handle -->|any other error| retry["roll back; retry up to max_attempts (3)"]
+    retry -->|exhausted| dlt
+    outage --> handle
+    commit --> offset["commit the Kafka offset"]
+    dup --> offset
+    dlt --> offset
+```
 
-**How it will be enforced, not merely intended.** Registration in `app/core/registry.py` is
-what will make the property testable in bulk: every Kafka consumer, Temporal workflow and
-Celery task will register, and the meta-tests will enumerate the registry rather than a
-hand-maintained list that drifts (`2026-09-01-testing-harness-design.md` §8). Neither
-meta-test below exists yet; there are no consumers or tasks to enumerate:
+- **At most one application per event.** The `(consumer, event_id)` mark is inserted in the
+  handler's own transaction, so a redelivered event hits the primary key and is skipped, and
+  a handler that fails rolls the mark back with its side effect.
+- **Offsets after the commit**, so a crash in between redelivers rather than skips.
+- **A poison message cannot stall a partition**: after three attempts it goes to
+  `<topic>.dlt`, and `python -m app.cli dlt-replay --topic …` re-publishes dead letters once
+  the cause is fixed. An alert fires on any dead-lettered event (§3.8).
+- **An outage is not poison.** Temporal down (a consumer that starts a workflow raises
+  `ServiceUnavailable`) or the database unreachable is retried without limit: dead-lettering
+  every cancel during a Temporal restart would turn a blip into a pile of manual replays.
 
-| Meta-test (planned, Week 3) | Enumerates | Asserts |
-| --- | --- | --- |
-| `test_consumers_idempotent.py` | every registered Kafka consumer | delivering its event **twice** yields exactly one side effect |
-| `test_tasks_idempotent.py` | every Celery task | re-execution with the same key is a no-op |
+The five registered consumers, and the second guard each has behind `processed_events`:
 
-Once they exist, a new consumer added without idempotency will fail the suite the day it
-lands. The registry
-raising on duplicate names (`app/core/registry.py:28-32`) closes the other half of the same
-hole: two handlers silently claiming one name is itself a way to process an event twice.
+| Consumer | Topics | Effect | Second guard |
+| --- | --- | --- | --- |
+| `scheduling.cancel-follow-up` | `appointments.cancelled` | start `CancelFollowUpWorkflow` | workflow id `cancel-<id>`, `REJECT_DUPLICATE` |
+| `scheduling.provider-deactivation` | `providers.state` (acts only on `is_active=false`) | start `ProviderDeactivationWorkflow` | workflow id per provider and event |
+| `scheduling.post-visit` | `visits.completed` | start `PostVisitWorkflow` | workflow id `post-visit-<visit_id>`; the capture's gateway key |
+| `notifications.patient-messages` | `appointments.booked`, `.cancelled`, `.rescheduled`, `.no_show`, `billing.status_updated`, `clinical.note_signed`, `clinical.test_ordered` | queue one `notifications` row | the row's unique key `<topic>:<event_id>`; the send task's claim |
+| `analytics.daily-rollup` | `appointments.booked`, `.cancelled`, `.no_show`, `visits.completed` | increment `analytics_daily` | none in the write; the nightly reconcile reports drift (§3.7) |
+
+A workflow-starting consumer's transaction commits only after the start succeeded or was
+refused as already started, so the mark and the effect agree even though the workflow lives
+in Temporal, outside the transaction.
+
+**Enforced, not intended.** `tests/meta/test_consumers_idempotent.py` enumerates `CONSUMERS`,
+requires a fixture event per topic, and delivers each fixture **twice**, asserting one
+effect. `tests/meta/test_celery_tasks.py` does the Celery half: every task in `TASKS` is
+registered, `acks_late`, and routed to a named queue (a Celery task's idempotency is its own:
+the send task claims its row first, §1.4). `tests/meta/test_temporal_registry.py` discovers
+every `@workflow.defn` / `@activity.defn` in `app/` and fails on one that is unregistered. The
+registry raising on a duplicate name (`app/core/registry.py:28-32`) closes the other half of
+the same hole: two handlers silently claiming one name is itself a way to process an event
+twice. T3 `test_consumer_runtime.py` proves the runtime against a real broker.
 
 Temporal is a partial exception worth naming: activities are retried by the engine and must
 be idempotent for the same reason, but workflow *execution* is deduplicated by workflow id,
-so submitting the same booking twice under a deterministic id is safe by construction. That
-is a property to use, not a reason to skip idempotent activities.
+so starting the same booking or follow-up twice under a deterministic id is safe by
+construction. That is a property to use, not a reason to skip idempotent activities.
 
 ### 3.6 Open inconsistencies
 
-Recorded rather than quietly resolved, because both affect Week 2:
+Recorded rather than quietly resolved:
 
 1. ~~**`pending_failed` vs `failed`.**~~ **Resolved 2026-09-13.** The harness design's
    failure-sibling case expected `appointments.status == pending_failed`
@@ -1780,66 +2108,188 @@ Recorded rather than quietly resolved, because both affect Week 2:
    CHECK constraint accepts. **The code was authoritative and the spec has been corrected**;
    the sketch now reads `failed`. Left recorded rather than deleted, because a Week 2 test
    written from an older copy of that spec would still fail confusingly.
-2. **Slot generation cadence is undecided** — a Celery beat job versus a Temporal cron
-   workflow (foundation spec §10). Deferred deliberately: the table shape is unaffected
-   either way. It is the one place where §3.1's decision procedure does not yet give an
+2. **Slot generation cadence is undecided, and no generator is built** — a Celery beat job
+   versus a Temporal cron workflow (foundation spec §10). Slots are seeded by `python -m
+   app.cli seed` (PRD `PART-A-FR-2.1`, deferred by decision). Deferred deliberately: the
+   table shape is unaffected either way. It is the one place where §3.1's decision procedure does not yet give an
    obvious answer, because slot generation is both periodic (Celery-shaped) and multi-step
    across a provider's availability rules (Temporal-shaped).
+
+### 3.7 Celery jobs and the beat sweeps
+
+Celery carries *commands* — "send this message", "sweep stuck rows" — to exactly one worker
+(`app/celery_app.py`; spec section 5). Facts go over Kafka; multi-step processes and timers
+are Temporal's. RabbitMQ runs on its own vhost (`part-a`), and every queue name goes through
+`Settings.queue()` (harness requirement 1):
+
+| Queue | Tasks | Notes |
+| --- | --- | --- |
+| `notifications` | `notifications.send` | Dead-lettered to `notifications.dlq` (declared by the worker at start, since nothing consumes it) when a message is undeliverable for good |
+| `maintenance` | the four beat sweeps below | |
+| `documents` | `clinical.extract_document` | Text extraction from uploaded reports (Week 4) |
+
+Reliability settings, each for a reason: `task_acks_late` with `task_reject_on_worker_lost`
+(a worker killed mid-task leaves the message to be redelivered, not lost — safe because the
+send task claims its row first), `worker_prefetch_multiplier = 1` (a slow SMTP server does
+not strand a batch behind it), and no result backend (nothing reads results). Each task runs
+one `asyncio.run` over a short-lived `NullPool` engine, so no connection outlives the loop
+that opened it. `TASKS` is the registry the meta-test enumerates.
+
+**Sending a notification, end to end.** A consumer (or the visit workflow's `visit.remind`
+activity) calls `notifications.service.queue` inside its own transaction: one row, unique on
+its key, and the Celery enqueue registered to run **after** that transaction commits —
+enqueueing first would let a worker look for a row that is not there yet, or that a rollback
+removed. `notifications.send` then claims the row (`queued → sending`; only one transaction
+can, so a twice-delivered task sends once), applies a per-patient throttle in Redis (a
+throttled send is re-scheduled without using a retry), renders the template and sends by
+email (SMTP to Mailpit in compose) or SMS (a logging fake), retrying with backoff on a
+channel error and rejecting to the dead-letter queue when retries run out.
+
+**The beat schedule** (`celery-beat`, `app/celery_app.py:configure`):
+
+| Job | Every | Task | Why |
+| --- | --- | --- | --- |
+| Requeue stuck notifications | 1 minute | `notifications.requeue_stuck` | A row still `queued` a minute after it was written — the process died between commit and enqueue, or the enqueue was lost — or `sending` for five minutes under a worker that never finished, is enqueued again; `claim` keeps that safe |
+| Reconcile stale pending bookings | 5 minutes | `scheduling.reconcile_stale_pending` | Closes PRD R-9: a *terminated* booking workflow runs no compensation, so this sweep compensates `pending` appointments whose workflow is not running, exactly as the workflow would have (§3.2) |
+| Purge published outbox rows | 24 hours | `events.purge_published` | Rows published more than seven days ago — Kafka keeps event topics that long, so an older row has no use |
+| Reconcile analytics | 24 hours | `analytics.reconcile` | Recomputes the last seven days from `scheduling.public.daily_counts` and reports every (day, clinic, provider) cell where the rollup disagrees; reports, never overwrites |
+
+### 3.8 Observability
+
+Every Part A process — API, worker, relay, consumers, Celery worker — installs one tracer and
+meter provider (`app/core/telemetry.py`, spec D-28) and exports OTLP/HTTP to the
+`otel-collector`, which sends traces to `jaeger` and exposes metrics for `prometheus`; the
+Part B services export to the same collector under their own `service.name`. Export is off
+unless `SMARTHEALTH_OTEL_ENDPOINT_HTTP` (and, for the worker's Temporal SDK metrics,
+`SMARTHEALTH_OTEL_ENDPOINT_GRPC`) is set, which is how the test suite runs with in-memory
+providers instead.
+
+**One trace per user action, across processes.** FastAPI is instrumented (probes excluded).
+Every Temporal client carries the SDK's `TracingInterceptor`, so a workflow's run and its
+activities join the trace of the request that started it. `emit` stores the trace context on
+the outbox row; the relay's produce span and the consumer's handler span are parented on it,
+so a cancel's trace continues through Kafka into the follow-up workflow it starts. On the Part
+B side the assistant's calls to Part A are client spans named `Part A <METHOD>` that inject
+`traceparent` (commit `5f91d39`), so a booking made in a chat runs as one trace from the
+assistant through Part A's API into the booking workflow; each model call is an `llm chat`
+span with `gen_ai.*` attributes, token counts included. JSON log lines carry `trace_id` and
+`span_id`.
+
+**Metrics and dashboards.** Prometheus scrapes the collector, RabbitMQ's own exporter and
+`kafka-exporter`. Grafana is provisioned (`ops/grafana/`) with four dashboards — *Service
+overview* (API rate, status, p95, 5xx ratio; Temporal workflows, activity failures and
+schedule-to-start latency), *Async backbone* (outbox backlog age and publish/refuse rates,
+events by consumer and outcome, consumer lag, RabbitMQ ready and unacknowledged messages),
+*Platform analytics* (the five metrics, through the read-only `analytics_reader` Postgres
+datasource) and *Assistant* (§6.5) — and eight alert rules: outbox backlog older than a
+minute, an event dead-lettered, notifications in the dead-letter queue, a consumer falling
+behind, API 5xx above 5%, booking workflows failing, assistant turns failing, and the
+assistant slow to start answering.
+
+**Known limits, stated plainly.**
+
+- **SQL spans do not reach Jaeger.** `instrument_engine` attaches SQLAlchemy instrumentation
+  to every process's engine, but no database spans appear under the request and workflow
+  spans in Jaeger. The cause has not been established; traces still show every HTTP, Temporal,
+  Kafka, gRPC and LLM hop.
+- **The analytics drift counter is not surfaced.** `analytics.reconcile` records
+  `smarthealth_analytics_drift` and logs each disagreeing cell, but no Grafana panel shows it
+  and no alert fires on it; today drift is found in the Celery worker's logs.
+- **gRPC health probes are not traced.** Deliberately: compose polls them every few seconds.
+  The Part B services filter them with their own `TRACED` predicate, because the library's
+  `filters.health_check()` splits the method name with `os.path` and never matches on Windows.
 
 ---
 
 ## 4. Key design decisions
 
-Sixteen decisions are recorded with their rejected alternatives and rationale in
-**[PRD §8](PRD.md#8-key-design-decisions)** (D-1 … D-16), with full derivations in
+Thirty-six decisions are recorded with their rejected alternatives and rationale in
+**[PRD §8](PRD.md#8-key-design-decisions)** (D-1 … D-36), with full derivations in
 [`2026-09-02-week1-foundation-design.md`](superpowers/specs/2026-09-02-week1-foundation-design.md)
 §3,
-[`2026-09-03-week1-management-apis-design.md`](superpowers/specs/2026-09-03-week1-management-apis-design.md)
-and, from D-9 on,
+[`2026-09-03-week1-management-apis-design.md`](superpowers/specs/2026-09-03-week1-management-apis-design.md),
 [`2026-10-28-week2-scheduling-workflows-design.md`](superpowers/specs/2026-10-28-week2-scheduling-workflows-design.md)
-§2. In summary: a user account is distinct from a patient/provider record (D-1); bookable time
-is a pre-generated row rather than a computation (D-2); an appointment is separate from a
-visit (D-3); PostgreSQL is the system of record and MongoDB owns only the audit trail (D-4);
-reliability invariants live in database constraints rather than application code (D-5);
-services never import FastAPI and routers own the transaction boundary (D-6); Temporal,
-Kafka and Celery each own one kind of asynchronous work (D-7); the system is a modular
-monolith whose boundaries are meta-tested (D-8); slots belong to `scheduling` (D-9); the
-booking workflow, not the router, creates the appointment row (D-10); duplicate bookings are
-prevented by deterministic workflow ids (D-11); the database records human actions
-synchronously while the visit workflow owns only the no-show timer (D-12); waitlist promotion
-is shared workflow code over two activities, not a Kafka consumer (D-13); a reschedule books
-the new slot before it releases the old one (D-14); `patients` publishes one interface file
-for other modules (D-15); and cancel is a synchronous paired write whose follow-ups start
-best-effort after the commit (D-16). This document shows where each lands in the code — D-5,
-D-6, D-8 and D-15 in §1 and §2, D-2, D-3, D-7, D-9, D-10 and D-11 in §2.8 and §3, D-12 in §2.9
-and §3.2a, and D-13, D-14 and D-16 in §3.3.
+§2 (D-9 … D-16) and
+[`2026-11-10-weeks3-5-architecture-design.md`](superpowers/specs/2026-11-10-weeks3-5-architecture-design.md)
+(D-17 … D-36).
+
+**Weeks 1-2, Part A's core.** A user account is distinct from a patient/provider record
+(D-1); bookable time is a pre-generated row rather than a computation (D-2); an appointment
+is separate from a visit (D-3); PostgreSQL is the system of record and MongoDB owns only the
+audit trail (D-4); reliability invariants live in database constraints rather than
+application code (D-5); services never import FastAPI and routers own the transaction
+boundary (D-6); Temporal, Kafka and Celery each own one kind of asynchronous work (D-7); the
+system is a modular monolith whose boundaries are meta-tested (D-8); slots belong to
+`scheduling` (D-9); the booking workflow, not the router, creates the appointment row
+(D-10); duplicate bookings are prevented by deterministic workflow ids (D-11); the database
+records human actions synchronously while the visit workflow owns time (D-12); waitlist
+promotion is shared workflow code over two activities, not a Kafka consumer (D-13); a
+reschedule books the new slot before it releases the old one (D-14); each module publishes
+one interface file for other modules (D-15); and cancel is a synchronous paired write whose
+follow-up runs in a workflow — started best-effort after the commit in Week 2, by the
+consumer of its event since Week 3 (D-16).
+
+**Week 3, the asynchronous backbone.** Part B is two services split by data ownership and
+workload (D-17), and Part A stays one (D-18); services share channels — Kafka, Envoy, the
+observability stack — never a store (D-19); Kafka *starts* Temporal workflows and never
+steers a running one (D-20); events leave the database only through a transactional outbox
+(D-21), as Avro under Schema Registry with `BACKWARD_TRANSITIVE` (D-22); a deactivated
+provider's future appointments are cancelled and the patients told (D-23); Redis state and
+Redis cache are separate instances (D-24); access tokens are short EdDSA tokens bound to a
+server-side session, with rotating refresh tokens (D-25); reminder timing lives in Temporal
+and Celery only delivers (D-26); billing is one state-machine record per appointment over a
+fake gateway behind a circuit breaker (D-27); every process exports to one OpenTelemetry
+Collector (D-28).
+
+**Weeks 4-5, knowledge and the assistant.** The vector index holds shared knowledge only —
+guides and provider profiles; live and per-patient facts come from Part A's API (D-29); the
+assistant's client API is gRPC server-streaming, reached by gRPC-Web through Envoy (D-30);
+clinical records are a Part A module whose content never travels on Kafka (D-31); the model
+never writes — it answers from the guides and hands every action to a guided flow that waits
+for a human confirmation (D-32); Groq behind provider-neutral settings, with an offline brain
+as the fallback (D-33); conversation checkpoints in the assistant's own Postgres (D-34);
+per-user usage named in the admin's browser, not copied into Part B (D-35); and reports as
+in-process tasks streamed through Redis (D-36).
+
+This document shows where each lands in the code — D-5, D-6, D-8 and D-15 in §1 and §2; D-2,
+D-3, D-7, D-9, D-10 and D-11 in §2.8 and §3.2; D-12 and D-26 in §2.9 and §3.2a; D-13, D-14,
+D-16, D-20, D-23 and D-27 in §3.3; D-21 and D-22 in §3.4; D-25 in §1.4 and §2.2; D-28 in §3.8;
+D-17, D-19, D-29, D-30 and D-32 … D-36 in §6.
 
 ## 5. Assumptions and tradeoffs
 
 Known gaps and accepted risks are recorded, each with a status, in
-**[PRD §9](PRD.md#9-known-gaps-and-accepted-risks)** (R-1 … R-22): the non-atomic
-audit/commit pair (R-1, and its booking-activity form, R-12); the slot/appointment paired
-write (R-2, closed for every path); bookable past slots (R-3, closed); the
-non-self-incrementing `version` column (R-4, closed); the missing patient self-access (R-5);
-Redis being connected but unused (R-7); the monolith's blast radius (R-8); a terminated
-booking skipping compensation (R-9); failed bookings pinning their slot against deletion
-(R-10); the unchecked no-row `GET` (R-11); a 503 that can follow a successful start
-(R-13); any provider being able to mark any visit seen or complete (R-14); bookings
-confirmed before slice 3 never being auto-marked no-show (R-15); a check-in racing
-the visit workflow's start leaving the timer to run to its deadline (R-16); and slice 4's
-limits — a lost cancel follow-up (R-17), waitlist head-of-line blocking (R-18), `uuid4`
-promotion ids (R-19), cancelling after the slot started (R-20), the pending-replacement window
-(R-21) and a reschedule refused inside its workflow being visible only by polling (R-22). The error-contract inconsistency on 401/403 (R-6) is closed.
-R-1 is explained in situ at §2.3, R-2 at §3.3, R-3/R-4 at §3.2, R-9 at §3.2, R-11/R-13
-at §2.8, R-14/R-15/R-16 at §3.2a, and R-17 … R-22 at §3.3.
+**[PRD §9](PRD.md#9-known-gaps-and-accepted-risks)** (R-1 … R-26).
 
-Further deferrals that are decisions rather than oversights — a deactivated user keeping
-access until token expiry, `list_providers` having no `is_active` filter, provider
-deactivation ignoring existing future appointments (PRD R-25; new bookings are refused,
-R-24), specialty filtering being a sequential scan,
-entrypoint migrations racing under multiple replicas, the healthcheck polling `/health`
-rather than `/ready`, and the absence of a dependency lock file — are each written up with
-their reasoning in
+**Closed since they were recorded:** the slot/appointment paired write (R-2, every path);
+bookable past slots (R-3); the non-self-incrementing `version` column (R-4); patient
+self-access (R-5); the 401/403 error contract (R-6); a terminated booking skipping
+compensation (R-9, the stale-pending reconciler, §3.2); any provider marking any visit seen
+or complete (R-14, §2.9); a lost cancel follow-up (R-17, the outbox, §3.3); a patient holding
+two overlapping appointments (R-23); a deactivated provider staying bookable (R-24) and
+keeping their existing appointments (R-25, §3.3); and a deactivated login keeping access until
+its token expired (R-26, sessions). Redis is no longer unused (R-7, partly closed: it holds
+state, and no cache has been built).
+
+**Accepted, and still true:** the non-atomic audit/commit pair (R-1, and its
+booking-activity form, R-12); the monolith's blast radius (R-8); failed bookings pinning their
+slot against deletion (R-10); the unchecked no-row `GET` (R-11); a 503 that can follow a
+successful start (R-13); bookings confirmed before slice 3 never being auto-marked no-show
+(R-15); a check-in racing the visit workflow's start leaving the timer to run to its deadline
+(R-16); waitlist head-of-line blocking (R-18); `uuid4` promotion ids (R-19); cancelling after
+the slot started (R-20); the pending-replacement window (R-21); and a reschedule refused inside
+its workflow being visible only by polling (R-22). R-1 is explained in situ at §2.3, R-2 at
+§3.3, R-3/R-4/R-9 at §3.2, R-11/R-13 at §2.8, R-15/R-16 at §3.2a, and R-17 … R-22 at §3.3.
+
+**Operational limits stated in this document:** SQL spans missing from Jaeger and the
+analytics drift counter having no panel or alert (§3.8); assistant reports running as
+in-process asyncio tasks, so a restart fails a report in progress (§6.4); clinic and
+department management, and slot generation, having no endpoints (§1.4, §3.6).
+
+Further deferrals that are decisions rather than oversights — `list_providers` having no
+`is_active` filter, specialty filtering being a sequential scan, entrypoint migrations racing
+under multiple replicas, the healthcheck polling `/health` rather than `/ready`, and the
+absence of a dependency lock file — are each written up with their reasoning in
 [`2026-09-03-week1-management-apis-design.md`](superpowers/specs/2026-09-03-week1-management-apis-design.md)
 §11.
 
@@ -1847,36 +2297,91 @@ their reasoning in
 
 ## 6. Part B — `knowledge` and `assistant`, as built
 
-Two services beside the monolith, each with its own process, image, dependencies and
-stores (spec D-17, D-19); `tests/meta/test_service_independence.py` fails on any import,
-setting or compose variable that crosses between them. They reach Part A only through its
-HTTP API with **the user's own token**, and Kafka; the browser reaches them only through
-Envoy (gRPC-Web). Contracts are files: `contracts/proto/` (generated per service by
-`scripts/gen_proto.py`, and for the browser by `npm run gen:proto`).
+Two services beside the monolith, each with its own process, image, dependencies and stores
+(D-17, D-19); `tests/meta/test_service_independence.py` fails on any import, setting or
+compose variable that crosses between them or into Part A. They reach Part A only through
+its HTTP API with **the user's own token**, and through Kafka; the browser reaches them only
+through Envoy. Contracts are files: `contracts/proto/` (`smarthealth.knowledge.v1`,
+`smarthealth.assistant.v1`), generated per service by `python scripts/gen_proto.py` into
+`services/<name>/gen` and for the browser by `npm run gen:proto`. Both run under the compose
+profile `partb`.
+
+```
+browser ──gRPC-Web──▶ envoy :8088 ──gRPC──▶ assistant :50051 ──gRPC──▶ knowledge :50052
+        └──/api/*───▶ envoy ──HTTP──▶ Part A :8000          │                 │
+                                                             ├─HTTP, user's token─▶ Part A
+   Part A ──Kafka──▶ assistant (identity.sessions_revoked, appointments.booked)    │
+   Part A ──Kafka──▶ knowledge (providers.state) ◀──────────────────────────────────┘
+   stores:  assistant → assistant-db (Postgres), assistant-redis
+            knowledge → knowledge-db (Postgres), qdrant
+```
+
+**Envoy** (`ops/envoy/envoy.yaml`, D-30) is the single front door: gRPC-Web to native gRPC for
+`/smarthealth.assistant.v1.Assistant/` (no route timeout, since answers stream) and
+`/smarthealth.knowledge.v1.Knowledge/`, and `/api/*` to Part A with the prefix stripped.
+Between services (assistant → knowledge) calls are native gRPC with no Envoy in between.
+
+**Authentication is Part A's.** Both services verify the caller's EdDSA access token against
+Part A's `GET /.well-known/jwks.json` (each has its own copy of the verifier, `auth.py`). The
+assistant additionally refuses a token issued before its user's sessions were revoked: it
+consumes `identity.sessions_revoked` into a deny-list in `assistant-redis`, so it never reads
+Part A's session store.
 
 ### 6.1 `knowledge` (`services/knowledge/knowledge_service`)
 
 | Module | Does |
 | --- | --- |
-| `documents.py`, `chunking.py` | the corpus (`corpus/`, Markdown and PDF, each with an `audience`) split by heading, then size; chunk ids are uuid5 of source and position, with a content hash |
-| `embeddings.py` | fastembed BGE-small (dense) + BM25 (sparse); modes fixture / record / live, tests replay `eval/fixtures/embeddings.jsonl` |
-| `index.py` | Qdrant; hybrid search fused by RRF, filtered by the caller's audience, with a relevance floor |
-| `ingest.py`, `consumer.py` | idempotent, versioned ingestion; providers indexed from `providers.state` |
-| `eval.py` | the golden set (`eval/golden.yaml`): recall@5, MRR, empty-for-off-topic |
-| `server.py` | gRPC `Search`, verifying Part A's JWT against its JWKS |
+| `documents.py`, `chunking.py` | The corpus (`services/knowledge/corpus/`, fictional MediNova guides in Markdown and one PDF, each with an `audience`) split by heading, then by size (1,200 characters, 150 overlap); a PDF by size alone; one provider profile is one chunk. Chunk ids are uuid5 of document, version and position, and each chunk carries a hash of its text |
+| `embeddings.py` | Two local embeddings per text with fastembed — dense `BAAI/bge-small-en-v1.5` (384 dimensions) and sparse BM25 (`Qdrant/bm25`) — from a factory keyed on `KNOWLEDGE_EMBEDDING_MODE`: `live`, `record`, or `fixture` (replays `eval/fixtures/embeddings.jsonl` and fails loudly on an unseen text; what tests use) |
+| `index.py` | One Qdrant collection, two named vectors per point, payload indexes on `audience` and `document_id`. Writes are idempotent (point id = chunk id) and versioned: a new version is upserted *before* the old version's points are deleted, so a search during re-ingestion never finds a gap. Search prefetches 20 by each vector, fuses by **reciprocal rank (RRF)**, filters by audience, and returns nothing unless the best dense similarity reaches **0.55** (`MIN_SIMILARITY`), so an off-topic question gets "nothing" rather than the least-bad passage |
+| `ingest.py` | Corpus ingestion: unchanged chunks keep their hash and are not embedded again, so it runs on every start |
+| `store.py`, `consumer.py` | The service's own provider directory in `knowledge-db`, built from the compacted `providers.state` read from offset 0 (event-carried state transfer). Each value replaces the entry, so a replay is idempotent; an active provider is also one chunk in the index, an inactive one or a tombstone is removed from both |
+| `server.py` | gRPC `Search(query, limit)`: verifies the token, takes the **audience from the token, never the request** (a patient searches the patient corpus; every staff role the staff corpus too), default limit 5, at most 20; gRPC health service |
+| `eval.py` | The golden set (`eval/golden.yaml`): recall@5, MRR, and empty-for-off-topic; `KNOWLEDGE_EMBEDDING_MODE=record python -m knowledge_service.eval` re-records the fixture |
+| `telemetry.py` | Tracing to the shared collector as `service.name=knowledge` |
+
+On start (`main.py`) the service waits for Qdrant, ingests the corpus, then
+`reindex_providers()` brings the index up to the directory (commit `5f91d39`): the consumer
+acts only on events it has not committed, so providers whose events were read before
+indexing existed were in the directory and not in search — on 2026-11-16 the directory held
+six providers and the index none. Then the gRPC server reports SERVING.
+
+The index holds **shared knowledge only** (D-29): guides and provider profiles. Live facts —
+free slots, *my* appointments, a patient's record — come from Part A's API at the moment
+they are asked, through the assistant's flows.
 
 ### 6.2 `assistant` (`services/assistant/assistant_service`)
 
 | Module | Does |
 | --- | --- |
-| `server.py` | the gRPC service: `Chat`, `Confirm`, `Cancel`, `Starters`, conversations, `Usage`, reports; every event appended to the turn's Redis Stream before it is sent |
-| `agent.py` | the LangGraph graph per conversation, checkpointed in `assistant-db` |
-| `flows/` | guided flows: `scheduling.py`, `record.py`, `operations.py`, `drafts.py`; `staged.py` is the stage machine they share |
-| `guard.py` | red-flag phrases, answered with urgent-care guidance before anything else |
-| `llm.py`, `offline.py` | the model factory; the no-model brain (route to a flow, or quote the documents) |
-| `parta.py` | Part A's API with the user's token, timeouts and a circuit breaker |
-| `conversations.py`, `usage.py`, `reports.py` | threads; per-turn usage and drafts; background reports |
-| `metrics.py`, `telemetry.py` | OTel metrics (the Assistant dashboard) and traces |
+| `server.py` | The gRPC service: `Chat` and `Confirm` (server-streaming), `Cancel` (stop generating), `Starters`, `ListConversations` / `GetConversation` / `DeleteConversation`, `Usage`, `StartReport` / `WatchReport` (streaming) / `ListReports`. Every event of a turn is appended to the turn's Redis Stream before it is sent |
+| `agent.py` | The LangGraph graph per conversation: `begin → chat → flow ⇄ ask`, checkpointed in `assistant-db` by `AsyncPostgresSaver` (D-34), thread key = user *and* conversation, so one user can never resume another's |
+| `flows/` | Seventeen guided flows, registered in `FLOWS` with the roles that may start them: scheduling (`book`, `cancel`, `reschedule`, `waitlist`, `my_appointments`), the record (`prepare`, `prescriptions`, `last_visit`, `reports` for patients; `brief`, `results_review` for providers), operations (`my_day` for providers; `capacity`, `no_shows` for front desk and admin; `snapshot` for admin) and two drafting flows (`notify_patients` for front desk and admin, `patient_instructions` for providers). `staged.py` is the stage machine they share. Each is deterministic over Part A's REST API with the user's token |
+| `guard.py` | Red-flag patterns (chest pain, stroke signs, breathing, bleeding, collapse, self-harm) answered deterministically with urgent-care guidance from the clinic's own guide, before any model, and never with a booking |
+| `llm.py` | The model factory (`ASSISTANT_LLM_MODE` = `auto` \| `off` \| `fixture` \| `record` \| `live`; provider, model and key from `ASSISTANT_LLM_PROVIDER` / `_MODEL` / `_API_KEY`; Groq `openai/gpt-oss-120b` in use, D-33). Each model call is an `llm chat` client span with `gen_ai.*` attributes and token counts |
+| `offline.py` | The no-model brain: a message that names a use case starts that flow; anything else is searched in knowledge and the best passages quoted with their sources, never paraphrased |
+| `parta.py` | Part A's API, always with the user's token: a timeout on every call (5 s), a circuit breaker, `Idempotency-Key` and `X-Conversation-Ref` on writes, and a `Part A <METHOD>` client span that injects `traceparent`, so Part A's request — and the booking workflow it starts — joins the assistant's trace |
+| `stores.py` | `assistant-redis`: turn streams (`turn:<id>`, one-hour TTL), cancel flags, and the revoked-session deny-list |
+| `conversations.py` | Threads and transcripts (`conversations`, `conversation_turns`) |
+| `usage.py` | `turn_usage` per finished turn, `drafts`, and `bookings` (from `appointments.booked`, by `origin` and `conversation_ref`, for the conversion share) |
+| `reports.py` | Background reports (§6.4), kept in `reports` |
+| `metrics.py`, `telemetry.py` | OTel metrics (`assistant.turns`, `.turn.duration`, `.first_token`, `.llm.calls`, `.llm.tokens`, `.drafts`, `.bookings`, `.reports`) with low-cardinality labels, and traces; gRPC is instrumented on both sides, with health probes filtered out by `TRACED` |
+| `main.py` | Wiring: the checkpointer, stores, the two Kafka consumers (`identity.sessions_revoked`, `appointments.booked`; at least once, offsets committed after an idempotent apply), the gRPC server and its health |
+
+**The model never writes** (D-32). In `chat` the model has exactly two tools:
+`search_knowledge` (calls `knowledge.Search` with the user's token) and `start_flow` (hands a
+request to a guided flow). Every change — a booking, a cancel, a message to patients,
+instructions saved into a note — is a flow step that pauses on a confirmation the user
+answers through `Confirm`. A prompt that talks the model into wanting someone else's record
+meets the same 403/404 from Part A the user would, because the assistant holds no authority
+of its own.
+
+**Citations are only what the answer used.** `sources_used` (`agent.py:309`) keeps a
+retrieved passage only if it shares at least two distinctive words with the answer and — when
+it has a section the title does not carry — the answer names that section. Citing everything
+retrieved showed sources the answer never used; the offline judge caught that (case
+`ai-001`), and a live run on 2026-11-16 caught sibling sections of one guide being cited
+together, which the section-name rule fixed (commit `5f91d39`).
 
 ### 6.3 One chat turn
 
@@ -1893,36 +2398,62 @@ browser ──gRPC-Web──▶ envoy ──gRPC──▶ assistant.Chat(convers
                    │ model: search_knowledge (knowledge.Search with the user's token) → answer + sources
                    │ no model / failure: offline brain
                    ▼
-   every event → Redis Stream → the client: token · tool · citation · options · confirmation · card · suggestions · done
+   every event → Redis Stream → the client: token · tool · citation · options · confirmation · card · suggestions · error · done
    on done: transcript row (conversations) · usage row (usage) · metrics
 ```
 
 **A write** — a booking, a cancel, a message to patients, instructions saved into a note —
 happens only in a flow, after an `AskConfirm` the user answers through `Confirm`. Writes carry
 `Idempotency-Key`s minted when the confirmation is asked, so a retried or replayed "yes"
-changes nothing twice; Part A's authorisation decides whether the user may do it at all.
+changes nothing twice; Part A's authorisation decides whether the user may do it at all. A
+booking made this way carries `X-Conversation-Ref`, so Part A records its origin as
+`assistant` and the conversion is counted from `appointments.booked`. A message to patients
+reaches them through Part A's `POST /notifications` once staff approve the draft, so Part B
+never holds an SMTP client.
 
 **A paused flow resumes anywhere**: the question is a LangGraph interrupt and the flow's
 memory is in the checkpoint, so the answer may come in a later request, a reopened thread,
 or after a restart. Typed text that does not answer the question drops the flow and is
 handled as a new request.
 
+**A dropped connection resumes, never regenerates**: the client reconnects with the same
+turn id and the last sequence number it saw (`resume_from`), and the server replays the turn's
+stream after it. `Cancel` sets the turn's cancel flag to stop generating.
+
 ### 6.4 Reports
 
-`StartReport` (admin) creates a record and starts a task; the task fetches every figure from
-Part A's `/analytics` (this period, the one before, daily series), emits them as a card, then
-streams the model's narrative of those figures, appending each event to `report-<id>` in Redis.
-`WatchReport` replays that stream and follows it until done; a finished report is served
-from its row in `assistant-db`. A restart marks a running report failed (PRD D-36).
+`StartReport` (admin) creates a record and starts a task, returning a job id at once; four
+kinds exist — weekly and monthly operations reports, a department utilisation report, and an
+engagement summary (`reports.py:KINDS`). The task fetches **every figure from Part A** (this
+period, the one before, daily series; `/analytics/utilisation` for utilisation), emits them as
+cards, then streams the model's narrative of those figures only — with no model the narrative
+is a plain statement of the same figures — appending each event to `report-<id>` in Redis.
+`WatchReport` replays that stream and follows it until done, from any tab and after a dropped
+connection; a finished report is served from its row in `assistant-db`.
+
+**As built, a report is an asyncio task in the assistant process** (D-36), not a separate
+worker as spec 9.1 named: at start-up the service marks any report still `running` as
+`failed`, so a restart mid-report loses that report and it must be started again. The
+job/stream split is what a worker would need, so it can be split out unchanged when load
+asks for it.
 
 ### 6.5 Usage and observability
 
 Each finished turn writes `turn_usage` (subject, role, model, calls, tokens from the
-provider's own count, first-token and total time, outcome); drafts write `drafts`. `Usage`
-totals them per user for admin; the AI usage page joins names and emails from Part A's
-`GET /users` in the browser (PRD D-35). The same numbers feed OTel metrics with
-low-cardinality labels only, scraped as `job="smarthealth/assistant"` into the **SmartHealth —
-Assistant** dashboard, with alerts on error share and first-token latency.
+provider's own count, first-token and total time, outcome); drafts write `drafts`; bookings
+seen on `appointments.booked` write `bookings`. `Usage` totals them per user for admin; the
+AI usage page joins names and emails from Part A's `GET /users` in the browser (D-35), so
+Part B stores no personal details. The same numbers feed OTel metrics with low-cardinality
+labels only, scraped as `job="smarthealth/assistant"` into the **SmartHealth — Assistant**
+dashboard (turns, model share, tokens, estimated cost, outcomes by role, time to first token
+and whole-turn latency, drafts, reports, error share, and the share of bookings made with the
+assistant), with alerts on error share and first-token latency (§3.8).
+
+Traces run end to end: browser → Envoy → `assistant` (gRPC server span) → `knowledge`
+(gRPC client and server spans) and → Part A (`Part A <METHOD>` client spans with
+`traceparent`, then Part A's own request and workflow spans), with an `llm chat` span per
+model call carrying `gen_ai.request.model` and input and output token counts. gRPC health
+probes are excluded.
 
 ### 6.6 Degradation
 
@@ -1933,4 +2464,15 @@ Assistant** dashboard, with alerts on error share and first-token latency.
 | Part A | "I can't reach the booking system"; questions are still answered; the breaker fails fast after repeated failures |
 | the connection, mid-answer | the client resumes from the last event seen; the server replays, never regenerates |
 | the access token expires | the client refreshes once and replays the call |
+| the assistant restarts mid-report | the report is marked failed and must be started again (§6.4) |
 
+### 6.7 How Part B is tested
+
+**No test calls a live model.** Agent tests script one (`Scripted` in
+`tests/tiers/t1_contract/test_assistant_agent.py`) against a fake Part A
+(`tests/harness/fake_part_a.py`); the golden set (`test_assistant_golden.py`) replays Groq's
+recorded answers from `services/assistant/eval/fixtures/llm.jsonl`; knowledge tests replay
+recorded embeddings. Declarative `ai` cases (`tests/cases/ai-*.yaml`) are run by
+`tests/runner/ai.py`, and `python -m tests.judge.run_judge` judges the recorded run with a
+different model — report only, never gating. The real key lives only in the git-ignored
+`.env`; the test stack runs with none.
