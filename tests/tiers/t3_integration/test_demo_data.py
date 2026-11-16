@@ -9,6 +9,7 @@ from datetime import UTC, timedelta
 
 import pytest
 from sqlalchemy import func, select
+from temporalio.service import RPCError
 
 from app.components import build_activities, register_all
 from app.core.audit import AuditLog
@@ -49,6 +50,8 @@ from app.modules.scheduling.models import (
     ProviderSlot,
     SlotStatus,
     Visit,
+    WaitlistEntry,
+    WaitlistStatus,
 )
 from tests.tiers.t3_integration.demo_helpers import purge_demo
 
@@ -267,10 +270,30 @@ async def demo_worker(db_settings, demo_factory):
                     select(Appointment.id).join(Patient, Patient.id == Appointment.patient_id)
                     .where(Patient.mrn.like("DEMO-%")))).all()
             for appointment_id in ids:
-                with contextlib.suppress(Exception):
+                # Only "no such workflow / already closed" is expected; anything else is a bug.
+                with contextlib.suppress(RPCError):
                     await client.get_workflow_handle(visit_workflow_id(appointment_id)).cancel()
     finally:
         await mongo.close()
+
+
+async def _live_state(factory, net):
+    """What a refresh would compute: patients holding a live upcoming appointment, patients
+    with an open waitlist entry, and the counts of each."""
+    now = Clock().now()
+    async with factory() as session:
+        rows = (await session.execute(
+            select(Appointment.patient_id, ProviderSlot.starts_at, ProviderSlot.ends_at)
+            .join(ProviderSlot, ProviderSlot.id == Appointment.slot_id)
+            .where(Appointment.provider_id.in_(net.provider_ids.values()),
+                   Appointment.status.in_((AppointmentStatus.PENDING,
+                                           AppointmentStatus.CONFIRMED)),
+                   ProviderSlot.starts_at > now))).all()
+        waiting = (await session.execute(
+            select(WaitlistEntry.patient_id, WaitlistEntry.provider_id).where(
+                WaitlistEntry.patient_id.in_(net.patient_ids),
+                WaitlistEntry.status == WaitlistStatus.ACTIVE))).all()
+    return rows, waiting
 
 
 async def test_live_activity_goes_through_the_real_workflows(api, demo_factory, demo_worker):
@@ -280,9 +303,10 @@ async def test_live_activity_goes_through_the_real_workflows(api, demo_factory, 
         await ensure_slots(session, net, first_day=today + timedelta(days=1),
                            last_day=today + timedelta(days=14))
         await session.commit()
-    summary = await run_live(api, net, password=PASSWORD, target=4, existing_upcoming=0,
+    summary = await run_live(api, net, password=PASSWORD, target=8, existing_upcoming=0,
                              existing_waitlist=0, now=Clock().now())
-    assert summary.booked >= 3 and summary.cancelled == 1 and summary.rescheduled == 1
+    assert summary.failed == 0, summary.failures
+    assert summary.booked == 8 and summary.cancelled == 1 and summary.rescheduled == 1
     assert summary.waitlisted == 2
     async with demo_factory() as session:
         live = (await session.scalars(select(Appointment).where(
@@ -292,3 +316,49 @@ async def test_live_activity_goes_through_the_real_workflows(api, demo_factory, 
         assert statuses[AppointmentStatus.CONFIRMED] >= 2
         assert statuses[AppointmentStatus.CANCELLED] == 1
         assert statuses[AppointmentStatus.RESCHEDULED] == 1
+        # A patient booking themselves is "web"; the front desk booking a walk-in is not.
+        assert {a.origin for a in live} == {"front_desk", "web"}
+        # The waitlist is for the cancelled appointment's provider and covers its slot, so
+        # releasing the slot has someone to promote.
+        cancelled = next(a for a in live if a.status is AppointmentStatus.CANCELLED)
+        slot = await session.get(ProviderSlot, cancelled.slot_id)
+        entries = (await session.scalars(select(WaitlistEntry).where(
+            WaitlistEntry.patient_id.in_(net.patient_ids),
+            WaitlistEntry.status == WaitlistStatus.ACTIVE))).all()
+        assert len(entries) == 2
+        for entry in entries:
+            assert entry.provider_id == cancelled.provider_id
+            assert entry.window_start <= slot.starts_at and slot.ends_at <= entry.window_end
+
+
+async def test_a_second_run_does_not_double_book_or_requeue(api, demo_factory, demo_worker):
+    async with demo_factory() as session:
+        net, _ = await build_network(session, password=PASSWORD)
+        today = Clock().now().astimezone(net.tz).date()
+        await ensure_slots(session, net, first_day=today + timedelta(days=1),
+                           last_day=today + timedelta(days=14))
+        await session.commit()
+    first = await run_live(api, net, password=PASSWORD, target=8, now=Clock().now())
+    assert first.failed == 0, first.failures
+    rows, waiting = await _live_state(demo_factory, net)
+    busy = frozenset(patient for patient, *_ in rows)
+    waiting_ids = frozenset(patient for patient, _ in waiting)
+    second = await run_live(
+        api, net, password=PASSWORD, target=12, existing_upcoming=len(rows),
+        existing_waitlist=0, busy_patient_ids=busy, waiting_patient_ids=waiting_ids,
+        now=Clock().now())
+    assert second.failed == 0, second.failures
+    assert second.booked == 12 - len(rows)
+    rows, waiting = await _live_state(demo_factory, net)
+    # Nobody holds two overlapping live appointments...
+    by_patient: dict = {}
+    for patient, starts, ends in rows:
+        by_patient.setdefault(patient, []).append((starts, ends))
+    for windows in by_patient.values():
+        windows.sort()
+        for (_, ends), (starts, _) in zip(windows, windows[1:], strict=False):
+            assert ends <= starts
+    # ...and nobody waits twice.
+    waiting_patients = [patient for patient, _ in waiting]
+    assert len(waiting_patients) == len(set(waiting_patients))
+    assert second.waitlisted == 2 and len(waiting_patients) == len(waiting_ids) + 2
