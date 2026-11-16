@@ -3,7 +3,7 @@ analytics reconcile finds no drift, and the live phase books through real workfl
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -23,12 +23,25 @@ from app.demo.network import (
 )
 from app.modules.analytics.tasks import reconcile
 from app.modules.billing.models import BillingRecord, BillingStatus
-from app.modules.clinical.models import ClinicalNote, NoteStatus, PatientDocument
+from app.events.models import OutboxEvent
+from app.modules.clinical.models import (
+    ClinicalNote,
+    NoteStatus,
+    OrderStatus,
+    PatientDocument,
+    TestOrder,
+)
 from app.modules.clinical.storage import FilesystemDocumentStore
 from app.modules.identity.service import authenticate
 from app.modules.identity.sessions import InMemorySessionStore
 from app.modules.patients.models import Patient
-from app.modules.scheduling.models import Appointment, AppointmentStatus, ProviderSlot, Visit
+from app.modules.scheduling.models import (
+    Appointment,
+    AppointmentStatus,
+    ProviderSlot,
+    SlotStatus,
+    Visit,
+)
 from tests.tiers.t3_integration.demo_helpers import purge_demo
 
 pytestmark = [pytest.mark.integration, pytest.mark.docker]
@@ -136,6 +149,27 @@ async def test_imported_history_holds_every_rule_and_is_marked(demo_factory, db_
         docs = (await session.scalars(select(PatientDocument).where(
             PatientDocument.patient_id.in_(net.patient_ids)))).all()
         assert all(d.extraction_status == "extracted" and d.extracted_text for d in docs)
+        # Slot status agrees with the appointment: booked iff completed or no-show.
+        slot_status = {s.id: s.status for s in (await session.scalars(select(ProviderSlot).where(
+            ProviderSlot.id.in_([a.slot_id for a in appts])))).all()}
+        for a in appts:
+            expected = (SlotStatus.FREE if a.status is AppointmentStatus.CANCELLED
+                        else SlotStatus.BOOKED)
+            assert slot_status[a.slot_id] is expected
+        # No outbox rows: nobody is emailed about the past.
+        keys = {str(a.id) for a in appts} | {str(a.patient_id) for a in appts}
+        assert await session.scalar(select(func.count()).select_from(OutboxEvent).where(
+            OutboxEvent.key.in_(keys))) == 0
+        # Every reviewed order's result links both ways and its bytes are in the store.
+        store = FilesystemDocumentStore.from_settings(db_settings)
+        reviewed = (await session.scalars(select(TestOrder).where(
+            TestOrder.patient_id.in_(net.patient_ids),
+            TestOrder.status == OrderStatus.REVIEWED))).all()
+        by_id = {d.id: d for d in docs}
+        for order in reviewed:
+            document = by_id[order.result_document_id]
+            assert document.test_order_id == order.id
+            assert await store.get(document.object_key)
 
 
 async def test_importing_again_adds_nothing(demo_factory, db_settings):
@@ -150,7 +184,7 @@ async def test_importing_again_adds_nothing(demo_factory, db_settings):
         after = await session.scalar(select(func.count()).select_from(Appointment).where(
             Appointment.provider_id.in_(net.provider_ids.values())))
         assert after == before
-        assert await last_imported_day(session, net) == max(
+        assert await last_imported_day(session, net, now=Clock().now()) == max(
             d for d in days if d.weekday() < 5)
 
 
@@ -164,3 +198,43 @@ async def test_the_nightly_reconcile_finds_no_drift_in_imported_days(demo_factor
                             end=today - timedelta(days=11))
     demo_clinics = {str(c) for c in net.clinic_ids.values()}
     assert [d for d in drift if d["clinic_id"] in demo_clinics] == []
+
+
+async def test_days_that_once_held_upcoming_slots_are_imported_around_live_bookings(
+        demo_factory, db_settings):
+    today = Clock().now().astimezone(UTC).date()
+    first, last = today - timedelta(days=20), today - timedelta(days=16)
+    async with demo_factory() as session:
+        net, _ = await build_network(session, password=PASSWORD)
+        await ensure_slots(session, net, first_day=first, last_day=last)
+        kept = (await session.scalars(select(ProviderSlot).where(
+            ProviderSlot.provider_id.in_(net.provider_ids.values()))
+            .order_by(ProviderSlot.starts_at).limit(1))).one()
+        session.add(Appointment(
+            patient_id=net.patient_ids[0], provider_id=kept.provider_id,
+            clinic_id=kept.clinic_id, department_id=kept.department_id, slot_id=kept.id,
+            status=AppointmentStatus.CANCELLED, origin="front_desk",
+            cancelled_at=kept.starts_at - timedelta(days=1), cancellation_reason="test"))
+        await session.commit()
+        kept_id, kept_start, kept_end = kept.id, kept.starts_at, kept.ends_at
+    days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
+    net, _ = await _import(demo_factory, db_settings, days)
+
+    async def count(session):
+        return await session.scalar(select(func.count()).select_from(Appointment).where(
+            Appointment.provider_id.in_(net.provider_ids.values()),
+            Appointment.origin == ORIGIN))
+
+    async with demo_factory() as session:
+        weekdays = [d for d in days if d.weekday() < 5]
+        assert all([await day_imported(session, net, d) for d in weekdays])
+        before = await count(session)
+        assert before > 0
+        assert await session.get(ProviderSlot, kept_id) is not None
+        overlapping = await session.scalar(select(func.count()).select_from(ProviderSlot).where(
+            ProviderSlot.provider_id == kept.provider_id,
+            ProviderSlot.starts_at < kept_end, ProviderSlot.ends_at > kept_start))
+        assert overlapping == 1
+    await _import(demo_factory, db_settings, days)
+    async with demo_factory() as session:
+        assert await count(session) == before

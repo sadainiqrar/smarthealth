@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.demo.content import CANCELLATION_REASONS, CONTENT, RESULT_TEXT
@@ -189,6 +189,8 @@ ACTOR = "system:demo-import"
 
 _STATUS = {"completed": AppointmentStatus.COMPLETED, "cancelled": AppointmentStatus.CANCELLED,
            "no_show": AppointmentStatus.NO_SHOW}
+# No-show is VOIDED on purpose (spec section 10): live `mark_no_show` never releases the
+# authorisation hold, recorded as an open risk -- the import does not copy that behaviour.
 _BILLING = {"completed": BillingStatus.CAPTURED, "cancelled": BillingStatus.VOIDED,
             "no_show": BillingStatus.VOIDED}
 
@@ -215,21 +217,28 @@ def _local_bounds(day: date, tz: ZoneInfo) -> tuple[datetime, datetime]:
 
 
 async def day_imported(session: AsyncSession, net: Network, day: date) -> bool:
-    """A day is imported once any demo provider has a slot on it (history writes every
-    session's slots, booked or not; upcoming slots never reach the past)."""
+    """A day is imported once a demo provider has a `legacy_import` appointment whose slot
+    starts on it. Free slots alone prove nothing: `ensure_slots` gives upcoming days some, and
+    those days become past."""
     lower, upper = _local_bounds(day, net.tz)
-    found = await session.scalar(select(ProviderSlot.id).where(
-        ProviderSlot.provider_id.in_(net.provider_ids.values()),
-        ProviderSlot.starts_at >= lower, ProviderSlot.starts_at < upper).limit(1))
+    found = await session.scalar(
+        select(Appointment.id).join(ProviderSlot, Appointment.slot_id == ProviderSlot.id)
+        .where(Appointment.origin == ORIGIN,
+               ProviderSlot.provider_id.in_(net.provider_ids.values()),
+               ProviderSlot.starts_at >= lower, ProviderSlot.starts_at < upper).limit(1))
     return found is not None
 
 
-async def last_imported_day(session: AsyncSession, net: Network) -> date | None:
-    """The latest past day holding a demo slot, in the clinics' timezone."""
-    today_start, _ = _local_bounds(datetime.now(net.tz).date(), net.tz)
-    latest = await session.scalar(select(func.max(ProviderSlot.starts_at)).where(
-        ProviderSlot.provider_id.in_(net.provider_ids.values()),
-        ProviderSlot.starts_at < today_start))
+async def last_imported_day(session: AsyncSession, net: Network, *,
+                            now: datetime) -> date | None:
+    """The latest local day before `now`'s, holding a demo `legacy_import` appointment."""
+    today_start, _ = _local_bounds(now.astimezone(net.tz).date(), net.tz)
+    latest = await session.scalar(
+        select(func.max(ProviderSlot.starts_at))
+        .join(Appointment, Appointment.slot_id == ProviderSlot.id)
+        .where(Appointment.origin == ORIGIN,
+               ProviderSlot.provider_id.in_(net.provider_ids.values()),
+               ProviderSlot.starts_at < today_start))
     return latest.astimezone(net.tz).date() if latest else None
 
 
@@ -237,11 +246,63 @@ def _utc_day(moment: datetime) -> date:
     return moment.astimezone(UTC).date()
 
 
+async def _reconcile_with_existing(session: AsyncSession, net: Network,
+                                   plan: PlannedDay) -> PlannedDay:
+    """Make the day's plan fit what is already in the database. Never-booked slots of the
+    day (from `ensure_slots`, or an earlier import of a day with no bookings) are deleted --
+    nothing references them -- so the plan's own slots replace them. Slots a live booking
+    holds stay; a planned slot overlapping one is dropped with its planned appointment, and so
+    is a planned appointment whose patient already has a non-imported booking that overlaps
+    it. A re-run therefore adds only what is missing."""
+    lower, upper = _local_bounds(plan.day, net.tz)
+    provider_ids = list(net.provider_ids.values())
+    referenced = select(Appointment.id).where(Appointment.slot_id == ProviderSlot.id).exists()
+    await session.execute(delete(ProviderSlot).where(
+        ProviderSlot.provider_id.in_(provider_ids),
+        ProviderSlot.starts_at >= lower, ProviderSlot.starts_at < upper, ~referenced))
+    kept = (await session.execute(select(
+        ProviderSlot.provider_id, ProviderSlot.starts_at, ProviderSlot.ends_at).where(
+        ProviderSlot.provider_id.in_(provider_ids),
+        ProviderSlot.starts_at >= lower - timedelta(hours=1),
+        ProviderSlot.starts_at < upper))).all()
+    by_provider: dict[uuid.UUID, list[tuple[datetime, datetime]]] = defaultdict(list)
+    for provider_id, starts, ends in kept:
+        by_provider[provider_id].append((starts, ends))
+
+    def clashes(licence: str, start: datetime) -> bool:
+        end = start + SLOT_DURATION
+        return any(start < e and s < end for s, e in by_provider[net.provider_ids[licence]])
+
+    dropped = {(licence, start) for licence, start in plan.slots if clashes(licence, start)}
+    patient_ids = [net.patient_ids[a.patient_index] for a in plan.appointments]
+    theirs = (await session.execute(
+        select(Appointment.patient_id, ProviderSlot.starts_at, ProviderSlot.ends_at)
+        .join(ProviderSlot, Appointment.slot_id == ProviderSlot.id)
+        .where(Appointment.patient_id.in_(patient_ids),
+               Appointment.origin.is_distinct_from(ORIGIN),
+               ProviderSlot.starts_at >= lower - timedelta(hours=1),
+               ProviderSlot.starts_at < upper))).all()
+    busy: dict[uuid.UUID, list[tuple[datetime, datetime]]] = defaultdict(list)
+    for patient_id, starts, ends in theirs:
+        busy[patient_id].append((starts, ends))
+
+    def patient_clash(a: PlannedAppointment) -> bool:
+        end = a.starts_at + SLOT_DURATION
+        return any(a.starts_at < e and s < end
+                   for s, e in busy[net.patient_ids[a.patient_index]])
+
+    appointments = tuple(a for a in plan.appointments
+                         if (a.licence, a.starts_at) not in dropped and not patient_clash(a))
+    slots = tuple(s for s in plan.slots if s not in dropped)
+    return PlannedDay(plan.day, slots, appointments)
+
+
 async def import_day(session: AsyncSession, net: Network, plan: PlannedDay, *,
                      store: DocumentStore, settings: Settings, now: datetime) -> DayCounts:
     """Write one planned day. Flushes, never commits: the caller commits per day, so a crash
     leaves whole days imported or not, and `day_imported` skips the finished ones."""
     counts = DayCounts()
+    plan = await _reconcile_with_existing(session, net, plan)
     booked = {(a.licence, a.starts_at) for a in plan.appointments if a.outcome != "cancelled"}
     slots: dict[tuple[str, datetime], ProviderSlot] = {}
     for licence, start in plan.slots:
@@ -339,18 +400,18 @@ async def import_day(session: AsyncSession, net: Network, plan: PlannedDay, *,
             counts.prescriptions += 1
         for code in tests:
             reviewed = completed_at < now - REVIEW_AFTER
-            document_id = None
-            if reviewed:
-                document_id = await _result_document(
-                    session, store, appointment.patient_id, code, completed_at)
-                counts.documents += 1
-            session.add(TestOrder(
+            order = TestOrder(
                 note_id=note.id, patient_id=appointment.patient_id,
                 ordered_by=appointment.provider_id, test_code=code, reason=case.reason,
                 urgency="routine",
                 status=OrderStatus.REVIEWED if reviewed else OrderStatus.ORDERED,
-                result_document_id=document_id,
-                reviewed_at=completed_at + timedelta(days=7) if reviewed else None))
+                reviewed_at=completed_at + timedelta(days=7) if reviewed else None)
+            session.add(order)
+            await session.flush()
+            if reviewed:
+                order.result_document_id = await _result_document(
+                    session, store, appointment.patient_id, code, completed_at, order.id)
+                counts.documents += 1
             counts.orders += 1
     await session.flush()
 
@@ -361,7 +422,8 @@ async def import_day(session: AsyncSession, net: Network, plan: PlannedDay, *,
 
 
 async def _result_document(session: AsyncSession, store: DocumentStore, patient_id: uuid.UUID,
-                           code: str, completed_at: datetime) -> uuid.UUID:
+                           code: str, completed_at: datetime,
+                           order_id: uuid.UUID) -> uuid.UUID:
     text = RESULT_TEXT[code]
     data = result_pdf(text)
     key = f"patients/{patient_id}/{uuid.uuid4()}"
@@ -370,7 +432,7 @@ async def _result_document(session: AsyncSession, store: DocumentStore, patient_
         patient_id=patient_id, uploaded_by=ACTOR, filename=f"{code}-result.pdf",
         media_type="application/pdf", size_bytes=len(data),
         sha256=hashlib.sha256(data).hexdigest(), object_key=key,
-        extraction_status="extracted", extracted_text=text,
+        test_order_id=order_id, extraction_status="extracted", extracted_text=text,
         created_at=completed_at + timedelta(days=3))
     session.add(document)
     await session.flush()
