@@ -32,9 +32,20 @@ def _helm(*args: str) -> str:
     return result.stdout
 
 
+@lru_cache(maxsize=1)
+def build_dependencies() -> None:
+    """Refresh every chart's packaged dependencies, innermost first: each component chart
+    carries its own copy of sh-lib, and updating only the umbrella would package stale
+    copies (an sh-lib edit would then not show in any render)."""
+    for chart in sorted((HELM_DIR / "charts").iterdir()):
+        if (chart / "Chart.yaml").is_file():
+            _helm("dependency", "update", chart.as_posix())
+    _helm("dependency", "update", UMBRELLA.as_posix())
+
+
 @lru_cache(maxsize=8)
 def render(*value_files: str, sets: tuple[str, ...] = ()) -> tuple[dict, ...]:
-    _helm("dependency", "update", UMBRELLA.as_posix())
+    build_dependencies()
     args = ["template", "smarthealth", UMBRELLA.as_posix(), "--namespace", "smarthealth"]
     for name in value_files:
         args += ["-f", (UMBRELLA / name).as_posix()]

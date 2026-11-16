@@ -14,3 +14,4 @@ Dockerfile text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
 *.txt text eol=lf
+*.tpl text eol=lf
