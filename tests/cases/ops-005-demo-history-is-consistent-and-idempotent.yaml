@@ -1,0 +1,11 @@
+id: ops-005-demo-history-is-consistent-and-idempotent
+title: "Imported demo history holds every database rule, is marked legacy_import, re-runs add nothing, and the analytics reconcile finds no drift"
+requirement: [PART-A-FR-5]
+tier: integration
+priority: P2
+status: ready
+# The demo data spec (docs/superpowers/specs/2026-11-16-demo-seed-data-design.md): history
+# cannot come from the workflows (past slots are unbookable), so it is imported -- and the
+# reconcile reporting zero drift is the proof that the imported rollup and the imported rows
+# agree. The other demo properties (guard, live phase, idempotency) are in the same file.
+impl: "tests/tiers/t3_integration/test_demo_data.py::test_the_nightly_reconcile_finds_no_drift_in_imported_days"

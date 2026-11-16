@@ -38,7 +38,7 @@
 | `tests/tiers/t0_unit/test_demo_cli.py` | The CLI refuses without `--allow-demo-data` |
 | `tests/tiers/t3_integration/demo_helpers.py` | `purge_demo` for tests |
 | `tests/tiers/t3_integration/test_demo_data.py` | Constraints hold, idempotent, zero analytics drift, guard, live phase |
-| `tests/cases/ops-004-demo-history-is-consistent-and-idempotent.yaml` | Case for the core-path Stop hook |
+| `tests/cases/ops-005-demo-history-is-consistent-and-idempotent.yaml` | Case for the core-path Stop hook |
 
 ---
 
@@ -2138,12 +2138,12 @@ git commit -m "feat(cli): demo-seed and demo-refresh, refusing without --allow-d
 ### Task 9: Test case YAML (core-path Stop hook)
 
 **Files:**
-- Create: `tests/cases/ops-004-demo-history-is-consistent-and-idempotent.yaml`
+- Create: `tests/cases/ops-005-demo-history-is-consistent-and-idempotent.yaml`
 
 - [ ] **Step 1: Write the case**
 
 ```yaml
-id: ops-004-demo-history-is-consistent-and-idempotent
+id: ops-005-demo-history-is-consistent-and-idempotent
 title: "Imported demo history holds every database rule, is marked legacy_import, re-runs add nothing, and the analytics reconcile finds no drift"
 requirement: [PART-A-FR-5]
 tier: integration
@@ -2164,7 +2164,7 @@ Expected: exits 0; the new case is listed under integration.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add tests/cases/ops-004-demo-history-is-consistent-and-idempotent.yaml
+git add tests/cases/ops-005-demo-history-is-consistent-and-idempotent.yaml
 git commit -m "test(cases): ops-004 -- imported demo history is consistent and idempotent"
 ```
 
