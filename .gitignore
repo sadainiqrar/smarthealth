@@ -25,6 +25,8 @@ htmlcov/
 
 # Local data volumes
 data/
+# ...but not the documentation site's generated data (scripts/gen_docs_data.py)
+!docs/data/
 *.db
 *.sqlite3
 

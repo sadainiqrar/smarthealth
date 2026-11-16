@@ -1,0 +1,2337 @@
+{
+  "databases": [
+    {
+      "migrations": "migrations/versions (Alembic)",
+      "name": "postgres (Part A)",
+      "owner": "app, worker, relay, consumers, celery",
+      "tables": [
+        {
+          "columns": [
+            {
+              "name": "day",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "DATE",
+              "unique": false
+            },
+            {
+              "name": "clinic_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "booked",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "cancelled",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "completed",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "no_show",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "wait_seconds_sum",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "BIGINT",
+              "unique": false
+            },
+            {
+              "name": "wait_count",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            }
+          ],
+          "constraints": [],
+          "doc": "",
+          "indexes": [],
+          "name": "analytics_daily"
+        },
+        {
+          "columns": [
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "patients.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "provider_slots.provider_id",
+                "providers.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "clinic_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "clinics.id",
+                "departments.clinic_id",
+                "provider_slots.clinic_id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "department_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "departments.id",
+                "departments.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "slot_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "provider_slots.id",
+                "provider_slots.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "reason",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "rescheduled_from_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "appointments.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "cancellation_reason",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(500)",
+              "unique": false
+            },
+            {
+              "name": "origin",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(32)",
+              "unique": false
+            },
+            {
+              "name": "conversation_ref",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "confirmed_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "cancelled_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_appointments_appointmentstatus",
+            "ck_appointments_confirmed_requires_slot",
+            "fk_appointments_clinic_id_clinics",
+            "fk_appointments_department_clinic",
+            "fk_appointments_department_id_departments",
+            "fk_appointments_patient_id_patients",
+            "fk_appointments_provider_id_providers",
+            "fk_appointments_rescheduled_from_id_appointments",
+            "fk_appointments_slot_id_provider_slots",
+            "fk_appointments_slot_provider_clinic"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_appointments_patient_id",
+            "ix_appointments_patient_status",
+            "ix_appointments_provider_id",
+            "ix_appointments_status",
+            "ux_appointments_live_reschedule"
+          ],
+          "name": "appointments"
+        },
+        {
+          "columns": [
+            {
+              "name": "appointment_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "appointments.id"
+              ],
+              "type": "UUID",
+              "unique": true
+            },
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "amount_minor",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "currency",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(3)",
+              "unique": false
+            },
+            {
+              "name": "authorization_ref",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "decline_reason",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_billing_records_billingstatus",
+            "fk_billing_records_appointment_id_appointments",
+            "uq_billing_records_appointment_id"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_billing_records_status"
+          ],
+          "name": "billing_records"
+        },
+        {
+          "columns": [
+            {
+              "name": "visit_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "visits.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "appointment_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "version",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(8)",
+              "unique": false
+            },
+            {
+              "name": "presenting_complaint",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "findings",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "clinician_notes",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "patient_summary",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "diagnoses",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSONB",
+              "unique": false
+            },
+            {
+              "name": "draft_prescriptions",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSONB",
+              "unique": false
+            },
+            {
+              "name": "draft_orders",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSONB",
+              "unique": false
+            },
+            {
+              "name": "signed_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "signed_by",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(64)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_clinical_notes_notestatus",
+            "fk_clinical_notes_visit_id_visits"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_clinical_notes_appointment_id",
+            "ix_clinical_notes_patient_id",
+            "ux_clinical_notes_one_draft",
+            "ux_clinical_notes_visit_version"
+          ],
+          "name": "clinical_notes"
+        },
+        {
+          "columns": [
+            {
+              "name": "name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": true
+            },
+            {
+              "name": "timezone",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(64)",
+              "unique": false
+            },
+            {
+              "name": "address",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(500)",
+              "unique": false
+            },
+            {
+              "name": "is_active",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "BOOLEAN",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "uq_clinics_name"
+          ],
+          "doc": "",
+          "indexes": [],
+          "name": "clinics"
+        },
+        {
+          "columns": [
+            {
+              "name": "clinic_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "clinics.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "fk_departments_clinic_id_clinics",
+            "uq_departments_clinic_id_name",
+            "uq_departments_id_clinic"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_departments_clinic_id"
+          ],
+          "name": "departments"
+        },
+        {
+          "columns": [
+            {
+              "name": "idempotency_key",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": true
+            },
+            {
+              "name": "kind",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(50)",
+              "unique": false
+            },
+            {
+              "name": "channel",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(8)",
+              "unique": false
+            },
+            {
+              "name": "recipient",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(320)",
+              "unique": false
+            },
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "appointment_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "subject",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(300)",
+              "unique": false
+            },
+            {
+              "name": "body",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "attempts",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "last_error",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "claimed_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "sent_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "provider_message_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_notifications_channel",
+            "ck_notifications_notificationstatus",
+            "uq_notifications_idempotency_key"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_notifications_kind",
+            "ix_notifications_patient_id",
+            "ix_notifications_status"
+          ],
+          "name": "notifications"
+        },
+        {
+          "columns": [
+            {
+              "name": "seq",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "BIGINT",
+              "unique": false
+            },
+            {
+              "name": "event_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": true
+            },
+            {
+              "name": "topic",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "key",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "producer",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(50)",
+              "unique": false
+            },
+            {
+              "name": "schema_version",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "payload",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSONB",
+              "unique": false
+            },
+            {
+              "name": "headers",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSONB",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "published_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "attempts",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "last_error",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "uq_outbox_events_event_id"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_outbox_events_unpublished"
+          ],
+          "name": "outbox_events"
+        },
+        {
+          "columns": [
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "uploaded_by",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(64)",
+              "unique": false
+            },
+            {
+              "name": "filename",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(255)",
+              "unique": false
+            },
+            {
+              "name": "media_type",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "size_bytes",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "sha256",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(64)",
+              "unique": false
+            },
+            {
+              "name": "object_key",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(300)",
+              "unique": true
+            },
+            {
+              "name": "test_order_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "extraction_status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(20)",
+              "unique": false
+            },
+            {
+              "name": "extracted_text",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "uq_patient_documents_object_key"
+          ],
+          "doc": "An uploaded report. The bytes live in object storage (MinIO); this row is the record of them -- who uploaded what, its hash, and the text extracted from it.",
+          "indexes": [
+            "ix_patient_documents_patient_id"
+          ],
+          "name": "patient_documents"
+        },
+        {
+          "columns": [
+            {
+              "name": "mrn",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(32)",
+              "unique": true
+            },
+            {
+              "name": "first_name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "last_name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "date_of_birth",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATE",
+              "unique": false
+            },
+            {
+              "name": "phone",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(32)",
+              "unique": false
+            },
+            {
+              "name": "email",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(320)",
+              "unique": false
+            },
+            {
+              "name": "user_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "users.id"
+              ],
+              "type": "UUID",
+              "unique": true
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "fk_patients_user_id_users",
+            "uq_patients_user_id"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_patients_mrn"
+          ],
+          "name": "patients"
+        },
+        {
+          "columns": [
+            {
+              "name": "note_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "clinical_notes.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "medication",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "dose",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "frequency",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "duration",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "instructions",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_prescriptions_prescriptionstatus",
+            "fk_prescriptions_note_id_clinical_notes"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_prescriptions_patient_id"
+          ],
+          "name": "prescriptions"
+        },
+        {
+          "columns": [
+            {
+              "name": "consumer",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "VARCHAR(200)",
+              "unique": false
+            },
+            {
+              "name": "event_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "processed_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [],
+          "doc": "",
+          "indexes": [],
+          "name": "processed_events"
+        },
+        {
+          "columns": [
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [
+                "providers.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "department_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [
+                "departments.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "fk_provider_departments_department_id_departments",
+            "fk_provider_departments_provider_id_providers"
+          ],
+          "doc": "",
+          "indexes": [],
+          "name": "provider_departments"
+        },
+        {
+          "columns": [
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "providers.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "clinic_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "clinics.id",
+                "departments.clinic_id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "department_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "departments.id",
+                "departments.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "starts_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "ends_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "version",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "INTEGER",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_provider_slots_end_after_start",
+            "ck_provider_slots_slotstatus",
+            "fk_provider_slots_clinic_id_clinics",
+            "fk_provider_slots_department_clinic",
+            "fk_provider_slots_department_id_departments",
+            "fk_provider_slots_provider_id_providers",
+            "uq_provider_slots_id_provider_clinic"
+          ],
+          "doc": "One bookable interval.",
+          "indexes": [
+            "ix_provider_slots_provider_starts",
+            "ix_provider_slots_status_starts"
+          ],
+          "name": "provider_slots"
+        },
+        {
+          "columns": [
+            {
+              "name": "first_name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "last_name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(100)",
+              "unique": false
+            },
+            {
+              "name": "specialty",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(120)",
+              "unique": false
+            },
+            {
+              "name": "license_number",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(64)",
+              "unique": true
+            },
+            {
+              "name": "is_active",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "BOOLEAN",
+              "unique": false
+            },
+            {
+              "name": "user_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "users.id"
+              ],
+              "type": "UUID",
+              "unique": true
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "fk_providers_user_id_users",
+            "uq_providers_license_number",
+            "uq_providers_user_id"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_providers_specialty"
+          ],
+          "name": "providers"
+        },
+        {
+          "columns": [
+            {
+              "name": "note_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "clinical_notes.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "ordered_by",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "test_code",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(50)",
+              "unique": false
+            },
+            {
+              "name": "reason",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "urgency",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "result_document_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "reviewed_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_test_orders_orderstatus",
+            "fk_test_orders_note_id_clinical_notes"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_test_orders_patient_id",
+            "ix_test_orders_status"
+          ],
+          "name": "test_orders"
+        },
+        {
+          "columns": [
+            {
+              "name": "email",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(320)",
+              "unique": true
+            },
+            {
+              "name": "password_hash",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(255)",
+              "unique": false
+            },
+            {
+              "name": "role",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(20)",
+              "unique": false
+            },
+            {
+              "name": "is_active",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "BOOLEAN",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_users_userrole"
+          ],
+          "doc": "",
+          "indexes": [
+            "ix_users_email"
+          ],
+          "name": "users"
+        },
+        {
+          "columns": [
+            {
+              "name": "appointment_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "appointments.id"
+              ],
+              "type": "UUID",
+              "unique": true
+            },
+            {
+              "name": "checked_in_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "seen_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "completed_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "notes",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "TEXT",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_visits_visitstatus",
+            "fk_visits_appointment_id_appointments",
+            "uq_visits_appointment_id"
+          ],
+          "doc": "",
+          "indexes": [],
+          "name": "visits"
+        },
+        {
+          "columns": [
+            {
+              "name": "patient_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [
+                "patients.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "provider_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "providers.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "department_id",
+              "nullable": true,
+              "primary_key": false,
+              "references": [
+                "departments.id"
+              ],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "window_start",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "window_end",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(16)",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "UUID",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "DATETIME",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "ck_waitlist_entries_waitliststatus",
+            "fk_waitlist_entries_department_id_departments",
+            "fk_waitlist_entries_patient_id_patients",
+            "fk_waitlist_entries_provider_id_providers"
+          ],
+          "doc": "Who to promote when a slot is released (Week 2's cancellation flow).",
+          "indexes": [
+            "ix_waitlist_entries_patient_id",
+            "ix_waitlist_entries_status"
+          ],
+          "name": "waitlist_entries"
+        }
+      ]
+    },
+    {
+      "migrations": "created at start-up",
+      "name": "knowledge-db",
+      "owner": "knowledge",
+      "tables": [
+        {
+          "columns": [
+            {
+              "name": "provider_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "VARCHAR(36)",
+              "unique": false
+            },
+            {
+              "name": "name",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(250)",
+              "unique": false
+            },
+            {
+              "name": "specialty",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "VARCHAR(120)",
+              "unique": false
+            },
+            {
+              "name": "is_active",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "BOOLEAN",
+              "unique": false
+            },
+            {
+              "name": "department_ids",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "JSON",
+              "unique": false
+            }
+          ],
+          "constraints": [],
+          "doc": "",
+          "indexes": [],
+          "name": "provider_directory"
+        }
+      ]
+    },
+    {
+      "migrations": "created at start-up; LangGraph creates checkpoints, checkpoint_blobs, checkpoint_writes, checkpoint_migrations",
+      "name": "assistant-db",
+      "owner": "assistant",
+      "tables": [
+        {
+          "columns": [
+            {
+              "name": "appointment_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "origin",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "conversation_ref",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "booked_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz",
+              "unique": false
+            }
+          ],
+          "constraints": [],
+          "doc": "assistant_service/usage.py",
+          "indexes": [],
+          "name": "bookings"
+        },
+        {
+          "columns": [
+            {
+              "name": "user_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "conversation_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "turn_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "position",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "bigserial",
+              "unique": false
+            },
+            {
+              "name": "user_text",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "events",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "jsonb",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "primary key (user_id, turn_id)"
+          ],
+          "doc": "assistant_service/conversations.py",
+          "indexes": [],
+          "name": "conversation_turns"
+        },
+        {
+          "columns": [
+            {
+              "name": "user_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "title",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            },
+            {
+              "name": "updated_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            },
+            {
+              "name": "turns",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer default 0",
+              "unique": false
+            },
+            {
+              "name": "awaiting_input",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "boolean default false",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "primary key (user_id, id)"
+          ],
+          "doc": "assistant_service/conversations.py",
+          "indexes": [],
+          "name": "conversations"
+        },
+        {
+          "columns": [
+            {
+              "name": "user_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "draft_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "kind",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "recipients",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer default 0",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            },
+            {
+              "name": "decided_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "primary key (user_id, draft_id)"
+          ],
+          "doc": "assistant_service/usage.py",
+          "indexes": [],
+          "name": "drafts"
+        },
+        {
+          "columns": [
+            {
+              "name": "user_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "kind",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "title",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "status",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "period_from",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "date",
+              "unique": false
+            },
+            {
+              "name": "period_to",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "date",
+              "unique": false
+            },
+            {
+              "name": "events",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "jsonb",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            },
+            {
+              "name": "finished_at",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "primary key (user_id, id)"
+          ],
+          "doc": "assistant_service/reports.py",
+          "indexes": [],
+          "name": "reports"
+        },
+        {
+          "columns": [
+            {
+              "name": "user_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "turn_id",
+              "nullable": false,
+              "primary_key": true,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "role",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "conversation_id",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "provider",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "model",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "model_calls",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer",
+              "unique": false
+            },
+            {
+              "name": "input_tokens",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer",
+              "unique": false
+            },
+            {
+              "name": "output_tokens",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer",
+              "unique": false
+            },
+            {
+              "name": "first_token_ms",
+              "nullable": true,
+              "primary_key": false,
+              "references": [],
+              "type": "integer",
+              "unique": false
+            },
+            {
+              "name": "total_ms",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "integer",
+              "unique": false
+            },
+            {
+              "name": "outcome",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "text",
+              "unique": false
+            },
+            {
+              "name": "created_at",
+              "nullable": false,
+              "primary_key": false,
+              "references": [],
+              "type": "timestamptz default now()",
+              "unique": false
+            }
+          ],
+          "constraints": [
+            "primary key (user_id, turn_id)"
+          ],
+          "doc": "assistant_service/usage.py",
+          "indexes": [],
+          "name": "turn_usage"
+        }
+      ]
+    }
+  ]
+}

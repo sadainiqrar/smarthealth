@@ -1,0 +1,892 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SmartHealth Docs</title>
+<meta name="description" content="SmartHealth (MediNova): a healthcare operations platform and its GenAI assistant — what it does, how it is built, how to run it.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 rx=%227%22 fill=%22%230f6e6e%22/%3E%3Cpath d=%22M13 7h6v6h6v6h-6v6h-6v-6H7v-6h6z%22 fill=%22white%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/site.css?v=1">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui.css">
+<script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.17.14/swagger-ui-bundle.js" defer></script>
+<script type="module" src="assets/site.js?v=1"></script>
+</head>
+<body>
+<button class="menu" type="button">☰ Contents</button>
+<div class="layout">
+<nav class="side" aria-label="Contents">
+  <div class="brand">SmartHealth</div>
+  <div class="tag">MediNova platform · documentation</div>
+  <ol>
+    <li><a href="#overview">Overview</a></li>
+    <li><a href="#features">Features by role</a></li>
+    <li class="group">Architecture</li>
+    <li><a href="#architecture">The big picture</a></li>
+    <li><a href="#monolith-vs-services">Monolith vs microservices</a></li>
+    <li><a href="#modules">Modules inside Part A</a></li>
+    <li><a href="#three-tools">Temporal · Kafka · Celery</a></li>
+    <li class="group">How it works</li>
+    <li><a href="#flows">Key flows</a></li>
+    <li><a href="#kafka">Kafka &amp; events</a></li>
+    <li><a href="#temporal">Temporal workflows</a></li>
+    <li><a href="#celery">Celery jobs</a></li>
+    <li><a href="#partb">Part B: RAG &amp; assistant</a></li>
+    <li><a href="#security">Security &amp; sessions</a></li>
+    <li><a href="#observability">Observability</a></li>
+    <li class="group">Reference</li>
+    <li><a href="#data">Databases &amp; schemas</a></li>
+    <li><a href="#api">API reference</a></li>
+    <li><a href="#tools">Tools &amp; alternatives</a></li>
+    <li class="group">Operate</li>
+    <li><a href="#run">Run it</a></li>
+    <li><a href="#resources">Where everything is</a></li>
+    <li><a href="#testing">Testing</a></li>
+    <li><a href="#decisions">Decisions &amp; open items</a></li>
+    <li><a href="#more">Further reading</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="eyebrow">MediNova · SmartHealth</div>
+  <h1>A healthcare operations platform, and the AI assistant on top of it</h1>
+  <p>SmartHealth runs a fictional clinic network's day: patients and providers, bookings that confirm only when
+  every step succeeds, visits and no-shows, cancellations that free the slot and refund the money, notifications,
+  clinical notes and prescriptions, analytics — plus a chat assistant that answers from the clinic's own documents
+  and books, cancels and looks things up for you, always asking before it changes anything.</p>
+</header>
+
+<!-- ================================================================== OVERVIEW -->
+<section id="overview">
+  <h2>Overview</h2>
+  <p class="lede">Built in five weeks as a training assignment, in two parts with a prescribed stack.
+  <b>Part A</b> is the core platform (FastAPI, PostgreSQL, MongoDB, Redis, Temporal, Kafka + Schema Registry,
+  Celery + RabbitMQ, OpenTelemetry, Prometheus, Grafana, Jaeger). <b>Part B</b> is the GenAI layer (LangGraph,
+  LangChain, an LLM provider — Groq, a vector database — Qdrant). Everything runs with Docker Compose.</p>
+  <div class="stats">
+    <div class="stat"><b>3</b><span>services: Part A, knowledge, assistant</span></div>
+    <div class="stat"><b>6</b><span>Part A processes from one codebase</span></div>
+    <div class="stat"><b id="api-count">42</b><span>HTTP operations</span></div>
+    <div class="stat"><b id="n-tables">—</b><span>tables across 3 databases</span></div>
+    <div class="stat"><b id="n-topics">—</b><span>Kafka topics</span></div>
+    <div class="stat"><b id="n-consumers">—</b><span>Kafka consumer groups</span></div>
+    <div class="stat"><b id="n-workflows">—</b><span>Temporal workflows</span></div>
+    <div class="stat"><b id="n-tasks">—</b><span>Celery tasks</span></div>
+    <div class="stat"><b>17</b><span>guided assistant flows</span></div>
+    <div class="stat"><b>1361</b><span>fast tests passing</span></div>
+  </div>
+  <div class="note"><b>Three rules hold the design together.</b> (1) An appointment is <code>confirmed</code> only
+  after the whole booking workflow succeeds — any failure leaves no held slot and no half-booking. (2) Everything
+  asynchronous is idempotent: every event, job and workflow can be delivered twice and still happen once.
+  (3) The AI model never writes: every change goes through a deterministic flow and a human "yes".</div>
+</section>
+
+<!-- ================================================================== FEATURES -->
+<section id="features">
+  <h2>Features by role</h2>
+  <p class="lede">Four fixed roles. Part A's API enforces who may do what; the assistant acts with the user's own
+  login, so it can never do more than the user could.</p>
+  <div class="cards">
+    <div class="card"><h4>🧑 Patient</h4><ul>
+      <li>Book, reschedule and cancel appointments; join a waitlist for a full day</li>
+      <li>See my appointments and my record: visit summaries, prescriptions, test orders and results</li>
+      <li>Upload a report (PDF) against a test order</li>
+      <li>Emails/SMS: confirmation, 24 h reminder, cancellation, reschedule, missed visit, refund, visit summary</li>
+      <li>Assistant: "do I fast before a thyroid test?", "book me with a skin doctor", "what was prescribed?"</li>
+    </ul></div>
+    <div class="card"><h4>🩺 Provider</h4><ul>
+      <li>My day; a brief on the next patient</li>
+      <li>Mark a patient seen and complete the visit — only my own appointments</li>
+      <li>Write, sign and amend versioned clinical notes; prescriptions and test orders are created on signing</li>
+      <li>Review uploaded results</li>
+      <li>Assistant: patient instructions drafted for approval, results to review</li>
+    </ul></div>
+    <div class="card"><h4>🗂️ Front desk</h4><ul>
+      <li>Register walk-in patients (a patient need not have a login)</li>
+      <li>Find patients, book and cancel for them, check them in</li>
+      <li>Manage the waitlist</li>
+      <li>Assistant: guided booking for a named patient, capacity, no-shows</li>
+    </ul></div>
+    <div class="card"><h4>🛠️ Admin</h4><ul>
+      <li>Register and update providers; deactivate one — their future appointments are cancelled and refunded</li>
+      <li>Analytics: bookings over time, completed visits, cancellation rate, average wait, utilisation</li>
+      <li>Reports written in the background (weekly/monthly operations, utilisation, engagement)</li>
+      <li>AI usage: tokens, estimated cost, time to first token, bookings that came from chat</li>
+      <li>Send an approved message to patients; user directory</li>
+    </ul></div>
+  </div>
+  <p>Behind every feature: an audit trail of profile and operational changes (MongoDB), and a domain event on Kafka
+  for every change other parts of the system care about.</p>
+</section>
+
+<!-- ================================================================== ARCHITECTURE -->
+<section id="architecture">
+  <h2>The big picture</h2>
+  <p class="lede">Three services that share <b>channels</b> — Kafka, the Envoy front door, the observability stack —
+  and never a <b>store</b> or a line of code.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  U(["👤 Patient · Provider<br/>Front desk · Admin"]) --> FE["Demo website<br/>React · :5173"]
+  FE -->|"/api/* · JSON"| API
+  FE -->|"gRPC-Web"| EN["Envoy :8088<br/>front door"]
+  EN -->|gRPC| AS
+  subgraph PA["Part A · modular monolith"]
+    direction TB
+    API["API · FastAPI :8000"]
+    BG["Temporal worker · outbox relay<br/>Kafka consumers · Celery worker + Beat"]
+  end
+  subgraph PB["Part B · two services"]
+    direction TB
+    AS["assistant :50051<br/>LangGraph"]
+    KN["knowledge :50052<br/>RAG"]
+  end
+  PA --- PAS[("PostgreSQL · MongoDB · Redis")]
+  PA <-->|"workflows · events · jobs"| BR[["Temporal · Kafka · RabbitMQ"]]
+  BR -->|"events"| PB
+  AS -->|"HTTP · user's token"| API
+  AS -->|"gRPC Search"| KN
+  AS --> LLM["Groq · LLM"]
+  KN --- KS[("Qdrant · knowledge-db")]
+  AS --- ASS[("assistant-db · assistant-redis")]
+  BG --> EXT["payments-mock · Mailpit"]
+  </pre><div class="caption">Boxes are our code; cylinders are stores; the double-bordered box is the three brokers. Every process also exports traces and metrics to one OpenTelemetry Collector (see Observability). The detail of each arrow is in the sections that follow.</div></div>
+</section>
+
+<section id="monolith-vs-services">
+  <h2>Monolith vs microservices — where and why</h2>
+  <p class="lede">SmartHealth is <b>both</b>, on purpose. The transactional core is a <b>modular monolith</b>; the AI
+  layer is <b>separate services</b>. The line falls exactly where the data does.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph MONO["MONOLITH · Part A"]
+    direction TB
+    IMG[/"one codebase app/ · one Docker image"/]
+    IMG --> P1["app<br/>(HTTP API)"]
+    IMG --> P2["worker<br/>(Temporal)"]
+    IMG --> P3["relay<br/>(outbox → Kafka)"]
+    IMG --> P4["consumers<br/>(Kafka)"]
+    IMG --> P5["celery-worker"]
+    IMG --> P6["celery-beat"]
+    P1 & P2 & P3 & P4 & P5 & P6 --> DB[("ONE PostgreSQL<br/>19 tables, one transaction boundary")]
+  end
+  subgraph MS["MICROSERVICES · Part B"]
+    direction TB
+    K["knowledge<br/>own code · own image"] --> KS[("knowledge-db<br/>+ Qdrant")]
+    A["assistant<br/>own code · own image"] --> AST[("assistant-db<br/>+ assistant-redis")]
+  end
+  MONO <== "Kafka events · public HTTP API (JWKS) · gRPC" ==> MS
+  </pre><div class="caption">Six processes is not six services: they share one codebase and one database, so they are one monolith that scales its parts independently.</div></div>
+
+  <div class="table-wrap"><table>
+    <tr><th></th><th>Part A — modular monolith</th><th>Part B — microservices</th></tr>
+    <tr><td>Code</td><td>One package <code>app/</code>, split into 8 modules</td><td><code>services/knowledge</code>, <code>services/assistant</code> — no shared imports</td></tr>
+    <tr><td>Deployable</td><td>One image, run as 6 processes (API, worker, relay, consumers, Celery worker, Beat)</td><td>One image per service</td></tr>
+    <tr><td>Data</td><td>One PostgreSQL — invariants are database constraints and single transactions</td><td>Each owns its stores; never reads Part A's</td></tr>
+    <tr><td>Talks by</td><td>In-process calls through published interfaces (<code>public.py</code>)</td><td>gRPC (contracts in <code>contracts/proto</code>), Part A's public HTTP API, Kafka events</td></tr>
+    <tr><td>Why</td><td>"Confirm only if every step succeeded" and "slot and appointment change together" need one transaction. A service boundary would turn them into distributed consistency problems.</td><td>Different runtime (ML models, LLM calls), different scaling and failure profile; an LLM outage must not touch booking. Nothing transactional crosses the line.</td></tr>
+    <tr><td>Enforced by</td><td><code>tests/meta/test_import_boundaries.py</code>: a module may not import another's internals</td><td><code>tests/meta/test_service_independence.py</code>: no import, setting or compose variable crosses services</td></tr>
+  </table></div>
+  <div class="note"><b>Why not split Part A further?</b> Because its rules are database rules: at most one live appointment
+  per slot (partial unique index), slot status changes together with appointment status (one transaction), no
+  overlapping slots (exclusion constraint). Constraints do not cross a service boundary. The processes already
+  scale independently — the Temporal worker and the Celery worker are separate containers — which covers the loads
+  most likely to grow.</div>
+</section>
+
+<section id="modules">
+  <h2>Modules inside Part A</h2>
+  <p class="lede">Eight modules. A module may not import another module's code — only its <code>public.py</code>,
+  and only along edges declared in the meta-test. Everything else crosses as a Kafka event.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  ID["identity<br/>users · sessions · JWT"]
+  PT["patients"]
+  PR["providers<br/>clinics · departments"]
+  SC["scheduling<br/>slots · appointments · visits<br/>waitlist · workflows"]
+  BL["billing"]
+  NT["notifications"]
+  AN["analytics"]
+  CL["clinical<br/>notes · prescriptions<br/>orders · documents"]
+  SC -- "public.py" --> PT
+  SC -- "public.py" --> PR
+  SC -- "public.py" --> BL
+  SC -- "public.py" --> NT
+  NT -- "public.py" --> PT
+  CL -- "public.py" --> SC
+  PT & PR -. "router auth" .-> ID
+  SC == "events" ==> NT
+  SC == "events" ==> AN
+  BL == "events" ==> NT
+  CL == "events" ==> NT
+  PR == "providers.state" ==> SC
+  </pre><div class="caption">Thin arrows: allowed imports of a published interface. Thick arrows: domain events over Kafka (no import at all).</div></div>
+</section>
+
+<section id="three-tools">
+  <h2>Temporal · Kafka · Celery — who does what</h2>
+  <p class="lede">Three tools that all "do things later". The most likely architectural mistake in this project is
+  using the wrong one, so each has one job.</p>
+  <div class="cards">
+    <div class="card"><h4>Temporal — "run these steps, and finish"</h4><p>Durable multi-step processes that must
+      complete even if a process crashes mid-way: booking, reschedule, the visit timer, cancel follow-up, post-visit
+      charge, provider deactivation. Every finished step is recorded; a restart resumes, never repeats.</p></div>
+    <div class="card"><h4>Kafka — "this happened"</h4><p>Domain facts, written in the same transaction as the change
+      (outbox) and read by every module or service that cares, each at its own pace. Adding a reader never touches
+      the writer.</p></div>
+    <div class="card"><h4>Celery + RabbitMQ — "please do this"</h4><p>Fire-and-forget jobs for exactly one worker:
+      send this email, extract this PDF's text, and the scheduled sweeps (Beat). Retries with backoff; a dead-letter
+      queue for what never succeeds.</p></div>
+  </div>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  R1["POST /appointments<br/>(the request IS the process)"] -->|start, 202| T{{"Temporal<br/>BookAppointment"}}
+  T -->|confirm writes| O[("outbox row<br/>appointments.booked")]
+  R2["POST …/cancel<br/>(the request commits a fact)"] -->|same transaction| O2[("outbox row<br/>appointments.cancelled")]
+  O & O2 -->|relay| K[["Kafka"]]
+  K --> C1["scheduling consumer"] -->|start| T2{{"Temporal<br/>CancelFollowUp"}}
+  K --> C2["notifications consumer"] -->|after commit| Q[["RabbitMQ"]] --> W["Celery: send email"]
+  K --> C3["analytics consumer"] --> AD[("analytics_daily")]
+  </pre><div class="caption">The rule: if the request <i>is</i> the process (book, reschedule), start the workflow directly and answer 202. If the request <i>commits a fact</i> (cancel, deactivate, complete), write an event with it and let a consumer start the follow-up — so the follow-up can never be lost.</div></div>
+</section>
+
+<!-- ================================================================== FLOWS -->
+<section id="flows">
+  <h2>Key flows</h2>
+
+  <h3>Booking — confirm only after everything succeeded</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant API as Part A API
+  participant T as Temporal
+  participant W as Worker (activities)
+  participant DB as PostgreSQL
+  participant PAY as payments-mock
+  B->>API: POST /appointments (Idempotency-Key)
+  API->>T: start BookAppointment (id from the key)
+  API-->>B: 202 {appointment_id, pending}
+  T->>W: create_pending → validate_booking
+  W->>DB: appointment = pending
+  T->>W: claim_slot
+  W->>DB: UPDATE slot SET held WHERE free AND future (0 rows = conflict)
+  T->>W: billing_precheck
+  W->>PAY: authorise (idempotency key)
+  T->>W: schedule_reminders → confirm
+  W->>DB: one transaction: appointment confirmed + slot booked + outbox appointments.booked
+  T->>T: start child VisitWorkflow (no-show timer, 24 h reminder)
+  Note over T,W: any failure → fail_booking: appointment failed, slot freed, hold voided
+  B->>API: GET /appointments/{id} (poll)
+  API-->>B: confirmed
+  </pre></div>
+
+  <h3>Cancel — the fact first, the follow-up through Kafka</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant API as Part A API
+  participant DB as PostgreSQL
+  participant RL as Relay
+  participant K as Kafka
+  participant C as Consumers
+  participant T as Temporal
+  participant Q as RabbitMQ → Celery
+  B->>API: POST /appointments/{id}/cancel
+  API->>DB: one transaction: cancelled + slot free + outbox row (+ trace id)
+  API-->>B: 200
+  RL->>DB: unpublished rows (FOR UPDATE SKIP LOCKED)
+  RL->>K: appointments.cancelled (Avro, keyed by appointment)
+  par three consumer groups
+    K->>C: scheduling.cancel-follow-up
+    C->>T: start CancelFollowUp: stop visit timer → void/refund → offer slot to waitlist
+  and
+    K->>C: notifications.patient-messages
+    C->>Q: notification row, then job after commit → email
+  and
+    K->>C: analytics.daily-rollup
+    C->>DB: analytics_daily.cancelled += 1
+  end
+  </pre></div>
+
+  <h3>Appointment lifecycle</h3>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  [*] --> pending: POST /appointments
+  pending --> confirmed: workflow succeeded
+  pending --> failed: any step failed (compensated)
+  pending --> cancelled
+  confirmed --> cancelled: cancel
+  confirmed --> rescheduled: new slot confirmed first
+  confirmed --> completed: check-in → seen → complete (signed note)
+  confirmed --> no_show: VisitWorkflow deadline, no check-in
+  failed --> [*]
+  cancelled --> [*]
+  rescheduled --> [*]
+  completed --> [*]
+  no_show --> [*]
+  </pre><div class="caption">Transitions are enforced in <code>app/modules/scheduling/state.py</code>; an illegal step is a 409. A visit (check-in, seen, completed) is a separate record from the appointment — Average Wait = seen − checked-in.</div></div>
+
+  <h3>Visit day — people write the database, the workflow owns time</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant V as VisitWorkflow
+  participant FD as Front desk
+  participant P as Provider
+  participant API as Part A API
+  V->>V: wait until 24 h before → remind (email via Celery)
+  V->>V: wait until slot end + grace
+  FD->>API: POST …/check-in (written synchronously, 200)
+  API-->>V: signal checked_in (a hint only)
+  P->>API: POST …/seen, sign note, POST …/complete
+  API->>API: outbox visits.completed → PostVisitWorkflow captures the payment
+  V->>API: at the deadline: no visit? → no_show (the database decides, not the signal)
+  </pre></div>
+
+  <h3>Reschedule and waitlist</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  A["POST …/reschedule (202)"] --> RW{{"RescheduleWorkflow"}}
+  RW -->|"child: book the NEW slot"| BK{{"BookAppointment"}}
+  BK -->|confirmed| REL["release the OLD slot<br/>old appointment = rescheduled"]
+  BK -->|failed| KEEP["old appointment untouched"]
+  REL --> WL["offer the freed slot to the waitlist:<br/>up to 3 entries, child bookings booking-wl-&lt;entry&gt;"]
+  </pre><div class="caption">Book before release: a failed reschedule leaves the patient with the appointment they had.</div></div>
+</section>
+
+<!-- ================================================================== KAFKA -->
+<section id="kafka">
+  <h2>Kafka &amp; events</h2>
+  <p class="lede">Every change other parts care about is written as an event <b>in the same transaction</b> as the
+  change (the transactional outbox). A relay publishes it to Kafka as Avro checked against Schema Registry. Each
+  consumer group reads every event at its own pace; the consumer runtime ignores repeats and dead-letters poison.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  S["service code<br/>emit()"] -->|same transaction| OB[("outbox_events<br/>+ traceparent")]
+  OB --> RL["relay<br/>FOR UPDATE SKIP LOCKED<br/>in seq order"]
+  RL -->|"Avro · key = entity id"| K[["topic"]]
+  SR[("Schema Registry<br/>BACKWARD_TRANSITIVE")] -.-> RL
+  K --> CR["consumer runtime"]
+  CR --> DD{"processed_events<br/>(consumer, event_id)<br/>seen before?"}
+  DD -->|yes| SKIP["skip"]
+  DD -->|no| H["handler, same transaction<br/>then commit offset"]
+  H -->|fails 3×| DLT[["&lt;topic&gt;.dlt"]]
+  </pre><div class="caption">At least once in, at most once applied. <code>python -m app.cli dlt-replay</code> re-publishes dead letters after a fix.</div></div>
+
+  <h3>Who emits what, who reads it</h3>
+  <p>Generated from the code — <code>app/events/catalog.py</code>, every <code>emit()</code> call, and the consumer registry.</p>
+  <div class="diagram needs-data"><pre class="mermaid" id="kafka-map"></pre></div>
+  <div id="kafka-topics" class="needs-data"></div>
+  <h3>Consumer groups</h3>
+  <div id="kafka-consumers" class="needs-data"></div>
+  <div class="note"><b>Event vs state topics.</b> Event topics (<code>appointments.cancelled</code>) keep 7 days of
+  "this happened". State topics (<code>providers.state</code>) are compacted: the latest value per key forever, so a
+  new service reads from the beginning and has the whole directory — that is how the knowledge service builds its
+  own provider list without touching Part A's database.</div>
+</section>
+
+<!-- ================================================================== TEMPORAL -->
+<section id="temporal">
+  <h2>Temporal workflows</h2>
+  <p class="lede">Workflows are deterministic checklists; activities do the I/O and are idempotent. Workflow ids come
+  from the business entity (<code>booking-&lt;id&gt;</code>, <code>visit-&lt;id&gt;</code>, <code>cancel-&lt;id&gt;</code>),
+  so a duplicate start is refused by Temporal itself.</p>
+  <div id="temporal-workflows" class="needs-data"></div>
+  <p><b>Activities</b> (task queue <code>scheduling</code>): <span id="temporal-activities" class="needs-data"></span></p>
+</section>
+
+<!-- ================================================================== CELERY -->
+<section id="celery">
+  <h2>Celery jobs</h2>
+  <p class="lede">Commands for exactly one worker, over RabbitMQ (vhost <code>part-a</code>). Late acknowledgement
+  (a killed worker's job is redelivered), one message per worker at a time, a dead-letter queue
+  <code>notifications.dlq</code>. Beat runs the clean-up rounds.</p>
+  <div id="celery-tasks" class="needs-data"></div>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant C as Kafka consumer
+  participant DB as PostgreSQL
+  participant Q as RabbitMQ
+  participant W as Celery worker
+  participant R as Redis
+  participant M as Mailpit
+  C->>DB: INSERT notification (unique key from event id)
+  C->>DB: COMMIT
+  C->>Q: after commit: notifications.send(id)
+  Q->>W: deliver (acks late)
+  W->>DB: claim: queued → sending (0 rows = duplicate, stop)
+  W->>R: per-patient hourly limit
+  W->>M: SMTP (Message-ID = idempotency key)
+  W->>DB: sent
+  Note over W: failure → retry with exponential backoff, exhausted → notifications.dlq
+  Note over DB,Q: a lost enqueue is re-sent by Beat's 1-minute sweep
+  </pre></div>
+</section>
+
+<!-- ================================================================== PART B -->
+<section id="partb">
+  <h2>Part B: knowledge (RAG) and the assistant</h2>
+
+  <h3>Retrieval — the knowledge service</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph ING["Ingest — on every start, idempotent"]
+    D["corpus/*.md, *.pdf<br/>(audience: patient | staff)"] --> SPL["split by heading,<br/>then 1200 chars / 150 overlap"]
+    SPL --> EMB["embed twice (local, fastembed):<br/>dense BGE-small (384) + sparse BM25"]
+    PS[["providers.state"]] --> DIR[("knowledge-db<br/>provider directory")] --> EMB
+    EMB --> QD[("Qdrant · collection knowledge<br/>vectors + payload")]
+  end
+  subgraph QRY["Query — gRPC Search(query, user's token)"]
+    Q["question"] --> AUD["audience from the TOKEN<br/>patient → patient docs only"]
+    AUD --> FLOOR{"best dense match<br/>cosine ≥ 0.55?"}
+    FLOOR -->|no| NONE["return nothing → 'I don't know'"]
+    FLOOR -->|yes| HY["dense top 20 + BM25 top 20<br/>(both filtered by audience)"]
+    HY --> RRF["reciprocal rank fusion → top 5"]
+  end
+  QD -.-> HY
+  </pre><div class="caption">Measured on a 38-question golden set: recall@5 0.97, MRR 0.94, and "return nothing" correct on every off-topic question (<code>python -m knowledge_service.eval</code>).</div></div>
+
+  <h3>The assistant — the model talks, flows act</h3>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  START((turn)) --> BEGIN{"begin"}
+  BEGIN -->|starter clicked| FLOW
+  BEGIN -->|typed text| CHAT["chat"]
+  CHAT --> RF{"red flag?<br/>guard.py"}
+  RF -->|yes| URG["fixed urgent-care answer<br/>(no model, no booking)"]
+  RF -->|no| M{"model?"}
+  M -->|yes| LLM["LLM with 2 tools:<br/>search_knowledge · start_flow"]
+  M -->|"no / failed"| OFF["offline.py: route to a flow<br/>or quote the documents"]
+  LLM -->|answer + citations| END((done))
+  LLM -->|start_flow| FLOW["flow: one step of a<br/>deterministic state machine<br/>(Part A API, user's token)"]
+  FLOW -->|asks| ASK["ask: interrupt()<br/>checkpoint → Postgres"]
+  ASK -->|"user's click / yes"| FLOW
+  FLOW -->|finished| END
+  </pre><div class="caption">17 guided flows by role: book, reschedule, cancel, waitlist, my appointments, prepare, prescriptions, last visit, my reports, my day, brief, results to review, capacity, no-shows, snapshot, notify patients, patient instructions.</div></div>
+
+  <h3>A chat that books — one turn per click</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant B as Browser
+  participant E as Envoy
+  participant AS as assistant
+  participant KN as knowledge
+  participant L as Groq
+  participant PA as Part A
+  B->>E: Chat "can I see a skin doctor?" (gRPC-Web)
+  E->>AS: gRPC (verify token: JWKS + deny-list)
+  AS->>L: messages + tools
+  L-->>AS: search_knowledge(...)
+  AS->>KN: Search (user's token)
+  L-->>AS: start_flow(book, dermatology)
+  AS->>PA: patient record, providers, free slots (user's token)
+  AS-->>B: Options "Who would you like to see?" · done: awaiting_input
+  B->>AS: Chat(choice) → Options "Which time?"
+  B->>AS: Chat(choice) → ConfirmationRequired "Book this appointment?"
+  B->>AS: Confirm(yes)
+  AS->>PA: POST /appointments (Idempotency-Key) → wait for confirmed
+  AS-->>B: appointment card · suggestions
+  PA--)AS: Kafka appointments.booked → bookings(origin = assistant)
+  </pre><div class="caption">Every event is appended to a Redis Stream before it is sent, so a dropped connection resumes with <code>resume_from</code> and never generates twice. In a live run the three click turns made zero model calls.</div></div>
+
+  <h3>Reports — a background job you watch</h3>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant B as Admin browser
+  participant AS as assistant
+  participant BG as background task
+  participant PA as Part A analytics
+  participant L as Groq
+  B->>AS: StartReport(operations_7)
+  AS->>BG: create_task · reports row = running
+  AS-->>B: job id (immediately)
+  BG->>PA: summary (this + previous period), timeseries × 4 (admin's token)
+  BG->>BG: figures card → Redis Stream
+  BG->>L: narrative ("use only the figures given")
+  BG->>BG: tokens → Redis Stream · done → reports row + all events
+  B->>AS: WatchReport(id, resume_from)
+  AS-->>B: replay the stream, then follow until done
+  </pre><div class="caption">Every number comes from Part A; the model only writes the prose. The AI usage page reads per-turn records (tokens, cost estimate, first-token time) and gets names from Part A's <code>GET /users</code> in the admin's browser.</div></div>
+</section>
+
+<!-- ================================================================== SECURITY -->
+<section id="security">
+  <h2>Security &amp; sessions</h2>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  participant U as Client
+  participant API as Part A
+  participant R as Redis
+  participant AS as Part B service
+  U->>API: POST /auth/login (throttled: 5 failures lock the address)
+  API->>R: create session
+  API-->>U: access token (Ed25519 JWT, 10 min, names the session) + refresh token
+  U->>API: request with access token → require_role → session still in Redis?
+  U->>API: POST /auth/refresh → single-use rotation (a reused one ends the session)
+  U->>AS: gRPC with the same token
+  AS->>API: GET /.well-known/jwks.json (public key, cached)
+  AS->>AS: verify signature + deny-list (Kafka identity.sessions_revoked)
+  </pre></div>
+  <ul>
+    <li><b>Roles:</b> patient, provider, front_desk, admin — checked on every route; a patient is forced to their own record.</li>
+    <li><b>Audit:</b> every profile and operational change is written to MongoDB with the before and after.</li>
+    <li><b>Rate limits:</b> login throttling; booking and reschedule share a per-user limit (429).</li>
+    <li><b>Part B holds no authority:</b> it calls Part A and knowledge with the user's own token; retrieval filters by the token's audience.</li>
+  </ul>
+</section>
+
+<!-- ================================================================== OBSERVABILITY -->
+<section id="observability">
+  <h2>Observability</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  subgraph APPS["every process — OpenTelemetry SDK"]
+    A1["part-a-api"] & A2["part-a-worker"] & A3["part-a-relay"] & A4["part-a-consumers"] & A5["part-a-celery"] & A6["knowledge"] & A7["assistant"]
+  end
+  APPS -->|"OTLP :4318 (Temporal SDK metrics :4317)"| COL["otel-collector<br/>stores nothing"]
+  COL -->|push traces| J[("Jaeger :16686")]
+  COL -->|"exposes :8889/metrics"| P[("Prometheus :9090")]
+  RMQ["RabbitMQ :15692"] --> P
+  KE["kafka-exporter :9308<br/>(consumer lag)"] --> P
+  P --> G["Grafana :3000<br/>4 dashboards · alert rules"]
+  J --> G
+  ADB[("analytics_daily<br/>read-only role")] --> G
+  </pre></div>
+  <ul>
+    <li><b>One trace per action, across processes:</b> the trace id rides in the outbox row, Kafka headers, Temporal headers, Celery task headers, and (Part B) gRPC metadata and Part A HTTP calls. A cancel is one trace across api → relay → consumers → worker → celery.</li>
+    <li><b>Logs</b> are JSON, every line carrying <code>trace_id</code>/<code>span_id</code> — find a trace, grep its logs.</li>
+    <li><b>Dashboards:</b> Service overview, Async backbone (outbox age, consumer outcomes and lag, queue depths), Platform analytics (business figures), Assistant (turns, first-token time, tokens).</li>
+    <li><b>Alerts:</b> outbox backlog older than a minute, an event dead-lettered, notifications in the DLQ, a consumer falling behind, API 5xx above 5%, booking workflows failing, assistant turns failing, slow first token.</li>
+    <li><b>Model calls</b> are <code>llm chat</code> spans with the model name and token counts.</li>
+  </ul>
+  <div class="note">Business analytics (cancellation rate, bookings per day) are <i>not</i> telemetry: they come from Kafka into the <code>analytics_daily</code> table, exact and permanent. Telemetry tells you whether the machinery feeding them is healthy; a nightly reconcile checks the counts against the source tables.</div>
+</section>
+
+<!-- ================================================================== DATA -->
+<section id="data">
+  <h2>Databases &amp; schemas</h2>
+  <p class="lede">Generated from the code (SQLAlchemy metadata for Part A and knowledge, the assistant's
+  <code>create table</code> statements). Pick a database; open a table for its columns.</p>
+  <div class="tabs" id="db-tabs"></div>
+  <div id="db-panes" class="needs-data"></div>
+  <h3>What the database guarantees beyond the columns</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Guarantee</th><th>How</th></tr>
+    <tr><td>A provider never has two overlapping slots</td><td>GiST exclusion constraint</td></tr>
+    <tr><td>At most one live appointment per slot (cancelling frees it)</td><td>Partial unique index on live statuses</td></tr>
+    <tr><td>At most one live appointment replaces any appointment</td><td><code>ux_appointments_live_reschedule</code> (migration 0004)</td></tr>
+    <tr><td>A slot belongs to the provider and clinic the appointment names</td><td>Composite foreign keys</td></tr>
+    <tr><td>A confirmed appointment holds a slot</td><td>CHECK constraint</td></tr>
+    <tr><td><code>updated_at</code> moves on raw SQL updates too</td><td><code>BEFORE UPDATE</code> trigger with <code>clock_timestamp()</code></td></tr>
+    <tr><td>Booking = <code>UPDATE … WHERE status='free' AND starts_at &gt; now</code>; 0 rows is the conflict</td><td>Optimistic claim, <code>version = version + 1</code></td></tr>
+  </table></div>
+  <p>Other stores: <b>MongoDB</b> — the audit trail; <b>Redis</b> — sessions, rate limits, notification throttles;
+  <b>Qdrant</b> — one point per chunk (dense + BM25 vectors, payload: document, section, audience, text);
+  <b>assistant-redis</b> — Redis Streams per chat turn and report, the revoked-session deny-list.
+  Part A's schema is managed by Alembic (<code>migrations/versions</code>, 9 migrations).</p>
+</section>
+
+<!-- ================================================================== API -->
+<section id="api">
+  <h2>API reference</h2>
+  <p class="lede">Part A's HTTP API, exported from FastAPI's own OpenAPI document. With the stack running, the
+  interactive version (with an <b>Authorize</b> button) is at <code>http://localhost:8000/docs</code>.</p>
+  <div id="api-tables" class="needs-data"></div>
+  <details><summary>Full OpenAPI explorer (schemas, parameters, responses)</summary><div class="inner"><div id="swagger"></div></div></details>
+  <h3>Part B (gRPC, <code>contracts/proto</code>)</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Service</th><th>RPC</th><th>Shape</th><th>What</th></tr>
+    <tr><td rowspan="11"><code>Assistant</code></td><td>Chat</td><td>server stream</td><td>One turn: text, a choice or a starter in; tokens, tool steps, options, confirmations, cards, citations out</td></tr>
+    <tr><td>Confirm</td><td>server stream</td><td>Answer a confirmation; the paused flow resumes</td></tr>
+    <tr><td>Cancel</td><td>unary</td><td>Stop generating</td></tr>
+    <tr><td>Starters</td><td>unary</td><td>Use cases for the caller's role</td></tr>
+    <tr><td>ListConversations · GetConversation · DeleteConversation</td><td>unary</td><td>Threads, scoped to the caller</td></tr>
+    <tr><td>Usage</td><td>unary</td><td>Admin: tokens, cost estimate, first-token time, conversions</td></tr>
+    <tr><td>StartReport</td><td>unary</td><td>Admin: start a background report, returns a job</td></tr>
+    <tr><td>WatchReport</td><td>server stream</td><td>Replay then follow a report</td></tr>
+    <tr><td>ListReports</td><td>unary</td><td>Admin's reports</td></tr>
+    <tr><td colspan="3" style="color:var(--faint)">Browsers call these as gRPC-Web through Envoy (<code>:8088</code>).</td></tr>
+    <tr><td colspan="3"></td></tr>
+    <tr><td><code>Knowledge</code></td><td>Search</td><td>unary</td><td>Hybrid search filtered by the caller's audience</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================== TOOLS -->
+<section id="tools">
+  <h2>Tools &amp; alternatives</h2>
+  <p class="lede">For every tool: what we use it for, what else could do the job, why we chose ours, and when we would
+  switch. Green rows are SmartHealth's choice. Much of the stack was prescribed by the assignment — where so, the
+  "why" says what the tool earns here, not why it was picked.</p>
+
+  <h3>API framework</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>FastAPI</b> (ours, prescribed)</td><td>Async, typed with Pydantic, OpenAPI/Swagger for free; dependency injection carries auth, sessions and the clock into routes</td></tr>
+    <tr><td>Django + DRF</td><td>Batteries included (admin, ORM, auth); heavier, sync-first; its ORM would compete with SQLAlchemy</td></tr>
+    <tr><td>Flask</td><td>Minimal; validation, async and docs are add-ons</td></tr>
+    <tr><td>Litestar, Starlette</td><td>Similar to FastAPI; smaller ecosystems</td></tr>
+  </table></div>
+
+  <h3>ORM and migrations</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>SQLAlchemy 2 (async) + Alembic</b> (ours)</td><td>Full SQL power when needed (the slot claim is a raw conditional UPDATE), constraints and indexes declared in models, autogenerated migrations checked by <code>alembic check</code></td></tr>
+    <tr><td>SQLModel</td><td>SQLAlchemy + Pydantic in one class; less control over advanced constraints</td></tr>
+    <tr><td>Tortoise, Piccolo</td><td>Async-first, simpler; smaller ecosystems, weaker migration tooling</td></tr>
+    <tr><td>Raw SQL (asyncpg)</td><td>Fastest, most explicit; no model metadata to generate migrations or docs from</td></tr>
+  </table></div>
+
+  <h3>Transactional database</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>PostgreSQL</b> (ours, prescribed)</td><td>Exclusion constraints, partial unique indexes, row locks, <code>SKIP LOCKED</code> for the relay, advisory locks for patient overlap — the invariants live here</td></tr>
+    <tr><td>MySQL / MariaDB</td><td>No exclusion constraints or partial indexes — the double-booking rules would move into code</td></tr>
+    <tr><td>CockroachDB / Spanner</td><td>Distributed SQL for global scale; overkill for one clinic network</td></tr>
+  </table></div>
+
+  <h3>Audit store (the "NoSQL database")</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>MongoDB</b> (ours)</td><td>Append-only documents with free-form before/after snapshots; the audit trail never constrains the transactional schema</td></tr>
+    <tr><td>A Postgres audit table (JSONB)</td><td>Could share the transaction (atomic with the change); the assignment asks for a NoSQL store, and we accept the non-atomic write (PRD R-1)</td></tr>
+    <tr><td>Event sourcing / Kafka as the log</td><td>Full history by construction; far more machinery</td></tr>
+    <tr><td>DynamoDB, Cassandra</td><td>Managed/massive scale; not needed</td></tr>
+  </table></div>
+
+  <h3>Cache, sessions, rate limits</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Redis</b> (ours, prescribed)</td><td>Server-side sessions (revocable JWTs), login throttling, per-user booking limits, per-patient notification throttles; Redis Streams for the assistant's resumable turns</td></tr>
+    <tr><td>Memcached</td><td>Plain cache; no data structures, no streams</td></tr>
+    <tr><td>Postgres tables</td><td>One less system; slower for hot counters and expiry</td></tr>
+    <tr><td>Stateless JWT only</td><td>No server state — but no way to log a user out or revoke a token before it expires</td></tr>
+  </table></div>
+
+  <h3>Durable workflows</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Temporal</b> (ours, prescribed)</td><td>Each step recorded; crash-safe resume; timers that last days (no-show, reminders); child workflows (waitlist bookings); workflow ids as dedupe</td></tr>
+    <tr><td>Hand-rolled saga (status column + cron)</td><td>No new system; you rebuild retries, timers, state and visibility yourself</td></tr>
+    <tr><td>Celery chains/chords</td><td>Already in the stack; no durable state between steps — a crash mid-chain leaves you guessing</td></tr>
+    <tr><td>AWS Step Functions, Azure Durable Functions</td><td>Managed; cloud lock-in, JSON/YAML state machines</td></tr>
+    <tr><td>Airflow, Prefect, Dagster</td><td>Data-pipeline schedulers; not built for per-request business processes</td></tr>
+    <tr><td>Camunda / Zeebe</td><td>BPMN-modelled; heavier, Java-centric</td></tr>
+  </table></div>
+
+  <h3>Event streaming</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Kafka + Schema Registry (Avro)</b> (ours, prescribed)</td><td>Many independent consumer groups, ordered per key, replayable, compacted state topics; schemas checked for compatibility at deploy</td></tr>
+    <tr><td>RabbitMQ topic exchanges</td><td>Fan-out works, but messages are gone once consumed — no replay, no compacted state</td></tr>
+    <tr><td>Redis Streams</td><td>Consumer groups and replay in a store we have; weaker durability and tooling at scale</td></tr>
+    <tr><td>NATS JetStream, Pulsar</td><td>Lighter (NATS) or multi-tenant (Pulsar); smaller ecosystems here</td></tr>
+    <tr><td>Postgres LISTEN/NOTIFY</td><td>No new system; no persistence, no consumer groups</td></tr>
+  </table></div>
+  <div class="table-wrap"><table>
+    <tr><th>Serialisation</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Avro + Schema Registry</b> (ours)</td><td>Compact, schema-enforced, compatibility rule <code>BACKWARD_TRANSITIVE</code> refuses a breaking change at deploy</td></tr>
+    <tr><td>JSON</td><td>Human-readable; no enforced contract — a renamed field breaks consumers silently</td></tr>
+    <tr><td>Protobuf</td><td>Also schema-first (we use it for gRPC); Avro is Kafka's most common pairing with Schema Registry</td></tr>
+  </table></div>
+
+  <h3>Background jobs</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Celery + RabbitMQ</b> (ours, prescribed)</td><td>Retries, late acks, routing, dead-letter queues and Beat schedules as configuration</td></tr>
+    <tr><td>RQ, Dramatiq, Huey, arq</td><td>Simpler; fewer features (arq is async-native)</td></tr>
+    <tr><td>Temporal activities for everything</td><td>Durable, but heavyweight for "send one email"</td></tr>
+    <tr><td>Cloud queues (SQS + Lambda)</td><td>Managed; lock-in</td></tr>
+  </table></div>
+
+  <h3>Observability</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>OpenTelemetry → Collector → Jaeger + Prometheus → Grafana</b> (ours, prescribed)</td><td>Vendor-neutral instrumentation; the collector decides where data goes, so swapping a backend is a config change</td></tr>
+    <tr><td>Grafana Tempo / Loki / Mimir</td><td>Same Grafana, cheaper object-storage backends; drop-in behind the collector</td></tr>
+    <tr><td>Datadog, New Relic, Honeycomb</td><td>Managed, polished; per-host or per-event cost, data leaves your network</td></tr>
+    <tr><td>ELK / OpenSearch</td><td>Strong log search; heavier to run</td></tr>
+    <tr><td>Langfuse, LangSmith, Phoenix (LLM-specific)</td><td>Nice prompt/response views; we keep one stack and don't ship conversation text to a third party</td></tr>
+  </table></div>
+
+  <h3>Service-to-service and the browser edge</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>gRPC + protobuf, Envoy for gRPC-Web</b> (ours)</td><td>Typed contracts shared by browser and services; native server streaming for chat; Envoy is one front door for both protocols</td></tr>
+    <tr><td>REST + Server-Sent Events</td><td>Simpler, no proxy translation; contracts by convention (OpenAPI) rather than generated code</td></tr>
+    <tr><td>WebSockets</td><td>Two-way; more connection management</td></tr>
+    <tr><td>GraphQL</td><td>Flexible reads for UIs; streaming via subscriptions; another layer to secure</td></tr>
+    <tr><td>Nginx / Traefik / Kong as the edge</td><td>Fine for HTTP; Envoy's gRPC-Web filter is the deciding feature</td></tr>
+  </table></div>
+
+  <h3>RAG — chunking, embeddings, search, vector store</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Decision</th><th>Ours</th><th>Alternatives</th></tr>
+    <tr><td>Chunking</td><td class="ours">Structure-aware: headings first, then 1200 chars / 150 overlap</td><td>Fixed size; recursive/sentence; semantic chunking; parent–child (search small, return big); contextual chunks</td></tr>
+    <tr><td>Embeddings</td><td class="ours">BAAI/bge-small-en-v1.5 via fastembed, local CPU, free, no data leaves</td><td>Bigger open models (bge-large, e5, nomic); hosted (OpenAI text-embedding-3, Cohere, Voyage); biomedical models</td></tr>
+    <tr><td>Search</td><td class="ours">Hybrid: dense + BM25, reciprocal rank fusion</td><td>Dense only (misses codes like HbA1c); keyword only (misses paraphrase); weighted score blend; SPLADE</td></tr>
+    <tr><td>Reranking</td><td class="ours">None — recall@5 is 0.97 on this corpus</td><td>Cross-encoder (bge-reranker, fastembed rerankers); Cohere Rerank; LLM-as-reranker</td></tr>
+    <tr><td>Abstaining</td><td class="ours">Relevance floor 0.55 on the best dense match</td><td>Always top-k; reranker-score threshold</td></tr>
+    <tr><td>Access control</td><td class="ours">Audience filter inside the search, from the verified token</td><td>Filter after search; separate collections per audience</td></tr>
+    <tr><td>Vector DB</td><td class="ours">Qdrant: named dense + sparse vectors, server-side fusion, payload filters</td><td>pgvector (no new system; hybrid needs your own fusion); Weaviate; Milvus; Pinecone (managed); Elasticsearch/OpenSearch; Chroma/FAISS (prototypes)</td></tr>
+    <tr><td>Freshness</td><td class="ours">Versioned idempotent upsert; providers re-indexed on every start and on each <code>providers.state</code> event</td><td>Full rebuild; change-data-capture</td></tr>
+    <tr><td>Strategies</td><td class="ours">Agentic RAG (retrieval as a tool), grounded citations, structured data routed to Part A's API instead of RAG</td><td>Query rewriting, multi-query/RAG-Fusion, HyDE, self-/corrective RAG, GraphRAG (entity graphs for multi-hop and corpus-wide questions)</td></tr>
+  </table></div>
+
+  <h3>Assistant — agent shape, framework, model, memory</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Decision</th><th>Ours</th><th>Alternatives</th></tr>
+    <tr><td>Agent shape</td><td class="ours">Router + deterministic flows: the model has two read-only tools; every write is a confirmed flow</td><td>Plain chatbot; RAG-only bot; autonomous ReAct agent with write tools; plan-and-execute / multi-agent</td></tr>
+    <tr><td>Framework</td><td class="ours">LangGraph: explicit graph, <code>interrupt()</code> + Postgres checkpointer for human-in-the-loop</td><td>Plain LangChain agents; LlamaIndex; CrewAI / AutoGen; vendor SDKs (OpenAI Agents, Anthropic tool use, Google ADK); hand-written loop; Temporal</td></tr>
+    <tr><td>Model / provider</td><td class="ours">Groq · <code>openai/gpt-oss-120b</code> — fast, cheap; factory also speaks OpenAI and Anthropic by setting</td><td>OpenAI, Anthropic, Google; self-hosted (vLLM, Ollama); cloud-hosted (Azure OpenAI, Bedrock, Vertex) for data-residency terms</td></tr>
+    <tr><td>Memory</td><td class="ours">Last 12 messages to the model; full state in the checkpoint; transcripts separate; no long-term memory (personal facts come fresh from Part A)</td><td>Summaries; token-budget trimming; long-term memory stores; vector memory of past chats</td></tr>
+    <tr><td>Streaming</td><td class="ours">gRPC server stream via gRPC-Web, resumable through Redis Streams</td><td>Server-Sent Events; WebSockets; no streaming</td></tr>
+    <tr><td>Guardrails</td><td class="ours">Fixed red-flag rules before the model; least privilege (user's token); cite only used passages</td><td>NeMo Guardrails, Guardrails AI, Llama Guard, moderation APIs</td></tr>
+    <tr><td>Testing</td><td class="ours">Scripted model doubles; record/replay fixtures; offline LLM-as-judge (report only)</td><td>Live-model tests; LangSmith, Ragas, DeepEval, Promptfoo</td></tr>
+    <tr><td>Long jobs</td><td class="ours">Reports as in-process background tasks streamed through Redis</td><td>Celery or Temporal jobs (survive a restart, at the cost of more machinery)</td></tr>
+  </table></div>
+
+  <h3>Packaging and the demo client</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>Docker Compose with profiles</b> (ours, prescribed)</td><td>One file for the whole system; profiles <code>app</code> and <code>partb</code>; an offset-port test stack runs beside the dev stack</td></tr>
+    <tr><td>Kubernetes (kind/minikube), Tilt</td><td>Production-like; much more setup for a five-week assignment</td></tr>
+    <tr class="ours"><td><b>React + TypeScript (Vite), shadcn/ui + AI Elements, Connect gRPC-Web</b> (ours)</td><td>A demo client only — not a graded deliverable; the backend does not depend on it</td></tr>
+    <tr><td>Next.js, Vue, server-rendered templates</td><td>Any would do; Connect's generated client is what makes the typed gRPC-Web chat easy</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================== RUN -->
+<section id="run">
+  <h2>Run it</h2>
+  <h3>Everything in containers</h3>
+<pre><code># Part A and Part B, built and healthy
+docker compose --profile app --profile partb -f docker-compose.infra.yml up -d --build --wait
+
+# demo data: clinics, departments, providers, patients, slots and staff logins (idempotent)
+docker compose -f docker-compose.infra.yml exec app python -m app.cli seed --password "&lt;choose one&gt;"
+
+# stop (keep data) / tear down (delete volumes)
+docker compose --profile app --profile partb -f docker-compose.infra.yml stop
+docker compose --profile app --profile partb -f docker-compose.infra.yml down -v</code></pre>
+  <div class="table-wrap"><table>
+    <tr><th>Profile</th><th>Starts</th></tr>
+    <tr><td><i>(none)</i></td><td>Infrastructure: postgres, mongo, redis, rabbitmq, kafka, schema-registry, temporal, mailpit, payments-mock, otel-collector, jaeger, prometheus, kafka-exporter, grafana</td></tr>
+    <tr><td><code>app</code></td><td>Part A: app (API), worker, relay, consumers, celery-worker, celery-beat, temporal-ui, frontend</td></tr>
+    <tr><td><code>partb</code></td><td>Part B: knowledge, knowledge-db, qdrant, assistant, assistant-db, assistant-redis, envoy</td></tr>
+  </table></div>
+  <h3>Settings and the LLM key</h3>
+  <p>Settings come from environment variables (<code>SMARTHEALTH_*</code>, <code>KNOWLEDGE_*</code>,
+  <code>ASSISTANT_*</code>); see <code>.env.example</code>. For live model answers put
+  <code>ASSISTANT_LLM_PROVIDER=groq</code>, <code>ASSISTANT_LLM_MODEL=openai/gpt-oss-120b</code> and
+  <code>ASSISTANT_LLM_API_KEY=…</code> in a git-ignored <code>.env</code>. With no key the assistant still runs
+  every guided flow and answers from the documents.</p>
+  <h3>Useful commands</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Command</th><th>What</th></tr>
+    <tr><td><code>python -m app.cli create-user --email … --password … --role admin</code></td><td>Create a login</td></tr>
+    <tr><td><code>python -m app.cli link-patient --email … --mrn …</code></td><td>Link a patient login to its record</td></tr>
+    <tr><td><code>python -m app.cli deactivate-user --email …</code></td><td>Stop a login and end its sessions</td></tr>
+    <tr><td><code>python -m app.cli republish</code></td><td>Re-emit state events for every clinic, department and provider</td></tr>
+    <tr><td><code>python -m app.cli dlt-replay --topic …</code></td><td>Re-publish a topic's dead letters after a fix</td></tr>
+    <tr><td><code>python -m app.relay --setup</code></td><td>Create topics and register schemas</td></tr>
+    <tr><td><code>python -m app.worker --check</code></td><td>Is a Temporal worker polling and executing?</td></tr>
+    <tr><td><code>python scripts/gen_docs_data.py</code></td><td>Regenerate this site's API, schema and event data</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================== RESOURCES -->
+<section id="resources">
+  <h2>Where everything is (local stack)</h2>
+  <p class="lede">With the stack up, these open in a browser. Credentials are the development defaults from
+  <code>docker-compose.infra.yml</code>; change them for anything that is not your laptop.</p>
+  <div class="table-wrap"><table>
+    <tr><th>What</th><th>URL</th><th>Login</th><th>Look at</th></tr>
+    <tr><td>Demo website</td><td><a href="http://localhost:5173">localhost:5173</a></td><td>seeded users, e.g. <code>admin@medinova.example</code> / your seed password</td><td>Appointments, Assistant, Reports, AI usage</td></tr>
+    <tr><td>API · Swagger</td><td><a href="http://localhost:8000/docs">localhost:8000/docs</a></td><td>log in via <code>POST /auth/login</code>, then Authorize</td><td>Every endpoint, try it live</td></tr>
+    <tr><td>Temporal UI</td><td><a href="http://localhost:8080">localhost:8080</a></td><td>—</td><td><code>booking-&lt;id&gt;</code>, <code>visit-&lt;id&gt;</code>, <code>cancel-&lt;id&gt;</code> histories</td></tr>
+    <tr><td>Grafana</td><td><a href="http://localhost:3000">localhost:3000</a></td><td><code>admin</code> / <code>smarthealth</code> (anonymous viewing on)</td><td>4 dashboards, alert rules</td></tr>
+    <tr><td>Jaeger</td><td><a href="http://localhost:16686">localhost:16686</a></td><td>—</td><td>Traces by service: part-a-*, knowledge, assistant</td></tr>
+    <tr><td>Prometheus</td><td><a href="http://localhost:9090">localhost:9090</a></td><td>—</td><td>Status → Targets; query <code>smarthealth_*</code></td></tr>
+    <tr><td>RabbitMQ</td><td><a href="http://localhost:15672">localhost:15672</a></td><td><code>smarthealth</code> / <code>smarthealth</code>, vhost <code>part-a</code></td><td>Queues: notifications, .dlq, maintenance, documents</td></tr>
+    <tr><td>Mailpit</td><td><a href="http://localhost:8025">localhost:8025</a></td><td>—</td><td>Every email the system sends</td></tr>
+    <tr><td>Schema Registry</td><td><a href="http://localhost:8081/subjects">localhost:8081/subjects</a></td><td>—</td><td>Event schemas and versions</td></tr>
+    <tr><td>Qdrant</td><td><a href="http://localhost:6333/dashboard">localhost:6333/dashboard</a></td><td>—</td><td>Collection <code>knowledge</code>: points, payloads, vectors</td></tr>
+    <tr><td>Envoy (gRPC-Web edge)</td><td><code>localhost:8088</code></td><td>Part A token</td><td><code>scripts/grpcweb_smoke.py</code></td></tr>
+    <tr><td>payments-mock</td><td><code>localhost:8090</code></td><td>—</td><td><code>POST /_chaos</code> to make it misbehave</td></tr>
+  </table></div>
+  <h3>Databases from your machine</h3>
+<pre><code># Part A (PostgreSQL)
+docker compose -f docker-compose.infra.yml exec postgres psql -U smarthealth -d smarthealth
+# Part B
+docker compose -f docker-compose.infra.yml exec knowledge-db psql -U knowledge -d knowledge
+docker compose -f docker-compose.infra.yml exec assistant-db psql -U assistant -d assistant
+# MongoDB (audit), Redis
+docker compose -f docker-compose.infra.yml exec mongo mongosh smarthealth
+docker compose -f docker-compose.infra.yml exec redis redis-cli
+# Kafka: topics and consumer lag
+docker compose -f docker-compose.infra.yml exec kafka kafka-topics --bootstrap-server kafka:29092 --list
+docker compose -f docker-compose.infra.yml exec kafka kafka-consumer-groups --bootstrap-server kafka:29092 --describe --all-groups</code></pre>
+</section>
+
+<!-- ================================================================== TESTING -->
+<section id="testing">
+  <h2>Testing</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Tier</th><th>Proves</th><th>Runs against</th></tr>
+    <tr><td>unit</td><td>Pure logic</td><td>Nothing</td></tr>
+    <tr><td>contract</td><td>HTTP and gRPC contracts, the assistant with a scripted model, retrieval on recorded embeddings</td><td>In-process app, in-memory stores, Qdrant local mode</td></tr>
+    <tr><td>workflow</td><td>Reliability invariants: confirm-last, compensation, no orphaned slot</td><td>Temporal's time-skipping test server (~1 s)</td></tr>
+    <tr><td>integration</td><td>Real Postgres constraints, Kafka round trips, Celery, Part B over Kafka</td><td>The compose test stack (offset ports)</td></tr>
+    <tr><td>meta</td><td>Architecture rules: import boundaries, registries, idempotent consumers, slot writes, compose settings, this site's data</td><td>The source tree</td></tr>
+  </table></div>
+<pre><code>python -m pytest -m "not docker"   # fast: unit, contract, workflow, meta (1361 passing)
+python -m pytest -m docker         # integration, against the compose test stack
+python -m ruff check app tests services</code></pre>
+  <p>Test cases are also catalogued as YAML under <code>tests/cases/</code>, traced to PRD requirement ids. Tests never
+  call a live model: they script one, or replay recorded answers. Two Claude Code <b>Stop hooks</b> guard the
+  repository: one requires a validated test case when core code changes, the other requires the documentation
+  (including this site) to be reviewed when the application changes.</p>
+</section>
+
+<!-- ================================================================== DECISIONS -->
+<section id="decisions">
+  <h2>Decisions &amp; open items</h2>
+  <div class="cards">
+    <div class="card"><h4>A patient is not a user</h4><p>Logins and patient records are separate; front desk registers walk-ins with no credentials.</p></div>
+    <div class="card"><h4>Slots are pre-generated rows</h4><p>Booking is a conditional UPDATE; zero rows is the conflict. No availability generator — slots are seeded.</p></div>
+    <div class="card"><h4>A visit is not an appointment</h4><p>Appointment = the booking; visit = what happened. A no-show is an appointment with no visit.</p></div>
+    <div class="card"><h4>The outbox, not "publish after commit"</h4><p>An event is written in the change's own transaction, so it cannot be lost if Kafka or the process dies.</p></div>
+    <div class="card"><h4>The model never writes</h4><p>Two read-only tools; every change is a deterministic flow plus a confirmation.</p></div>
+    <div class="card"><h4>No shared stores</h4><p>Part B owns its data, reads Part A only through its API and events, verifies tokens with JWKS.</p></div>
+  </div>
+  <h3>Open items (known, stated, not hidden)</h3>
+  <div class="warn"><ul style="margin:0">
+    <li>SQL statements do not appear as spans in Jaeger, although every process calls <code>instrument_engine</code> — not yet explained.</li>
+    <li>The analytics drift metric (<code>smarthealth_analytics_drift</code>) has no Grafana panel or alert; drift shows only as a log line.</li>
+    <li>Reports run as in-process tasks in the assistant; one interrupted by a restart is marked failed rather than resumed.</li>
+    <li>Not built by decision: a provider availability generator, clinic/department management endpoints.</li>
+  </ul></div>
+  <p>The full list — every decision with its rejected alternatives (D-1…), every risk with its disposition (R-1…) —
+  is in the <a href="https://github.com/sadainiqrar/smarthealth/blob/main/docs/PRD.md">PRD</a>.</p>
+</section>
+
+<section id="more">
+  <h2>Further reading</h2>
+  <div class="table-wrap"><table>
+    <tr><th>Document</th><th>For</th></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/blob/main/README.md">README</a></td><td>Quick start, endpoint/role table, demo walkthroughs</td></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/blob/main/docs/PRD.md">PRD</a></td><td>Requirements with ids and status, decisions, risks</td></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/blob/main/docs/ARCHITECTURE.md">ARCHITECTURE</a></td><td>Module-by-module detail and every data flow</td></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/tree/main/docs/superpowers/specs">Design specs</a></td><td>The design documents each week was built from</td></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/blob/main/tests/README.md">tests/README</a></td><td>How the test harness works</td></tr>
+    <tr><td><a href="https://github.com/sadainiqrar/smarthealth/tree/main/docs/requirements">Requirements</a></td><td>The assignment as given</td></tr>
+  </table></div>
+  <footer>Generated sections (API, schemas, events, tasks, workflows) are produced from the code by
+  <code>scripts/gen_docs_data.py</code> and checked by <code>tests/meta/test_docs_data.py</code>; everything else is
+  reviewed whenever the application changes (the docs Stop hook).</footer>
+</section>
+</main>
+</div>
+</body>
+</html>

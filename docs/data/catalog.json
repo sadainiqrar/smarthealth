@@ -1,0 +1,312 @@
+{
+  "celery_tasks": [
+    {
+      "does": "Recount the last days from scheduling's tables and report any drift from analytics_daily (reports; never overwrites)",
+      "name": "analytics.reconcile",
+      "queue": "maintenance",
+      "schedule": "1 day, 0:00:00"
+    },
+    {
+      "does": "Extract the text of an uploaded report (PDF) for review",
+      "name": "clinical.extract_document",
+      "queue": "documents",
+      "schedule": ""
+    },
+    {
+      "does": "Daily: delete outbox rows published more than a week ago. Unpublished rows are never touched, however old -- they are the backlog.",
+      "name": "events.purge_published",
+      "queue": "maintenance",
+      "schedule": "1 day, 0:00:00"
+    },
+    {
+      "does": "Every minute: queued rows whose enqueue was lost (the process died between commit and enqueue), and claims whose worker died. `claim` keeps a double send impossible.",
+      "name": "notifications.requeue_stuck",
+      "queue": "maintenance",
+      "schedule": "0:01:00"
+    },
+    {
+      "does": "Send one notification: claim the row, throttle per patient in Redis, email (Mailpit) or SMS, retry with backoff, dead-letter",
+      "name": "notifications.send",
+      "queue": "notifications",
+      "schedule": ""
+    },
+    {
+      "does": "Fail bookings stuck in pending whose workflow is gone: free the slot, release the payment hold",
+      "name": "scheduling.reconcile_stale_pending",
+      "queue": "maintenance",
+      "schedule": "0:05:00"
+    }
+  ],
+  "consumers": [
+    {
+      "code": "app/modules/analytics/consumers.py",
+      "does": "Adds each booking, cancellation, no-show and completed visit to the day's counts in analytics_daily",
+      "name": "analytics.daily-rollup",
+      "service": "part-a consumers",
+      "topics": [
+        "appointments.booked",
+        "appointments.cancelled",
+        "appointments.no_show",
+        "visits.completed"
+      ]
+    },
+    {
+      "code": "app/modules/notifications/consumers.py",
+      "does": "Turns events a patient should hear about into one notification row each, sent by Celery after commit",
+      "name": "notifications.patient-messages",
+      "service": "part-a consumers",
+      "topics": [
+        "appointments.booked",
+        "appointments.cancelled",
+        "appointments.no_show",
+        "appointments.rescheduled",
+        "billing.status_updated",
+        "clinical.note_signed",
+        "clinical.test_ordered"
+      ]
+    },
+    {
+      "code": "app/modules/scheduling/consumers.py",
+      "does": "Starts CancelFollowUpWorkflow: stop the visit timer, refund, offer the slot to the waitlist",
+      "name": "scheduling.cancel-follow-up",
+      "service": "part-a consumers",
+      "topics": [
+        "appointments.cancelled"
+      ]
+    },
+    {
+      "code": "app/modules/scheduling/consumers.py",
+      "does": "Starts PostVisitWorkflow: capture the booking's payment",
+      "name": "scheduling.post-visit",
+      "service": "part-a consumers",
+      "topics": [
+        "visits.completed"
+      ]
+    },
+    {
+      "code": "app/modules/scheduling/consumers.py",
+      "does": "Starts ProviderDeactivationWorkflow when a provider goes inactive: cancel their future appointments",
+      "name": "scheduling.provider-deactivation",
+      "service": "part-a consumers",
+      "topics": [
+        "providers.state"
+      ]
+    },
+    {
+      "code": "services/knowledge/knowledge_service/consumer.py",
+      "does": "Keeps the knowledge service's own provider directory and indexes each active provider into Qdrant",
+      "name": "knowledge.provider-directory",
+      "service": "knowledge",
+      "topics": [
+        "providers.state"
+      ]
+    },
+    {
+      "code": "services/assistant/assistant_service/main.py",
+      "does": "Fills the assistant's deny-list: tokens issued before a revocation are refused",
+      "name": "assistant.revocations",
+      "service": "assistant",
+      "topics": [
+        "identity.sessions_revoked"
+      ]
+    },
+    {
+      "code": "services/assistant/assistant_service/main.py",
+      "does": "Records every booking with its origin (assistant or not) for the conversion rate",
+      "name": "assistant.conversions",
+      "service": "assistant",
+      "topics": [
+        "appointments.booked"
+      ]
+    }
+  ],
+  "temporal_activities": [
+    "booking.billing_precheck",
+    "booking.claim_slot",
+    "booking.confirm",
+    "booking.create_pending",
+    "booking.fail_booking",
+    "booking.schedule_reminders",
+    "booking.validate_booking",
+    "cancel.refund",
+    "post_visit.charge",
+    "provider.cancel_appointment",
+    "provider.future_appointments",
+    "reschedule.complete",
+    "visit.deadline",
+    "visit.no_show",
+    "visit.remind",
+    "visit.reminder_due",
+    "waitlist.candidates",
+    "waitlist.fulfil"
+  ],
+  "temporal_workflows": [
+    {
+      "does": "Booking: create pending, validate, claim the slot, billing pre-check, schedule reminders, confirm last; compensate on failure",
+      "name": "BookAppointmentWorkflow",
+      "type": "BookAppointment"
+    },
+    {
+      "does": "Readiness probe: proves a worker is polling and executing",
+      "name": "CanaryWorkflow",
+      "type": "Canary"
+    },
+    {
+      "does": "What must eventually follow a cancellation that is already committed: stop the visit timer, refund, and offer the freed slot to the waitlist. Started best-effort after the cancel's own transaction (spec §4.3), so none of it can fail or delay the cancel.",
+      "name": "CancelFollowUpWorkflow",
+      "type": "CancelFollowUp"
+    },
+    {
+      "does": "What follows a completed visit (Week 3 slice 4; PART-A-FR-3): capture the booking's authorisation. Started by the `visits.completed` consumer under `post-visit-<visit_id>`, so a redelivered event cannot charge twice -- and the capture is idempotent besides. The follow-up reminder joins this workflow in slice 5.",
+      "name": "PostVisitWorkflow",
+      "type": "PostVisit"
+    },
+    {
+      "does": "A provider went inactive: cancel each of their future appointments (PRD R-25, spec D-23). Started by the `providers.state` consumer. Each cancel is the ordinary paired write, so each one emits `appointments.cancelled`, and that event's consumer does the rest -- the refund, the waitlist, and (slice 5) telling the patient.",
+      "name": "ProviderDeactivationWorkflow",
+      "type": "ProviderDeactivation"
+    },
+    {
+      "does": "Book the new slot first, release the old one only if that confirmed (D-14): a failed reschedule leaves the patient with the appointment they had.",
+      "name": "RescheduleWorkflow",
+      "type": "Reschedule"
+    },
+    {
+      "does": "The no-show timer for one confirmed appointment (spec D-12, §4.2).",
+      "name": "VisitWorkflow",
+      "type": "Visit"
+    }
+  ],
+  "topics": [
+    {
+      "emitted_by": [
+        "app/modules/scheduling/service.py"
+      ],
+      "kind": "event",
+      "name": "appointments.booked",
+      "partitions": 3,
+      "schema": "contracts/events/appointments.booked.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/scheduling/service.py"
+      ],
+      "kind": "event",
+      "name": "appointments.cancelled",
+      "partitions": 3,
+      "schema": "contracts/events/appointments.cancelled.avsc",
+      "schema_version": 2
+    },
+    {
+      "emitted_by": [
+        "app/modules/scheduling/service.py"
+      ],
+      "kind": "event",
+      "name": "appointments.no_show",
+      "partitions": 3,
+      "schema": "contracts/events/appointments.no_show.avsc",
+      "schema_version": 2
+    },
+    {
+      "emitted_by": [
+        "app/modules/scheduling/service.py"
+      ],
+      "kind": "event",
+      "name": "appointments.rescheduled",
+      "partitions": 3,
+      "schema": "contracts/events/appointments.rescheduled.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/billing/service.py"
+      ],
+      "kind": "event",
+      "name": "billing.status_updated",
+      "partitions": 3,
+      "schema": "contracts/events/billing.status_updated.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/clinical/service.py"
+      ],
+      "kind": "event",
+      "name": "clinical.note_signed",
+      "partitions": 3,
+      "schema": "contracts/events/clinical.note_signed.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/clinical/service.py"
+      ],
+      "kind": "event",
+      "name": "clinical.test_ordered",
+      "partitions": 3,
+      "schema": "contracts/events/clinical.test_ordered.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/providers/service.py"
+      ],
+      "kind": "state",
+      "name": "clinics.state",
+      "partitions": 3,
+      "schema": "contracts/events/clinics.state.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/providers/service.py"
+      ],
+      "kind": "state",
+      "name": "departments.state",
+      "partitions": 3,
+      "schema": "contracts/events/departments.state.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/clinical/service.py"
+      ],
+      "kind": "event",
+      "name": "documents.uploaded",
+      "partitions": 3,
+      "schema": "contracts/events/documents.uploaded.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/identity/service.py"
+      ],
+      "kind": "event",
+      "name": "identity.sessions_revoked",
+      "partitions": 3,
+      "schema": "contracts/events/identity.sessions_revoked.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/providers/service.py"
+      ],
+      "kind": "state",
+      "name": "providers.state",
+      "partitions": 3,
+      "schema": "contracts/events/providers.state.avsc",
+      "schema_version": 1
+    },
+    {
+      "emitted_by": [
+        "app/modules/scheduling/service.py"
+      ],
+      "kind": "event",
+      "name": "visits.completed",
+      "partitions": 3,
+      "schema": "contracts/events/visits.completed.avsc",
+      "schema_version": 1
+    }
+  ]
+}
