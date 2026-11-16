@@ -28,3 +28,6 @@ contracts/**             -> docs/ARCHITECTURE.md, docs/index.html
 docker-compose*.yml      -> README.md, docs/index.html
 ops/**                   -> README.md, docs/ARCHITECTURE.md, docs/index.html
 frontend/src/**          -> README.md, docs/index.html
+deploy/**                -> README.md, docs/ARCHITECTURE.md, docs/index.html
+scripts/k3d_*            -> README.md, docs/index.html
+scripts/push_images.sh   -> README.md, docs/index.html

@@ -1,0 +1,11 @@
+# The slim profile: everything on one 8 GB node (m7i-flex.large). Per-workload memory
+# limits live here, under each component, so the whole budget reads in one file.
+global:
+  # Where the system is reached from a browser; sub-path tools build links from it.
+  publicUrl: http://localhost:8080
+  # The one Secret every chart reads credentials from (spec section 5).
+  secretName: smarthealth-secrets
+  image:
+    registry: ""       # "" = images imported into the cluster (k3d); ghcr.io/<owner> on AWS
+    tag: dev
+    pullPolicy: IfNotPresent
