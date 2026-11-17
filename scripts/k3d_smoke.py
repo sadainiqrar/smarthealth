@@ -2,8 +2,9 @@
 """Prove the k3d install works end to end through the ingress (spec section 8).
 
 Fails on the first problem. Assumes `scripts/k3d_up.sh` has run and kubectl's context is
-k3d-smarthealth. Creates a front-desk login with the CLI inside core-api, then checks the
-API, gRPC-Web, the tool logins, runs the demo seed Job and prints memory per pod.
+k3d-smarthealth. Creates a front-desk login and an admin login with the CLI inside core-api,
+then checks the API, the admin System health page (every component ok), gRPC-Web, the tool logins, runs the demo seed Job and
+prints memory per pod.
 """
 
 from __future__ import annotations
@@ -89,14 +90,22 @@ def health_page(base: str, password: str) -> None:
     # Heartbeats arrive every few seconds; give a fresh install a minute to show them all.
     deadline = time.monotonic() + 60
     while True:
-        overview = httpx.get(f"{base}/api/monitoring/overview?hours=1",
-                             headers={"Authorization": f"Bearer {token}"}, timeout=20).json()
-        down = [c["name"] for c in overview["components"] if c["status"] != "ok"]
-        if overview["sources"]["prometheus"] == "ok" and not down:
-            return
+        detail = ""
+        try:
+            r = httpx.get(f"{base}/api/monitoring/overview?hours=1",
+                          headers={"Authorization": f"Bearer {token}"}, timeout=20)
+        except httpx.HTTPError as exc:  # transient: retry until the deadline
+            detail = f"health page: {exc!r}"
+        else:
+            if r.status_code != 200:
+                raise SystemExit(f"/monitoring/overview: {r.status_code} {r.text[:300]}")
+            overview = r.json()
+            down = [c["name"] for c in overview["components"] if c["status"] != "ok"]
+            if overview["sources"]["prometheus"] == "ok" and not down:
+                return
+            detail = f"health page: prometheus={overview['sources']['prometheus']}, down={down}"
         if time.monotonic() > deadline:
-            raise SystemExit(
-                f"health page: prometheus={overview['sources']['prometheus']}, down={down}")
+            raise SystemExit(detail)
         time.sleep(5)
 
 

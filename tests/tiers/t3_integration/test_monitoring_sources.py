@@ -53,13 +53,14 @@ async def test_an_error_span_comes_back_as_a_failure(stack):
     async with httpx.AsyncClient() as http:
         client = JaegerClient(JAEGER, http)
         end = datetime.now(UTC) + timedelta(minutes=1)
-        for _ in range(30):  # the collector batches; give it up to 15 s
+        for _ in range(120):  # the collector batches; give it up to 60 s
             traces = await client.error_traces(service, end - timedelta(hours=1), end, 5)
             if traces:
                 break
             await asyncio.sleep(0.5)
     assert traces, "the error span never reached Jaeger"
     failure = to_failure(traces[0])
+    assert failure is not None, traces[0]
     assert failure.operation == "POST /appointments"
     assert failure.failed_step == "billing.precheck"
     assert failure.message == "gateway unavailable"

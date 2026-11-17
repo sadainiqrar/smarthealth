@@ -895,15 +895,6 @@
             "type": "prometheus",
             "uid": "prometheus"
           }
-        },
-        {
-          "refId": "B",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(assistant_first_token_milliseconds_bucket{job=\"smarthealth/assistant\"}[$__rate_interval])))",
-          "legendFormat": "p95",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          }
         }
       ]
     }

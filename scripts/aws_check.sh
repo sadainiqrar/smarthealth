@@ -31,12 +31,20 @@ want "/api/ready" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/api/ready)"
 code="$(curl -s -o /tmp/login.json -w '%{http_code}' -H 'Content-Type: application/json' \
   -d "{\"email\":\"demo.desk1@medinova.example\",\"password\":\"$DEMO\"}" $B/api/auth/login)"
 want "demo login" 200 "$code"
-ADMIN_TOK="$(curl -s -H 'Content-Type: application/json' -d "{\"email\":\"demo.admin@medinova.example\",\"password\":\"$DEMO\"}" $B/api/auth/login | python3 -c 'import json,sys;print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null)"
+acode="$(curl -s -o /tmp/admin.json -w '%{http_code}' -H 'Content-Type: application/json'   -d "{\"email\":\"demo.admin@medinova.example\",\"password\":\"$DEMO\"}" $B/api/auth/login)"
+want "demo admin login" 200 "$acode"
+ADMIN_TOK="$(python3 -c 'import json;print(json.load(open("/tmp/admin.json")).get("access_token",""))' 2>/dev/null)"
+rm -f /tmp/admin.json
 HEALTH="$(curl -s -H "Authorization: Bearer $ADMIN_TOK" "$B/api/monitoring/overview?hours=1")"
 want "health page sees every component" "ok" "$(printf '%s' "$HEALTH" | python3 -c '
 import json, sys
-o = json.load(sys.stdin)
-down = [c["name"] for c in o["components"] if c["status"] != "ok"]
+try:
+    o = json.load(sys.stdin)
+    down = [c["name"] for c in o["components"] if c["status"] != "ok"]
+    o["sources"]["prometheus"]
+except (ValueError, KeyError, TypeError):
+    print("health page answered without components/sources")
+    sys.exit()
 print("ok" if o["sources"]["prometheus"] == "ok" and not down else "prometheus=%s down=%s" % (o["sources"]["prometheus"], down))' 2>&1)"
 TOK="$(python3 -c 'import json;print(json.load(open("/tmp/login.json")).get("access_token",""))' 2>/dev/null)"
 rm -f /tmp/login.json
