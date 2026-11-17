@@ -3,8 +3,8 @@
 
 Fails on the first problem. Assumes `scripts/k3d_up.sh` has run and kubectl's context is
 k3d-smarthealth. Creates a front-desk login and an admin login with the CLI inside core-api,
-then checks the API, the admin System health page (every component ok), gRPC-Web, the tool logins, runs the demo seed Job and
-prints memory per pod.
+then checks the API, the admin System health page (every component ok), gRPC-Web, the
+tool logins, runs the demo seed Job and prints memory per pod.
 """
 
 from __future__ import annotations
