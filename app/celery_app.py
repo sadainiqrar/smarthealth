@@ -155,4 +155,11 @@ def _beat_telemetry(**_kwargs) -> None:
     setup_telemetry(task_settings(), "part-a-celery-beat")
 
 
+from app.core import task_metrics  # noqa: E402 - after the app, beside its other signals
+
+signals.task_success.connect(task_metrics.on_success, weak=False)
+signals.task_retry.connect(task_metrics.on_retry, weak=False)
+signals.task_failure.connect(task_metrics.on_failure, weak=False)
+
+
 configure(get_settings())
