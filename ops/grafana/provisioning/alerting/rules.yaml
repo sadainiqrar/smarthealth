@@ -259,13 +259,13 @@
         },
         {
           "uid": "booking-failures",
-          "title": "Booking workflows failing",
+          "title": "Bookings failing",
           "condition": "C",
           "for": "0s",
           "noDataState": "OK",
           "execErrState": "Error",
           "annotations": {
-            "summary": "More than five bookings failed in fifteen minutes."
+            "summary": "More than five bookings failed in fifteen minutes (any cause: a declined or unreachable payment, a lost slot, or a crashed workflow)."
           },
           "labels": {
             "service": "part-a"
@@ -280,7 +280,7 @@
               "datasourceUid": "prometheus",
               "model": {
                 "refId": "A",
-                "expr": "sum(increase(temporal_workflow_failed_total{workflow_type=\"BookAppointment\"}[15m]))",
+                "expr": "(sum(increase(smarthealth_bookings_total{outcome=\"failed\"}[15m]) or min_over_time(smarthealth_bookings_total{outcome=\"failed\"}[15m]) * 0) or vector(0)) + (sum(min_over_time(smarthealth_bookings_total{outcome=\"failed\"}[15m]) unless smarthealth_bookings_total{outcome=\"failed\"} offset 15m) or vector(0))",
                 "instant": true,
                 "intervalMs": 1000,
                 "maxDataPoints": 43200

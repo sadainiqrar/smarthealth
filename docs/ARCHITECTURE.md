@@ -2306,7 +2306,7 @@ events by consumer and outcome, consumer lag, RabbitMQ ready and unacknowledged 
 *Platform analytics* (the five metrics, through the read-only `analytics_reader` Postgres
 datasource) and *Assistant* (§6.5) — and eight alert rules: outbox backlog older than a
 minute, an event dead-lettered, notifications in the dead-letter queue, a consumer falling
-behind, API 5xx above 5%, booking workflows failing, assistant turns failing, and the
+behind, API 5xx above 5%, bookings failing (any cause, from `smarthealth_bookings_total`), assistant turns failing, and the
 assistant slow to start answering.
 
 **Liveness and the flows that had no metrics** (system health, PRD D-55, 2026-11-17). Every

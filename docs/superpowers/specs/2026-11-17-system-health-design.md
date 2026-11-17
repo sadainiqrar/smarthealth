@@ -63,6 +63,11 @@ scrapes of RabbitMQ and kafka-exporter. Traces are in Jaeger.
 | Notifications, reminders, document extraction | queue depth only | **added:** `smarthealth_celery_tasks_total{task,outcome=success\|retry\|failure}`, recorded from Celery's `task_success` / `task_retry` / `task_failure` signals |
 | Liveness of each process | none uniform (an idle process exports nothing) | **added:** `smarthealth.heartbeat` (`smarthealth_heartbeat_seconds` in Prometheus), an observable gauge whose value is the process's Unix time, exported every interval by api, worker, relay, consumers, celery-worker, celery-beat, knowledge, assistant |
 
+Every process's metrics carry `service.instance.id` = host, pid and a token new on every start
+(`app/core/telemetry.py:process_id`; Temporal's SDK metrics carry the same as the
+`smarthealth_process` tag): host and pid repeat across an in-place container restart, and a
+restarted counter must start a new series, not continue the old one.
+
 A process is **alive** when its heartbeat was seen in the last 60 s. The rule:
 `time() - max by (job) (smarthealth_heartbeat_seconds) < 60`. The value is a timestamp, not 1,
 because the collector re-serves a dead process's last sample for minutes: a frozen timestamp
