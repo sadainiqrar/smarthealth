@@ -34,7 +34,7 @@ stack, and never a store:
 
 A demo web client ([Frontend](#frontend)) sits on top. See [API surface](#api-surface) for
 Part A's endpoints. The fast suite (`python -m pytest -m "not docker"`) is 1640 passed,
-3 skipped, and the docker lane, which runs against the compose test stack, 289 passed (both measured 2026-11-18).
+3 skipped, and the docker lane, which runs against the compose test stack, 291 passed (both measured 2026-11-18).
 
 ## Run it
 
