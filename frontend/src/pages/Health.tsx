@@ -129,7 +129,7 @@ export default function Health() {
           <Card>
             <CardHeader>
               <CardTitle>Critical flows</CardTitle>
-              <CardDescription>Runs in the last {RANGES.find((r) => r.hours === hours)!.label}, against the window before</CardDescription>
+              <CardDescription>Runs in the last {RANGES.find((r) => r.hours === data.window_hours)?.label ?? `${data.window_hours} hours`}, against the window before{overview.isPlaceholderData ? " — refreshing…" : ""}</CardDescription>
             </CardHeader>
             <CardContent className="overflow-x-auto">
               <Table>
