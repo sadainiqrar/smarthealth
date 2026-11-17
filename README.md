@@ -119,6 +119,7 @@ Default host ports; each can be moved with the variable named in
 | URL | What | Profile |
 | --- | --- | --- |
 | <http://localhost:5173> | Demo client (nginx: `/api/*` to the API, the assistant's gRPC-Web path to Envoy) | `app` |
+| <http://localhost:5173/health> | System health (admin login) — every process, the critical flows, backlogs and the assistant as ok / warn / bad with a reason, and recent failures from Jaeger | `app` |
 | <http://localhost:8000/docs> | Part A API — Swagger UI (also `/redoc`, `/openapi.json`, `/health`, `/ready`) | `app` |
 | <http://localhost:8088> | Envoy, the front door — gRPC-Web to `assistant` and `knowledge`, `/api/*` to Part A | `partb` |
 | <http://localhost:8080> | Temporal UI — every workflow's history (`booking-<id>`, `visit-<id>`, …) | `app` |
@@ -523,6 +524,8 @@ See [`tests/README.md`](tests/README.md) for the tier model and how to author a 
 | GET | `/analytics/summary`, `/analytics/timeseries` | `admin`, `front_desk` — the five Part A metrics over `from`/`to` |
 | GET | `/analytics/utilisation` | `admin`, `front_desk` — per department: slots offered over `from`/`to`, how many are booked, and the share |
 | GET | `/users?ids=…` | `admin` — name, email and role for given login ids (the AI usage page) |
+| GET | `/monitoring/overview` | `admin` — over `hours` 1, 6 or 24 (default 24): every process's liveness, the critical flows, backlogs and AI health from Prometheus, each with a status and a reason; 200 even when Prometheus or Jaeger is down (`sources` says which) |
+| GET | `/monitoring/failures` | `admin` — the newest error traces from Jaeger over `hours` (`limit` 1–50, default 20), each as service, operation, failed step, message and a trace link |
 | POST | `/notifications` | `front_desk`, `admin`, a `provider` for a patient they treat — send a message a person approved; `Idempotency-Key` required; answers **202** `queued` / `duplicate` / `unreachable` |
 
 `GET /health` and `GET /ready` are public.
@@ -938,7 +941,7 @@ What it does, by role (the starters it offers come from the server, for the call
 | Patient | book, move, cancel, join a waitlist, my appointments, prepare for a test, my prescriptions (word for word), my last visit, my reports (never interpreted) | questions answered from the clinic's guides, with sources; red flags get urgent-care advice, never a booking |
 | Provider | my day, brief me on my next patient, results to review, write patient instructions (into the draft note) | clinic protocols |
 | Front desk | book a walk-in, who's free, today's no-shows, message a doctor's patients | policies for phone queries |
-| Admin | operations snapshot; reports written in the background and streamed — weekly and monthly operations, department utilisation, engagement summary; AI usage per user | trends, from the analytics figures |
+| Admin | operations snapshot; reports written in the background and streamed — weekly and monthly operations, department utilisation, engagement summary, System health snapshot; AI usage per user | trends, from the analytics figures |
 
 **Nothing changes without a click on a confirmation**: the model never writes; it hands
 actions to a guided flow, and every write in a flow asks first. Bookings carry an
@@ -971,7 +974,10 @@ Appointments table shows no patient name, because the API returns only `patient_
 
 Week 5 added **Assistant** (every role: chats in a sidebar, starters, the prompt input with
 attachments and stop, choices, confirmations, result cards and sources), **Reports** and
-**AI usage** (admin). They are built from shadcn's AI Elements patterns on Tailwind v4 and
+**AI usage** (admin). **System health** (admin, `/health`, PRD D-55) shows every process, the
+critical flows, backlogs and the assistant in plain statuses over the last 1, 6 or 24 hours,
+with recent failures linked to Jaeger; Reports has a System health button for the
+assistant's written snapshot of the same figures. They are built from shadcn's AI Elements patterns on Tailwind v4 and
 React 19, and reach the assistant over gRPC-Web through Envoy with a typed Connect client
 generated from `contracts/proto` (`npm run gen:proto`).
 

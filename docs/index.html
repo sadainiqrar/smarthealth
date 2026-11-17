@@ -111,8 +111,9 @@
     <div class="card"><h4>🛠️ Admin</h4><ul>
       <li>Register and update providers; deactivate one — their future appointments are cancelled and refunded</li>
       <li>Analytics: bookings over time, completed visits, cancellation rate, average wait, utilisation</li>
-      <li>Reports written in the background (weekly/monthly operations, utilisation, engagement)</li>
+      <li>Reports written in the background (weekly/monthly operations, utilisation, engagement, a system health snapshot)</li>
       <li>AI usage: tokens, estimated cost, time to first token, bookings that came from chat</li>
+      <li>System health: every process, the critical flows, backlogs and the assistant as ok / warn / bad with a reason, over 1, 6 or 24 hours, and the newest failures with a link to the trace</li>
       <li>Send an approved message to patients; user directory</li>
     </ul></div>
   </div>
@@ -196,7 +197,7 @@ flowchart LR
 
 <section id="modules">
   <h2>Modules inside Part A</h2>
-  <p class="lede">Eight modules. A module may not import another module's code — only its <code>public.py</code>,
+  <p class="lede">Nine modules. A module may not import another module's code — only its <code>public.py</code>,
   and only along edges declared in the meta-test. Everything else crosses as a Kafka event.</p>
   <div class="diagram"><pre class="mermaid">
 flowchart LR
@@ -208,13 +209,14 @@ flowchart LR
   NT["notifications"]
   AN["analytics"]
   CL["clinical<br/>notes · prescriptions<br/>orders · documents"]
+  MN["monitoring<br/>System health (reads Prometheus · Jaeger)"]
   SC -- "public.py" --> PT
   SC -- "public.py" --> PR
   SC -- "public.py" --> BL
   SC -- "public.py" --> NT
   NT -- "public.py" --> PT
   CL -- "public.py" --> SC
-  PT & PR -. "router auth" .-> ID
+  PT & PR & MN -. "router auth" .-> ID
   SC == "events" ==> NT
   SC == "events" ==> AN
   BL == "events" ==> NT
@@ -508,7 +510,7 @@ sequenceDiagram
   BG->>BG: tokens → Redis Stream · done → reports row + all events
   B->>AS: WatchReport(id, resume_from)
   AS-->>B: replay the stream, then follow until done
-  </pre><div class="caption">Every number comes from Part A; the model only writes the prose. The AI usage page reads per-turn records (tokens, cost estimate, first-token time) and gets names from Part A's <code>GET /users</code> in the admin's browser.</div></div>
+  </pre><div class="caption">Every number comes from Part A; the model only writes the prose. The AI usage page reads per-turn records (tokens, cost estimate, first-token time) and gets names from Part A's <code>GET /users</code> in the admin's browser. The <b>System health snapshot</b> report works the same way over <code>GET /monitoring/overview</code> and <code>/monitoring/failures</code>: the model explains the statuses and recent failures, and never says "healthy" when a source could not be read.</div></div>
 </section>
 
 <!-- ================================================================== SECURITY -->
@@ -553,6 +555,7 @@ flowchart LR
   P --> G["Grafana :3000<br/>4 dashboards · alert rules"]
   J --> G
   ADB[("analytics_daily<br/>read-only role")] --> G
+  P & J -->|"PromQL · error traces"| MON["part-a-api monitoring<br/>System health page · report"]
   </pre></div>
   <ul>
     <li><b>One trace per action, across processes:</b> the trace id rides in the outbox row, Kafka headers, Temporal headers, Celery task headers, and (Part B) gRPC metadata and Part A HTTP calls. A cancel is one trace across api → relay → consumers → worker → celery.</li>
@@ -560,6 +563,8 @@ flowchart LR
     <li><b>Dashboards:</b> Service overview, Async backbone (outbox age, consumer outcomes and lag, queue depths), Platform analytics (business figures), Assistant (turns, first-token time, tokens).</li>
     <li><b>Alerts:</b> outbox backlog older than a minute, an event dead-lettered, notifications in the DLQ, a consumer falling behind, API 5xx above 5%, booking workflows failing, assistant turns failing, slow first token.</li>
     <li><b>Model calls</b> are <code>llm chat</code> spans with the model name and token counts.</li>
+    <li><b>Liveness:</b> every process (beat, knowledge and assistant included) exports a <code>smarthealth.heartbeat</code> gauge holding its current Unix time; more than 60 s old means the process is down. Celery task outcomes (<code>smarthealth_celery_tasks_total</code>) and knowledge searches (<code>knowledge_searches_total</code>, duration) are metrics too.</li>
+    <li><b>System health (admin):</b> Part A's <code>monitoring</code> module asks Prometheus and Jaeger and answers <code>GET /monitoring/overview</code> and <code>/monitoring/failures</code> in plain statuses with a reason, cached 15 s; it answers 200 when a source is down and says which. The demo client's System health page and the assistant's snapshot report read it.</li>
   </ul>
   <div class="note">Business analytics (cancellation rate, bookings per day) are <i>not</i> telemetry: they come from Kafka into the <code>analytics_daily</code> table, exact and permanent. Telemetry tells you whether the machinery feeding them is healthy; a nightly reconcile checks the counts against the source tables.</div>
 </section>
@@ -708,6 +713,15 @@ flowchart LR
     <tr><td>Datadog, New Relic, Honeycomb</td><td>Managed, polished; per-host or per-event cost, data leaves your network</td></tr>
     <tr><td>ELK / OpenSearch</td><td>Strong log search; heavier to run</td></tr>
     <tr><td>Langfuse, LangSmith, Phoenix (LLM-specific)</td><td>Nice prompt/response views; we keep one stack and don't ship conversation text to a third party</td></tr>
+  </table></div>
+
+  <h3>Admin health view</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Option</th><th>Trade-off</th></tr>
+    <tr class="ours"><td><b>An in-app page over Prometheus + Jaeger</b> (ours, a Part A <code>monitoring</code> module)</td><td>Plain statuses with a reason, behind the normal admin login; the same endpoints feed the assistant's report; no new image. The API must know PromQL and Jaeger's UI query API (pinned to 1.62)</td></tr>
+    <tr><td>Embed Grafana panels</td><td>No new code; still graphs for engineers, behind a second login, with no status or reason</td></tr>
+    <tr><td>A separate ops service</td><td>Clean separation; a sixth image and chart on an 8 GB server for two read-only endpoints</td></tr>
+    <tr><td>The browser queries Prometheus and Jaeger directly</td><td>No backend change; PromQL in the client, a second login, and nothing the assistant could call with the admin's token</td></tr>
   </table></div>
 
   <h3>Service-to-service and the browser edge</h3>
@@ -914,7 +928,7 @@ flowchart LR
   <code>docker-compose.infra.yml</code>; change them for anything that is not your laptop.</p>
   <div class="table-wrap"><table>
     <tr><th>What</th><th>URL</th><th>Login</th><th>Look at</th></tr>
-    <tr><td>Demo website</td><td><a href="http://localhost:5173">localhost:5173</a></td><td>seeded users, e.g. <code>admin@medinova.example</code> / your seed password</td><td>Appointments, Assistant, Reports, AI usage</td></tr>
+    <tr><td>Demo website</td><td><a href="http://localhost:5173">localhost:5173</a></td><td>seeded users, e.g. <code>admin@medinova.example</code> / your seed password</td><td>Appointments, Assistant, Reports, AI usage, System health</td></tr>
     <tr><td>API · Swagger</td><td><a href="http://localhost:8000/docs">localhost:8000/docs</a></td><td>log in via <code>POST /auth/login</code>, then Authorize</td><td>Every endpoint, try it live</td></tr>
     <tr><td>Temporal UI</td><td><a href="http://localhost:8080">localhost:8080</a></td><td>—</td><td><code>booking-&lt;id&gt;</code>, <code>visit-&lt;id&gt;</code>, <code>cancel-&lt;id&gt;</code> histories</td></tr>
     <tr><td>Grafana</td><td><a href="http://localhost:3000">localhost:3000</a></td><td><code>admin</code> / <code>smarthealth</code> (anonymous viewing on)</td><td>4 dashboards, alert rules</td></tr>

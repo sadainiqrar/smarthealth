@@ -119,6 +119,7 @@ rest — the request paths, every flow, the generated event map and schemas.
   - [2.8 POST /appointments and GET /appointments/{id}](#28-post-appointments-and-get-appointmentsid)
   - [2.9 POST /appointments/{id}/check-in, and the other visit actions](#29-post-appointmentsidcheck-in-and-the-other-visit-actions)
   - [2.10 GET /appointments — a patient's own list, and staff's filtered one](#210-get-appointments--a-patients-own-list-and-staffs-filtered-one)
+  - [2.11 GET /monitoring/overview and GET /monitoring/failures](#211-get-monitoringoverview-and-get-monitoringfailures)
 - [3. Event flows](#3-event-flows)
   - [3.1 The three-way split](#31-the-three-way-split)
   - [3.2 The booking workflow](#32-the-booking-workflow)
@@ -166,7 +167,7 @@ reason the internal layering is stricter than a single-process application would
 
 Inside the deployable, modules are grouped **by domain, not by technical layer** —
 `identity`, `patients`, `providers`, `scheduling` (Weeks 1-2), `billing`, `notifications`,
-`analytics` (Week 3) and `clinical` (Week 4) — so a feature's router, schemas, service and
+`analytics` (Week 3), `clinical` (Week 4) and `monitoring` (System health, PRD D-55) — so a feature's router, schemas, service and
 models change together and live together
 (`docs/superpowers/specs/2026-09-02-week1-foundation-design.md` §4). Cross-cutting
 infrastructure that is not a domain lives beside them: `app/core`, `app/db`, `app/api`, and
@@ -314,6 +315,7 @@ clinical.router                        → identity.{deps, models, security},
                                          patients.public, providers.public, scheduling.public
 notifications.router                   → identity.{deps, models, security},
                                          providers.public, scheduling.public
+monitoring.router                      → identity.{deps, models, security}
 identity.router                        → patients.public, providers.public
 scheduling.activities                  → patients.public, providers.public,
                                          billing.public, notifications.public
@@ -322,10 +324,10 @@ analytics.tasks                        → scheduling.public
 notifications.public                   → patients.public
 ```
 
-Thirty-eight edges, every one declared as an explicit `(importer, imported)` pair, with a
+Forty-one edges, every one declared as an explicit `(importer, imported)` pair, with a
 comment saying why, in `CROSS_MODULE_ALLOWED` (`tests/meta/test_import_boundaries.py`).
-Eighteen are auth at the router layer: `require_role`, `UserRole`, `TokenClaims`, imported
-by the six routers that are not identity's own. The other twenty go through exactly one kind
+Twenty-one are auth at the router layer: `require_role`, `UserRole`, `TokenClaims`, imported
+by the seven routers that are not identity's own. The other twenty go through exactly one kind
 of file, the owning module's published interface — `app/modules/<x>/public.py` (PRD D-15) —
 which returns ids, flags or plain dataclasses and raises domain errors, never an ORM object.
 Six modules publish one:
@@ -350,7 +352,7 @@ allowlist or not.
 
 **Two rules, not one, and they are asymmetric.**
 `test_modules_do_not_import_each_other` takes an allowlist (`CROSS_MODULE_ALLOWED`, the
-thirty-eight pairs above) because a router, an activity, a task or a published interface is a
+forty-one pairs above) because a router, an activity, a task or a published interface is a
 composition point and a declared exception there is legitimate. `test_the_service_layer_never_crosses_a_module_boundary` takes none: a
 `service.py`, `models.py` or `schemas.py` edge is always a bug, because the service layer
 is the unit of extraction and the models are what it owns. An allowlist entry for a service
@@ -583,6 +585,84 @@ from the operational tables.
 | `consumers.py` | `analytics.daily-rollup`: `appointments.booked`, `.cancelled`, `.no_show` and `visits.completed` into `analytics_daily` |
 | `router.py` | `GET /analytics/summary`, `/timeseries` and `/utilisation` (admin and front desk). Total Patients is read through `patients.public`; utilisation is the slot inventory through `scheduling.public` |
 | `tasks.py` | `analytics.reconcile`, nightly: recomputes the last seven days from `scheduling.public.daily_counts` and reports each disagreeing cell as `smarthealth_analytics_drift` and a log line. It reports, never overwrites (an in-flight event would be double-counted) |
+
+#### `app/modules/monitoring` — System health (PRD D-55)
+
+**Responsibility:** answer an admin's "is it working, and what failed?" in plain statuses,
+from the observability stack rather than from the operational tables. It owns no table and
+writes nothing. Spec: `docs/superpowers/specs/2026-11-17-system-health-design.md`.
+
+| File | Responsibility |
+| --- | --- |
+| `client.py` | `PrometheusClient` (`/api/v1/query`) and `JaegerClient` (`/api/traces` with `tags={"error":"true"}`, and `/api/services` as a ping), 3 s timeout each; any transport or HTTP error is `SourceUnavailable` |
+| `queries.py` | Every PromQL string: the eight processes by heartbeat (`COMPONENTS`), RabbitMQ and Kafka up, the nine flows (`FLOWS`: five Temporal workflows by registered type, two Celery tasks, knowledge searches, assistant turns), the five backlogs and the AI figures. `every_query()` lists them all for the T3 test |
+| `rules.py` | `Verdict(status, reason)` and the thresholds below; pure |
+| `traces.py` | A Jaeger trace → `Failure`: root operation and service, first failed span, its `exception.message` (or status description), and a relative `/jaeger/trace/<id>` link; pure |
+| `service.py` | `MonitoringService`: every query in parallel, the rules applied, the answer cached 15 s |
+| `schemas.py`, `router.py` | The response models; `GET /monitoring/overview` and `GET /monitoring/failures`, admin only |
+
+**Sources.** Prometheus at `SMARTHEALTH_PROMETHEUS_URL` and Jaeger's query service at
+`SMARTHEALTH_JAEGER_QUERY_URL` (compose `http://prometheus:9090`, `http://jaeger:16686`; the
+chart adds Jaeger's `/jaeger` base path). Either left empty is reported `not_configured`.
+`create_app` builds one `MonitoringService` in the lifespan (`app.state.monitoring`) and
+closes its HTTP client on shutdown.
+
+**Endpoints.** `GET /monitoring/overview?hours=1|6|24` (default 24) answers `sources`
+(`ok`/`unavailable`/`not_configured` for each), `components` (each process, plus RabbitMQ
+and Kafka), `flows` (runs, failed, failure share, p95 where a histogram exists, and the run
+count of the window before), `backlogs` and `ai`. `GET /monitoring/failures?hours=&limit=`
+(`limit` 1–50, default 20) asks Jaeger for error traces of the six traced services, reduces
+each to a `Failure`, drops duplicates and returns the newest. Any other `hours` is a 422.
+The windows stop at 24 hours because Prometheus keeps two days. Every item carries a
+`status` — `ok`, `warn`, `bad`, `idle` (nothing ran) or `unknown` (not measured) — and a
+`reason` in words.
+
+**Thresholds** (`rules.py`; every threshold is *at or above*, so a value equal to `warn` is
+`warn`):
+
+| Figure | warn | bad |
+| --- | --- | --- |
+| Heartbeat age (a process) | — | ≥ 60 s, or no heartbeat at all |
+| Failure share of a flow (needs ≥ 5 runs; fewer is `ok`) | ≥ 5 % | ≥ 20 % |
+| Oldest unpublished outbox event | ≥ 60 s | ≥ 300 s |
+| Largest consumer-group lag | ≥ 100 events | ≥ 1000 events |
+| Largest RabbitMQ queue (ready, DLQs excluded) | ≥ 100 messages | ≥ 1000 messages |
+| Events dead-lettered in the window; notifications in the DLQ | ≥ 1 | ≥ 10 |
+| Assistant p95 time to first token | ≥ 5 s | ≥ 15 s |
+| Knowledge searches with no result | ≥ 25 % | ≥ 50 % |
+
+RabbitMQ or Kafka not reporting is `bad`. The AI card is the worst of its turn failure share,
+first-token p95 and no-result share, and `idle` when there were no turns; the LLM provider has
+no tile of its own and is judged by the assistant's error share.
+
+**Partial failure, and the cache.** A query that fails blanks only the cards that use it
+(`unknown`, "metrics unavailable"); Prometheus is `unavailable` only when nothing answered.
+When Jaeger is down the overview still answers and `failures` returns `source: unavailable`
+with an empty list; one malformed trace is skipped, not fatal. Neither endpoint answers 5xx
+because a source is down. Answers are cached in process for 15 s per window (and limit), per
+replica: the contract tier runs without Redis, and one admin page does not need a shared cache.
+
+**Imports.** `monitoring.router` takes only the router-layer auth pairs onto
+`identity.{deps, models, security}` (§1.3); `service.py`, `queries.py`, `rules.py` and
+`traces.py` import no other module and nothing from the HTTP layer. It sees other modules
+only as metrics and traces, never their code or tables.
+
+**The heartbeat rule.** A process counts as alive while `time() - smarthealth_heartbeat_seconds`
+is under 60 s for its `job` (`smarthealth/<service.name>`). A process that should appear must
+run its telemetry setup (`setup_telemetry` in Part A, the service's own `telemetry.py` in Part
+B), which registers the gauge, and carries its own `service.instance.id` (host and pid), so two
+processes never share one series. A new process also needs a row in `queries.COMPONENTS` (§3.8).
+
+**Who reads it.** The demo client's **System health** page (`/health`, admin,
+`frontend/src/pages/Health.tsx`) polls both endpoints every 30 s with a 1 / 6 / 24 h switch;
+the assistant's **System health snapshot** report (§6.4) reads them with the admin's own
+token; `scripts/k3d_smoke.py` and `scripts/aws_check.sh` require every component `ok`.
+Tests: T0 `test_monitoring_rules.py`, `_traces.py`, `_client.py`, `_service.py`, plus
+`test_heartbeat.py` and `test_task_metrics.py` for the instrumentation; T1
+`test_monitoring_contract.py` (fake sources); T3 `test_monitoring_sources.py` proves every
+query is valid PromQL on the real Prometheus and reads an error trace back from the real
+Jaeger (a misspelt metric name is still valid PromQL; `tests/meta/test_monitoring_flows.py`
+and the smoke runs catch those).
 
 #### `app/modules/clinical` — the clinical record (Week 4)
 
@@ -1258,6 +1338,48 @@ rows rather than the session's identity map.
 read (`_read`, `router.py:99`) asks `service.slot_starts_at`, one extra query, and returns
 `None` for an appointment with no slot. Without it a client would need a second call per
 row to say *when*.
+
+### 2.11 GET /monitoring/overview and GET /monitoring/failures
+
+A read with no database at all: no PostgreSQL, no Mongo, no commit. Admin only.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Admin client
+    participant R as monitoring.router
+    participant A as require_role
+    participant S as MonitoringService
+    participant P as Prometheus
+    participant J as Jaeger
+
+    C->>R: GET /monitoring/overview?hours=1|6|24
+    R->>A: require_role(admin)
+    R->>S: overview(hours)
+    alt cached for this window (15 s)
+        S-->>R: the cached Overview
+    else
+        par every PromQL query
+            S->>P: GET /api/v1/query
+        and
+            S->>J: GET /api/services (ping)
+        end
+        S->>S: rules: a status and reason per card; a failed query blanks only its cards
+    end
+    R-->>C: 200 Overview (sources, components, flows, backlogs, ai)
+
+    C->>R: GET /monitoring/failures?hours&limit
+    R->>A: require_role(admin)
+    R->>S: failures(hours, limit)
+    par per traced service
+        S->>J: GET /api/traces?service&tags={"error":"true"}
+    end
+    S->>S: each trace to root operation, first failed step, message; dedupe; newest first
+    R-->>C: 200 FailuresRead (source ok | unavailable | not_configured)
+```
+
+Both answer 200 when a source is down; `sources` (or `source`) says which. Details in §1.4,
+`app/modules/monitoring`.
 
 ## 3. Event flows
 
@@ -2198,6 +2320,10 @@ notifications, reminders and document extraction visible beyond queue depth; and
 knowledge service counts each `Search` by outcome with its duration
 (`knowledge_searches_total{outcome=hit|no_results|error}`,
 `knowledge_search_duration_milliseconds`) — retrieval previously had traces only.
+Grafana shows them: *Service overview* has "Seconds since each process was last seen",
+*Async backbone* "Celery task outcomes", and *Assistant* "Knowledge searches by outcome" and
+"Knowledge search p95 (ms)". The admin's System health page reads the same series, and
+Jaeger's error traces, through `app/modules/monitoring` (§1.4, §2.11).
 
 **Known limits, stated plainly.**
 
@@ -2435,14 +2561,22 @@ stream after it. `Cancel` sets the turn's cancel flag to stop generating.
 
 ### 6.4 Reports
 
-`StartReport` (admin) creates a record and starts a task, returning a job id at once; four
-kinds exist — weekly and monthly operations reports, a department utilisation report, and an
-engagement summary (`reports.py:KINDS`). The task fetches **every figure from Part A** (this
+`StartReport` (admin) creates a record and starts a task, returning a job id at once; five
+kinds exist — weekly and monthly operations reports, a department utilisation report, an
+engagement summary, and a System health snapshot (`reports.py:KINDS`). The task fetches **every figure from Part A** (this
 period, the one before, daily series; `/analytics/utilisation` for utilisation), emits them as
 cards, then streams the model's narrative of those figures only — with no model the narrative
 is a plain statement of the same figures — appending each event to `report-<id>` in Redis.
 `WatchReport` replays that stream and follows it until done, from any tab and after a dropped
 connection; a finished report is served from its row in `assistant-db`.
+
+**The System health snapshot** (`system_health`, D-55) reads Part A's
+`GET /monitoring/overview?hours=24` and `GET /monitoring/failures` with the admin's own token,
+emits a "Needs attention" card (bad first) and a "Recent failures" card (up to five), and
+the model only phrases those statuses and reasons. It never gives a false all-clear: if a
+source is unreachable or any item is `unknown`, the card and the text say it can't tell and
+name what was not visible. With no model, a fixed template states the same facts. The
+failures' messages are exception text and go to the LLM provider (PRD R-36).
 
 **As built, a report is an asyncio task in the assistant process** (D-36), not a separate
 worker as spec 9.1 named: at start-up the service marks any report still `running` as
