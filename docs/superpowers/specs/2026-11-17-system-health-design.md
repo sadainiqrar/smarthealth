@@ -99,7 +99,9 @@ three declared pairs in the import-boundary meta-test, like every other router.
 | `schemas.py` | Pydantic response models |
 | `router.py` | `GET /monitoring/overview?hours=` and `GET /monitoring/failures?hours=&limit=`; `require_role(admin)` |
 
-`hours` is one of 1, 24, 168 (default 24). `limit` is 1–50 (default 20).
+`hours` is one of 1, 6, 24 (default 24). `limit` is 1–50 (default 20). No 7-day window:
+Prometheus keeps two days here, and each window plus the one before it must fit inside that.
+The previous-window figure is `null` when Prometheus has no data that far back.
 
 ### 4.1 `GET /monitoring/overview`
 
@@ -192,7 +194,7 @@ Every threshold is *at or above*: a value equal to `warn` is `warn`.
 ## 5. Frontend: `frontend/src/pages/Health.tsx`
 
 - An admin-only nav item, **System health**, beside AI usage.
-- Range buttons: 1 hour / 24 hours / 7 days.
+- Range buttons: 1 hour / 6 hours / 24 hours.
 - Auto-refresh every 30 s.
 - Sections, in this order:
   1. **Status strip:** one tile per component, colour plus reason.

@@ -2295,8 +2295,8 @@ import {
 
 const RANGES = [
   { hours: 1, label: "1 hour" },
+  { hours: 6, label: "6 hours" },
   { hours: 24, label: "24 hours" },
-  { hours: 168, label: "7 days" },
 ];
 
 function Dot({ status }: { status: Status }) {
