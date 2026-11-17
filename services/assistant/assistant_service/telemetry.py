@@ -8,6 +8,8 @@ sides: the server extracts the caller's trace context from metadata, the client 
 
 from __future__ import annotations
 
+import time
+
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -15,6 +17,7 @@ from opentelemetry.instrumentation.grpc import (
     GrpcAioInstrumentorClient,
     GrpcAioInstrumentorServer,
 )
+from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -49,8 +52,16 @@ def setup(endpoint: str, environment: str) -> TracerProvider | None:
     # Metrics (metrics.py) on the same resource, every 15 s, for the Assistant dashboard.
     reader = PeriodicExportingMetricReader(
         OTLPMetricExporter(endpoint=f"{endpoint}/v1/metrics"), export_interval_millis=15_000)
-    metrics.set_meter_provider(MeterProvider(resource=provider.resource,
-                                             metric_readers=[reader]))
+    meter_provider = MeterProvider(resource=provider.resource, metric_readers=[reader])
+    metrics.set_meter_provider(meter_provider)
+
+    def beat(_options: CallbackOptions):
+        yield Observation(time.time())
+
+    # The heartbeat (system health spec §3): alive while this keeps moving.
+    meter_provider.get_meter("assistant.heartbeat").create_observable_gauge(
+        "smarthealth.heartbeat", callbacks=[beat], unit="s",
+        description="Unix time at the process's last metric export: its liveness")
     GrpcAioInstrumentorServer(filter_=TRACED).instrument()
     GrpcAioInstrumentorClient().instrument()
     return provider
