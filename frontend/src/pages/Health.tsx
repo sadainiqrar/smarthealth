@@ -1,7 +1,7 @@
 // System health, for admin: is everything running, what failed recently and why, and how
 // the AI is doing -- Part A's GET /monitoring/* in plain words (system health spec §5).
 
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowDownIcon, ArrowUpIcon, FileTextIcon, MinusIcon } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
@@ -22,13 +22,18 @@ const RANGES = [
 ];
 
 function Dot({ status }: { status: Status }) {
-  return <span className={`inline-block size-2.5 shrink-0 rounded-full ${TONE[status]}`} aria-hidden />;
+  return (
+    <>
+      <span className={`inline-block size-2.5 shrink-0 rounded-full ${TONE[status]}`} aria-hidden />
+      <span className="sr-only">{statusLabel(status)}</span>
+    </>
+  );
 }
 
 function Pill({ status }: { status: Status }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-      <Dot status={status} /> {statusLabel(status)}
+      <span className={`inline-block size-2.5 shrink-0 rounded-full ${TONE[status]}`} aria-hidden /> {statusLabel(status)}
     </span>
   );
 }
@@ -40,24 +45,30 @@ function when(iso: string): string {
 export default function Health() {
   const [hours, setHours] = useState(24);
   const [starting, setStarting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
   const navigate = useNavigate();
   const overview = useQuery({
     queryKey: ["monitoring", "overview", hours],
     queryFn: () => api<Overview>(`/monitoring/overview?hours=${hours}`),
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
   });
   const failures = useQuery({
     queryKey: ["monitoring", "failures", hours],
     queryFn: () => api<Failures>(`/monitoring/failures?hours=${hours}&limit=20`),
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
   });
   const data = overview.data;
 
   async function writeReport() {
     setStarting(true);
+    setReportError(null);
     try {
       const job = await assistant.startReport({ kind: "system_health" });
       navigate(`/reports?report=${encodeURIComponent(job.reportId)}`);
+    } catch (e) {
+      setReportError(e instanceof Error ? e.message : "unknown error");
     } finally {
       setStarting(false);
     }
@@ -91,12 +102,13 @@ export default function Health() {
         </div>
       </div>
 
+      {reportError && <p className="text-sm text-destructive">Couldn't start the report: {reportError}</p>}
       {overview.isPending && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Checking…</div>
       )}
       {overview.isError && <p className="text-sm text-destructive">Couldn't load health: {overview.error.message}</p>}
       {unseen.length > 0 && (
-        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+        <p className="rounded-md border border-amber-400 bg-muted px-3 py-2 text-sm text-foreground">
           Can't see {unseen.join(" or ")} right now — those cards say "Can't tell" until it is back.
         </p>
       )}
@@ -137,7 +149,9 @@ export default function Health() {
                         <TableCell className="text-right tabular-nums">
                           <span className="inline-flex items-center gap-1">
                             {f.total ?? "—"}
-                            {t === "up" ? <ArrowUpIcon className="size-3" /> : t === "down" ? <ArrowDownIcon className="size-3" /> : <MinusIcon className="size-3 opacity-40" />}
+                            {t === "up" ? <ArrowUpIcon className="size-3" role="img" aria-label="more than the window before" />
+                              : t === "down" ? <ArrowDownIcon className="size-3" role="img" aria-label="fewer than the window before" />
+                              : <MinusIcon className="size-3 opacity-40" role="img" aria-label="same as the window before" />}
                           </span>
                         </TableCell>
                         <TableCell className="text-right tabular-nums">{f.failed ?? "—"}{f.failure_pct !== null && f.failed ? ` (${f.failure_pct}%)` : ""}</TableCell>
@@ -157,8 +171,14 @@ export default function Health() {
               <CardDescription>Newest first, from the traces. "View trace" opens Jaeger (tools login).</CardDescription>
             </CardHeader>
             <CardContent className="overflow-x-auto">
-              {failures.data?.source !== "ok" ? (
-                <p className="text-sm text-muted-foreground">Traces are not visible right now.</p>
+              {failures.isPending ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground"><Spinner /> Loading failures…</div>
+              ) : failures.isError ? (
+                <p className="text-sm text-destructive">Couldn't load failures: {failures.error.message}</p>
+              ) : failures.data.source === "not_configured" ? (
+                <p className="text-sm text-muted-foreground">Traces are not configured here.</p>
+              ) : failures.data.source !== "ok" ? (
+                <p className="text-sm text-muted-foreground">Can't reach the traces right now (Jaeger).</p>
               ) : failures.data.failures.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No failures in this window.</p>
               ) : (
@@ -172,7 +192,8 @@ export default function Health() {
                         <TableCell className="whitespace-nowrap">{when(f.at)}</TableCell>
                         <TableCell><div className="font-medium">{f.operation}</div><div className="text-xs text-muted-foreground">{f.service}</div></TableCell>
                         <TableCell><div>{f.failed_step}</div><div className="text-xs text-destructive">{f.message}</div></TableCell>
-                        <TableCell><a className="text-sm underline" href={f.trace_path} target="_blank" rel="noreferrer">View trace</a></TableCell>
+                        <TableCell><a className="text-sm underline" href={f.trace_path} target="_blank" rel="noreferrer"
+                             aria-label={`View trace for ${f.operation} at ${when(f.at)} (opens in a new tab)`}>View trace</a></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>

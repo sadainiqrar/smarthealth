@@ -54,5 +54,5 @@ export function unseenSources(sources: Overview["sources"]): string[] {
 /** Tailwind classes per status: dot colour and badge tone. */
 export const TONE: Record<Status, string> = {
   ok: "bg-emerald-500", warn: "bg-amber-500", bad: "bg-red-500",
-  idle: "bg-slate-400 dark:bg-slate-500", unknown: "bg-slate-300 dark:bg-slate-600",
+  idle: "bg-slate-400", unknown: "bg-slate-300",
 };

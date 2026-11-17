@@ -50,6 +50,7 @@ export default function Reports() {
   const selected = params.get("report");
   const client = useQueryClient();
   const [starting, setStarting] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const reports = useQuery({
     queryKey: REPORTS_KEY,
     queryFn: async () => (await assistant.listReports({ limit: 30 })).reports,
@@ -60,10 +61,13 @@ export default function Reports() {
 
   async function start(kind: string) {
     setStarting(kind);
+    setStartError(null);
     try {
       const job = await assistant.startReport({ kind });
       refresh();
       setParams({ report: job.reportId });
+    } catch (e) {
+      setStartError(e instanceof Error ? e.message : "unknown error");
     } finally {
       setStarting(null);
     }
@@ -92,6 +96,8 @@ export default function Reports() {
           ))}
         </div>
       </div>
+
+      {startError && <p className="text-sm text-destructive">Couldn't start the report: {startError}</p>}
 
       <div className="grid gap-5 md:grid-cols-[15rem_1fr]">
         <nav className="flex flex-col gap-1">
