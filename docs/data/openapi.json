@@ -1,6 +1,103 @@
 {
   "components": {
     "schemas": {
+      "AiHealth": {
+        "properties": {
+          "error_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Pct"
+          },
+          "errors": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Errors"
+          },
+          "first_token_p95_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Token P95 Seconds"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "retrieval_no_results_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval No Results Pct"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "idle",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens"
+          },
+          "turns": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turns"
+          }
+        },
+        "required": [
+          "turns",
+          "errors",
+          "error_pct",
+          "first_token_p95_seconds",
+          "retrieval_no_results_pct",
+          "tokens",
+          "status",
+          "reason"
+        ],
+        "title": "AiHealth",
+        "type": "object"
+      },
       "AppointmentRead": {
         "properties": {
           "clinic_id": {
@@ -132,6 +229,53 @@
         "title": "AppointmentStatus",
         "type": "string"
       },
+      "Backlog": {
+        "properties": {
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "idle",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "value",
+          "status",
+          "reason"
+        ],
+        "title": "Backlog",
+        "type": "object"
+      },
       "BookingAccepted": {
         "description": "202: the booking is pending. Poll GET /appointments/{appointment_id}.",
         "properties": {
@@ -196,6 +340,41 @@
           "reason"
         ],
         "title": "CancelRequest",
+        "type": "object"
+      },
+      "Component": {
+        "properties": {
+          "job": {
+            "title": "Job",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "idle",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "job",
+          "status",
+          "reason"
+        ],
+        "title": "Component",
         "type": "object"
       },
       "DependencyStatus": {
@@ -375,6 +554,176 @@
           "reviewed"
         ],
         "title": "DocumentText",
+        "type": "object"
+      },
+      "FailureRead": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "failed_step": {
+            "title": "Failed Step",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "trace_path": {
+            "title": "Trace Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "trace_id",
+          "at",
+          "service",
+          "operation",
+          "failed_step",
+          "message",
+          "trace_path"
+        ],
+        "title": "FailureRead",
+        "type": "object"
+      },
+      "FailuresRead": {
+        "properties": {
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/FailureRead"
+            },
+            "title": "Failures",
+            "type": "array"
+          },
+          "source": {
+            "enum": [
+              "ok",
+              "unavailable",
+              "not_configured"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "window_hours": {
+            "title": "Window Hours",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_hours",
+          "source",
+          "failures"
+        ],
+        "title": "FailuresRead",
+        "type": "object"
+      },
+      "FlowRead": {
+        "properties": {
+          "failed": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed"
+          },
+          "failure_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Pct"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "p95_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95 Seconds"
+          },
+          "previous_total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Total"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "idle",
+              "unknown"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total"
+          }
+        },
+        "required": [
+          "key",
+          "label",
+          "total",
+          "failed",
+          "failure_pct",
+          "p95_seconds",
+          "previous_total",
+          "status",
+          "reason"
+        ],
+        "title": "FlowRead",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -800,6 +1149,57 @@
           "created_at"
         ],
         "title": "OrderRead",
+        "type": "object"
+      },
+      "Overview": {
+        "properties": {
+          "ai": {
+            "$ref": "#/components/schemas/AiHealth"
+          },
+          "backlogs": {
+            "items": {
+              "$ref": "#/components/schemas/Backlog"
+            },
+            "title": "Backlogs",
+            "type": "array"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/Component"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "flows": {
+            "items": {
+              "$ref": "#/components/schemas/FlowRead"
+            },
+            "title": "Flows",
+            "type": "array"
+          },
+          "generated_at": {
+            "format": "date-time",
+            "title": "Generated At",
+            "type": "string"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/Sources"
+          },
+          "window_hours": {
+            "title": "Window Hours",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_hours",
+          "generated_at",
+          "sources",
+          "components",
+          "flows",
+          "backlogs",
+          "ai"
+        ],
+        "title": "Overview",
         "type": "object"
       },
       "Page_AppointmentRead_": {
@@ -1647,6 +2047,34 @@
           "ends_at"
         ],
         "title": "SlotRead",
+        "type": "object"
+      },
+      "Sources": {
+        "properties": {
+          "jaeger": {
+            "enum": [
+              "ok",
+              "unavailable",
+              "not_configured"
+            ],
+            "title": "Jaeger",
+            "type": "string"
+          },
+          "prometheus": {
+            "enum": [
+              "ok",
+              "unavailable",
+              "not_configured"
+            ],
+            "title": "Prometheus",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prometheus",
+          "jaeger"
+        ],
+        "title": "Sources",
         "type": "object"
       },
       "SummaryRead": {
@@ -3392,6 +3820,130 @@
         "summary": "Health",
         "tags": [
           "system"
+        ]
+      }
+    },
+    "/monitoring/failures": {
+      "get": {
+        "description": "The newest error traces across the services, each reduced to its root operation,\nfirst failed step and message, with a link to the trace.",
+        "operationId": "failures_monitoring_failures_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Look-back window in hours: 1, 24 or 168",
+            "in": "query",
+            "name": "hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "description": "Look-back window in hours: 1, 24 or 168",
+              "enum": [
+                1,
+                24,
+                168
+              ],
+              "title": "Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FailuresRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Failures",
+        "tags": [
+          "monitoring"
+        ]
+      }
+    },
+    "/monitoring/overview": {
+      "get": {
+        "description": "Every process's liveness, the critical flows, backlogs and AI health over the last\n`hours` (1, 24 or 168), in plain statuses with a reason each.",
+        "operationId": "overview_monitoring_overview_get",
+        "parameters": [
+          {
+            "description": "Look-back window in hours: 1, 24 or 168",
+            "in": "query",
+            "name": "hours",
+            "required": false,
+            "schema": {
+              "default": 24,
+              "description": "Look-back window in hours: 1, 24 or 168",
+              "enum": [
+                1,
+                24,
+                168
+              ],
+              "title": "Hours",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Overview",
+        "tags": [
+          "monitoring"
         ]
       }
     },
