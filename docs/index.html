@@ -74,7 +74,7 @@
     <div class="stat"><b id="n-workflows">—</b><span>Temporal workflows</span></div>
     <div class="stat"><b id="n-tasks">—</b><span>Celery tasks</span></div>
     <div class="stat"><b>17</b><span>guided assistant flows</span></div>
-    <div class="stat"><b>1361</b><span>fast tests passing</span></div>
+    <div class="stat"><b>1640</b><span>fast tests passing (+ 289 against real containers)</span></div>
   </div>
   <div class="note"><b>Three rules hold the design together.</b> (1) An appointment is <code>confirmed</code> only
   after the whole booking workflow succeeds — any failure leaves no held slot and no half-booking. (2) Everything
@@ -561,7 +561,7 @@ flowchart LR
     <li><b>One trace per action, across processes:</b> the trace id rides in the outbox row, Kafka headers, Temporal headers, Celery task headers, and (Part B) gRPC metadata and Part A HTTP calls. A cancel is one trace across api → relay → consumers → worker → celery.</li>
     <li><b>Logs</b> are JSON, every line carrying <code>trace_id</code>/<code>span_id</code> — find a trace, grep its logs.</li>
     <li><b>Dashboards:</b> Service overview, Async backbone (outbox age, consumer outcomes and lag, queue depths), Platform analytics (business figures), Assistant (turns, first-token time, tokens).</li>
-    <li><b>Alerts:</b> outbox backlog older than a minute, an event dead-lettered, notifications in the DLQ, a consumer falling behind, API 5xx above 5%, booking workflows failing, assistant turns failing, slow first token.</li>
+    <li><b>Alerts:</b> outbox backlog older than a minute, an event dead-lettered, notifications in the DLQ, a consumer falling behind, API 5xx above 5%, bookings failing (any cause), assistant turns failing, slow first token.</li>
     <li><b>Model calls</b> are <code>llm chat</code> spans with the model name and token counts.</li>
     <li><b>Liveness:</b> every process (beat, knowledge and assistant included) exports a <code>smarthealth.heartbeat</code> gauge holding its current Unix time; 60 s or older means the process is down. Celery task outcomes (<code>smarthealth_celery_tasks_total</code>) and knowledge searches (<code>knowledge_searches_total</code>, duration) are metrics too.</li>
     <li><b>System health (admin):</b> Part A's <code>monitoring</code> module asks Prometheus and Jaeger and answers <code>GET /monitoring/overview</code> and <code>/monitoring/failures</code> in plain statuses with a reason, cached 15 s; it answers 200 when a source is down and says which. The demo client's System health page and the assistant's snapshot report read it.</li>
@@ -966,7 +966,7 @@ docker compose -f docker-compose.infra.yml exec kafka kafka-consumer-groups --bo
     <tr><td>integration</td><td>Real Postgres constraints, Kafka round trips, Celery, Part B over Kafka</td><td>The compose test stack (offset ports)</td></tr>
     <tr><td>meta</td><td>Architecture rules: import boundaries, registries, idempotent consumers, slot writes, compose settings, this site's data</td><td>The source tree</td></tr>
   </table></div>
-<pre><code>python -m pytest -m "not docker"   # fast: unit, contract, workflow, meta (1361 passing)
+<pre><code>python -m pytest -m "not docker"   # fast: unit, contract, workflow, meta (1640 passing)
 python -m pytest -m docker         # integration, against the compose test stack
 python -m ruff check app tests services</code></pre>
   <p>Test cases are also catalogued as YAML under <code>tests/cases/</code>, traced to PRD requirement ids. Tests never

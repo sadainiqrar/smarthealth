@@ -33,8 +33,8 @@ stack, and never a store:
   drafts staff approve, background reports, and per-user usage — see [The assistant](#the-assistant-part-b).
 
 A demo web client ([Frontend](#frontend)) sits on top. See [API surface](#api-surface) for
-Part A's endpoints. The fast suite (`python -m pytest -m "not docker"`) is 1361 passed,
-2 skipped; the docker lane runs against the compose test stack.
+Part A's endpoints. The fast suite (`python -m pytest -m "not docker"`) is 1640 passed,
+3 skipped, and the docker lane, which runs against the compose test stack, 289 passed (both measured 2026-11-18).
 
 ## Run it
 

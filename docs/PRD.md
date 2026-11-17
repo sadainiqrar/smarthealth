@@ -308,7 +308,7 @@ requirement id with the cases covering it; `--write-catalog` regenerates the tra
 | `PART-A-NFR-8` | 9 — `aut-003` … `aut-007`, `cln-002`, `kn-002`, `pb-003`, `sys-010` |
 | `PART-A-OBS-1` | 6 — `sys-001`, `sys-002`, `sys-003`, `sys-006`, `sys-007`, `sys-009` |
 | `PART-A-OBS-2` | 4 — `evt-005`, `obs-001`, `obs-002`, `obs-003` |
-| `PART-A-OBS-3` | 4 — `anl-002`, `obs-001`, `obs-003`, `pa-monitoring-001` |
+| `PART-A-OBS-3` | 5 — `anl-002`, `obs-001`, `obs-003`, `pa-monitoring-001`, `pa-monitoring-002` |
 | `PART-A-OBS-4` | 2 — `sys-005`, `sys-012` (the services stay independent) |
 | `PART-B-FR-1` | 5 — `cln-003`, `kn-001`, `kn-003`, `pb-001`, `pb-004` |
 | `PART-B-FR-2` | 12 — `ai-001` … `ai-005`, `kn-001`, `kn-002`, `pb-002`, `pb-005`, `pb-006`, `pb-007`, `pb-012` |
@@ -318,8 +318,8 @@ requirement id with the cases covering it; `--write-catalog` regenerates the tra
 | `PART-B-NFR-1` | 3 — `pb-002`, `pb-006`, `pb-010` |
 | `PART-B-NFR-2` | 1 — `pb-012` |
 
-106 cases, as of 2026-11-17 (a case naming two requirements is counted under each, so the
-rows sum to 144). Ids with no case: `PART-A-FR-1.1`, `1.4` and `1.6` (covered by the
+107 cases, as of 2026-11-18 (a case naming two requirements is counted under each, so the
+rows sum to 145). Ids with no case: `PART-A-FR-1.1`, `1.4` and `1.6` (covered by the
 `PART-A-FR-1` cases — patient registration in `pat-*`, the CLI account cases `ops-001` and `ops-004`, and the
 audit assertions in `ops-004` and `prv-001-admin-registers-a-provider` — rather than traced
 separately); `PART-A-FR-1.5` and `PART-A-FR-2.1`
