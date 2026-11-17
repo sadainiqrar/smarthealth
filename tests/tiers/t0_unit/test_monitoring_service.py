@@ -153,6 +153,16 @@ async def test_the_previous_window_has_no_fallback_so_unanswered_means_no_compar
     assert "vector(0)" in queries.flow_total(BOOKING, W)
 
 
+def test_the_previous_workflow_window_survives_a_missing_failed_series():
+    """Temporal creates `temporal_workflow_failed_total{workflow_type=...}` only at the
+    first failure; `completed + failed` would then be empty. One selector over both
+    counters answers whenever either exists (proven against Prometheus in T3)."""
+    previous = queries.flow_total(BOOKING, W, W)
+    assert " + " not in previous
+    assert '__name__=~"temporal_workflow_(completed|failed)_total"' in previous
+    assert f'workflow_type="{BOOKING.name}"' in previous and f"offset {W}" in previous
+
+
 async def test_a_nan_p95_is_no_figure():
     answers = {queries.flow_p95_ms(BOOKING, W): _one(float("nan"))}
     overview = await _service(answers).overview(24)

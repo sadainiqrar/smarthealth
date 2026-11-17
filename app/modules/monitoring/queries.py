@@ -64,6 +64,12 @@ def flow_total(flow: Flow, w: str, offset: str = "") -> str:
     `or vector(0)`: an unanswered query means "no comparison", not "zero runs"."""
     off = f" offset {offset}" if offset else ""
     wrap = (lambda expr: f"sum({expr})") if offset else _sum
+    if flow.kind == "workflow" and offset:
+        # One selector over both counters: Temporal creates the `failed` series only at a
+        # type's first failure, and `a + <nothing>` is nothing -- a never-failed workflow
+        # would otherwise never get a comparison.
+        return wrap(f'increase({{__name__=~"temporal_workflow_(completed|failed)_total",'
+                    f'workflow_type="{flow.name}"}}[{w}]{off})')
     if flow.kind == "workflow":
         sel = f'{{workflow_type="{flow.name}"}}'
         return (f"({wrap(f'increase(temporal_workflow_completed_total{sel}[{w}]{off})')})"
