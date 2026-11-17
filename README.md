@@ -186,9 +186,9 @@ Persistent data lives in PVCs kept on `helm uninstall` and on Argo CD deletion.
 
 The same charts on one small AWS server, reachable by a reviewer from anywhere at one
 `https://<id>.cloudfront.net/` address, started with one command before a review and
-stopping itself. **Deployed on 2026-11-17, all but CloudFront**: AWS must verify a new
-account before it creates a distribution (PRD R-35); everything behind it runs and was
-checked from inside the server. What happened on that first deploy: `docs/ARCHITECTURE.md` 8.8. Design and
+stopping itself. **Deployed and verified on 2026-11-17: https://d2xy34d2kn7e5f.cloudfront.net/** — up only while
+the owner has started it (`scripts/aws_start.sh`). What happened on that first deploy:
+`docs/ARCHITECTURE.md` 8.8. Design and
 rejected alternatives: `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`
 (decisions D-42 ... D-54 in `docs/PRD.md`); the walkthrough is `docs/ARCHITECTURE.md` section 8.
 

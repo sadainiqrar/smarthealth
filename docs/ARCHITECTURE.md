@@ -2558,7 +2558,7 @@ Running k3d needs the compose stacks stopped.
 
 The same umbrella chart on one k3s server in AWS, for a reviewer to open from anywhere.
 Terraform in `deploy/terraform/` creates everything; Argo CD keeps the cluster equal to git.
-**Deployed on 2026-11-17, all but CloudFront** (section 8.8): AWS must verify the account before it creates a distribution (R-35). Design and
+**Deployed and verified on 2026-11-17** at `https://d2xy34d2kn7e5f.cloudfront.net/` (section 8.8); it runs only while the owner has started it. Design and
 rejected alternatives: `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`; decisions
 D-42 ... D-54; the missing backups are R-34.
 
@@ -2683,12 +2683,13 @@ The plan above was applied once, step by step, with every `terraform plan` read 
 | Step | Result |
 | --- | --- |
 | Bootstrap | 4 resources: the state bucket, its versioning, encryption and public-access block |
-| Stack | 41 of 42 resources. **CloudFront refused**: *"Your account must be verified before you can add new CloudFront resources"* — a hold on new accounts, lifted only by AWS Support (R-35) |
+| Stack | 41 of 42 resources. **CloudFront refused**: *"Your account must be verified before you can add new CloudFront resources"* — a hold on new accounts, lifted only by AWS Support (R-35). Verified the same day; the same plan then showed one resource to add, created in 3 minutes |
 | Secrets | `aws_secrets.sh` failed at first: Git Bash rewrote `/smarthealth/...` into a Windows path before `aws.exe` saw it. `scripts/aws_lib.sh` now turns that rewriting off for `aws` calls only (`MSYS_NO_PATHCONV`) |
 | Release | `release.sh` refused a dirty tree: the saved plan files were untracked. They can hold secret values and are now git-ignored. The first push of a new GHCR package answered `denied` once, after its layers uploaded; a retry succeeded. New packages are private until made public (D-44) |
 | Argo CD | Synced but **Degraded**: the tag `3244061` is all digits, YAML read it as a number and Helm rendered `smarthealth-core:3.244061e+06` (`InvalidImageName`). `scripts/set_release.py` now writes the tag quoted (`tests/meta/test_release.py`); three minutes after the push, Synced and Healthy, 39 pods |
 | Seed | `aws_seed.sh`: 800 patients, 130 days of history (3,139 appointments) and live bookings through the API, none failed |
-| Checks | From inside the server, through Traefik on `localhost` (Run Command, passwords read from SSM there): `/api/ready` 200 with every dependency, a demo login, the appointment list, the JWKS, the seven tool paths 401 without and 200 with the login, the frontend. The gRPC-Web stream and caching wait for CloudFront (`aws_smoke.py`) |
+| Checks | From inside the server (`aws_check.sh`): pods, a demo login, a booking confirmed in 2 s and cancelled with both emails in Mailpit, traces from eight services in Jaeger, the tool paths, the assistant over gRPC-Web. Then through CloudFront (`aws_smoke.py`): ready, login, the assistant's streamed answer with citations, the tool paths, assets cached and the API not. Both OK |
+| Release with the URL | `release.sh`'s new pre-commit chart run caught a test that pinned the placeholder URL; fixed, then `release: 2dfb81f` recorded the address and Argo CD rolled it out in about 4 minutes |
 
 Until CloudFront exists, `scripts/aws_start.sh` waits for `/api/ready` from inside the server
 instead (Run Command, through Traefik), and `scripts/aws_check.sh` runs the full check from there.
