@@ -8,7 +8,7 @@ global:
   image:
     registry: ghcr.io/sadainiqrar
     # The release; written by scripts/release.sh (the git SHA the images were built from).
-    tag: "2dfb81f"
+    tag: "339eaca"
     pullPolicy: IfNotPresent
 secrets:
   create: false
