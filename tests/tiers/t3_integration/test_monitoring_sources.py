@@ -64,3 +64,37 @@ async def test_an_error_span_comes_back_as_a_failure(stack):
     assert failure.operation == "POST /appointments"
     assert failure.failed_step == "billing.precheck"
     assert failure.message == "gateway unavailable"
+
+
+async def test_a_counter_born_with_runs_already_on_it_is_counted_from_zero(stack):
+    """The bug the live run found: a counter whose series first appears at 4 (four runs
+    inside the first export interval) read as 0 runs, because `increase()` never counts a
+    series' first sample. `queries.runs` must count it as 4; the bare `increase` shows the
+    gap it closes. Against the real collector and Prometheus, not a string check."""
+    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.sdk.metrics import MeterProvider
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+    service = f"health-test-{uuid.uuid4().hex[:8]}"
+    reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(endpoint=f"{OTLP}/v1/metrics"), export_interval_millis=3_600_000)
+    provider = MeterProvider(resource=Resource.create({"service.name": service}),
+                             metric_readers=[reader])
+    counter = provider.get_meter("health-test").create_counter("health_test_runs", unit="1")
+    counter.add(4, {"outcome": "done"})
+    provider.force_flush()  # one export: the series is born at 4
+
+    selector = f'health_test_runs_total{{job="{service}"}}'
+    async with httpx.AsyncClient() as http:
+        client = PrometheusClient(PROMETHEUS, http)
+        for _ in range(60):  # Prometheus scrapes the collector every 10 s
+            if await client.query(selector):
+                break
+            await asyncio.sleep(1)
+        assert await client.query(selector), "the counter never reached Prometheus"
+        await asyncio.sleep(12)  # a second scrape, so increase() has two samples to compare
+        old = await client.query(f"sum(increase({selector}[1h]))")
+        new = await client.query(queries.runs(selector, "1h"))
+    provider.shutdown()
+    assert round(old[0].value) == 0  # the gap: the first value is not an increase
+    assert round(new[0].value) == 4
