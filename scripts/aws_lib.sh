@@ -13,6 +13,12 @@ elif [ -x "$HOME/AppData/Local/Programs/Amazon/AWSCLIV2/aws.exe" ]; then
 else
   echo "AWS CLI v2 not found (install it or put it on PATH)" >&2; exit 1
 fi
+# Git Bash rewrites arguments that start with `/` (an SSM name like /smarthealth/x) into
+# Windows paths before a Windows exe sees them. No aws call here takes a local path, so
+# turn that off for aws only -- terraform -chdir and python still need it.
+AWS_BIN="$AWS"
+aws_cli() { MSYS_NO_PATHCONV=1 "$AWS_BIN" "$@"; }
+AWS=aws_cli
 
 PY=python
 command -v python >/dev/null 2>&1 || PY=python3
