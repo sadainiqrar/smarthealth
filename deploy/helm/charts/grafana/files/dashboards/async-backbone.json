@@ -345,6 +345,51 @@
           }
         }
       ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Celery task outcomes",
+      "description": "Every Celery task by how it ended; failed or retried above zero for long means a job needs a person.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (task, outcome) (rate(smarthealth_celery_tasks_total[$__rate_interval]))",
+          "legendFormat": "{{task}} {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
     }
   ],
   "templating": {

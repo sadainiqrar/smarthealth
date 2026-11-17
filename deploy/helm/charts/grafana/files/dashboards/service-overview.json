@@ -508,6 +508,51 @@
           }
         }
       ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Seconds since each process was last seen",
+      "description": "Heartbeat age per job (max over instances, so a restarted process does not look dead). Above about 30 s: the process is down or cannot export.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "time() - max by (job) (smarthealth_heartbeat_seconds)",
+          "legendFormat": "{{job}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          }
+        }
+      ]
     }
   ],
   "templating": {
