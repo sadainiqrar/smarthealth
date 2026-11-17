@@ -11,6 +11,8 @@ nobody registered is a workflow no worker runs, and its starts would hang silent
 
 from __future__ import annotations
 
+import os
+import socket
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import timedelta
@@ -69,14 +71,24 @@ def telemetry_runtime(settings: Settings) -> Runtime | None:
     own exporter: workflow and activity outcomes, schedule-to-start latency, task-queue
     polling. None (no endpoint configured) keeps the SDK's default runtime.
     """
+    config = telemetry_config(settings)
+    return None if config is None else Runtime(telemetry=config)
+
+
+def telemetry_config(settings: Settings) -> TelemetryConfig | None:
+    """The SDK's metrics export, tagged with this process's identity.
+
+    The Rust core reports no process identity of its own, so without the tag a restarted
+    worker's series came back with the same labels and `increase()` lost the runs in
+    between (system health spec §3; Part A's own metrics use `service.instance.id`).
+    """
     if not settings.otel_endpoint_grpc:
         return None
-    return Runtime(
-        telemetry=TelemetryConfig(
-            metrics=OpenTelemetryConfig(
-                url=settings.otel_endpoint_grpc, metric_periodicity=TEMPORAL_METRIC_PERIOD
-            )
-        )
+    return TelemetryConfig(
+        metrics=OpenTelemetryConfig(
+            url=settings.otel_endpoint_grpc, metric_periodicity=TEMPORAL_METRIC_PERIOD
+        ),
+        global_tags={"smarthealth_process": f"{socket.gethostname()}-{os.getpid()}"},
     )
 
 
