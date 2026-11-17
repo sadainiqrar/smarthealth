@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import grpc
 from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from smarthealth.knowledge.v1 import knowledge_pb2, knowledge_pb2_grpc
 
+from knowledge_service import metrics
 from knowledge_service.auth import TokenVerifier, Unauthenticated
 from knowledge_service.eval import audiences_for
 from knowledge_service.index import Index
@@ -34,6 +36,17 @@ class KnowledgeServicer(knowledge_pb2_grpc.KnowledgeServicer):
             await context.abort(grpc.StatusCode.UNAUTHENTICATED, str(exc))
         if not request.query.strip():
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query is empty")
+        started = time.perf_counter()
+        try:
+            reply = await self._search(request, caller)
+        except Exception:
+            metrics.record_search("error", (time.perf_counter() - started) * 1000)
+            raise
+        metrics.record_search("hit" if reply.hits else "no_results",
+                              (time.perf_counter() - started) * 1000)
+        return reply
+
+    async def _search(self, request, caller) -> knowledge_pb2.SearchReply:
         limit = min(request.limit or DEFAULT_LIMIT, MAX_LIMIT)
         if self._index is not None:
             # The audience comes from the caller's token, never the request (spec 8.4): a

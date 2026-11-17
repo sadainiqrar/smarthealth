@@ -138,3 +138,28 @@ async def test_a_token_issued_before_a_revocation_is_refused(knowledge, assistan
     assert raised.value.code() is grpc.StatusCode.UNAUTHENTICATED
     fresh = _token(user="u-revoked")
     assert (await _chat(stub, fresh, turn="t-fresh"))[-1].done.reason == "complete"
+
+
+async def test_every_search_is_counted_by_outcome(knowledge, metric_reader):
+    """System health spec §3: retrieval had traces but no metrics."""
+    directory, stub, _ = knowledge
+
+    def outcomes() -> dict[str, float]:
+        seen: dict[str, float] = {}
+        data = metric_reader.get_metrics_data()
+        if data is None:  # nothing recorded yet
+            return seen
+        for rm in data.resource_metrics:
+            for sm in rm.scope_metrics:
+                for metric in sm.metrics:
+                    if metric.name == "knowledge.searches":
+                        for p in metric.data.data_points:
+                            key = p.attributes["outcome"]
+                            seen[key] = seen.get(key, 0) + p.value
+        return seen
+
+    before = outcomes()
+    await stub.Search(knowledge_pb2.SearchRequest(query="nobody-by-this-name"),
+                      metadata=_auth(_token()))
+    after = outcomes()
+    assert after.get("no_results", 0) == before.get("no_results", 0) + 1
