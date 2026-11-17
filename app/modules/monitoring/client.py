@@ -78,7 +78,12 @@ class JaegerClient:
             raise SourceUnavailable(f"jaeger: HTTP {response.status_code}")
         if not isinstance(body, dict):
             raise SourceUnavailable("jaeger: unexpected answer")
-        return body.get("data") or []
+        data = body.get("data")
+        if data is None:
+            return []  # Jaeger's answer for a service it has never seen
+        if not isinstance(data, list):
+            raise SourceUnavailable("jaeger: unexpected answer")
+        return data
 
     async def ping(self) -> None:
         """Is Jaeger answering at all? Raises `SourceUnavailable` if not."""

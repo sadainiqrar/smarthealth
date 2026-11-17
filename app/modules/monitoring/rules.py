@@ -48,7 +48,7 @@ def heartbeat(age_seconds: float | None) -> Verdict:
 def failure_share(total: float | None, failed: float | None) -> Verdict:
     if total is None or failed is None:
         return Verdict("unknown", "metrics unavailable")
-    total, failed = int(total), int(failed)
+    total, failed = round(total), round(failed)
     if total == 0:
         return Verdict("idle", "no runs in this window")
     if total < MIN_EVENTS:

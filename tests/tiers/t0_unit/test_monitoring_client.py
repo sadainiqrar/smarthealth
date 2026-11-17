@@ -114,3 +114,11 @@ async def test_ping_asks_for_the_service_list_and_any_failure_is_unavailable():
     async with _client(refuse) as http:
         with pytest.raises(SourceUnavailable):
             await JaegerClient("http://jaeger:16686", http).ping()
+
+
+@pytest.mark.parametrize("data", ["oops", {"a": 1}, 5])
+async def test_jaeger_data_that_is_not_a_list_is_unavailable(data):
+    async with _client(lambda _r: httpx.Response(200, json={"data": data})) as http:
+        with pytest.raises(SourceUnavailable):
+            await JaegerClient("http://jaeger:16686", http).error_traces(
+                "x", datetime.now(UTC), datetime.now(UTC), 5)

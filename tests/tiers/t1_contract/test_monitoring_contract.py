@@ -11,7 +11,7 @@ from app.modules.monitoring.client import Sample
 from app.modules.monitoring.router import get_monitoring
 from app.modules.monitoring.service import MonitoringService
 from tests.harness.auth import bearer, issue_token
-from tests.tiers.t0_unit.test_monitoring_service import FakeJaeger, FakePrometheus
+from tests.harness.monitoring import FakeJaeger, FakePrometheus
 
 pytestmark = pytest.mark.contract
 
@@ -58,7 +58,7 @@ async def test_failures_answer_with_their_source(api_client, monitoring):
     assert response.json() == {"window_hours": 1, "source": "ok", "failures": []}
 
 
-@pytest.mark.parametrize("query", ["hours=2", "hours=0", "limit=0", "limit=51"])
+@pytest.mark.parametrize("query", ["hours=2", "hours=0", "hours=168", "limit=0", "limit=51"])
 async def test_windows_and_limits_outside_the_allowed_set_are_refused(
     api_client, monitoring, query
 ):
@@ -110,3 +110,11 @@ async def test_sources_that_are_not_configured_say_so(api_client, monitoring):
     assert overview.json()["sources"] == {"prometheus": "not_configured",
                                           "jaeger": "not_configured"}
     assert failures.json()["source"] == "not_configured"
+
+
+@pytest.mark.parametrize("hours", [1, 6, 24])
+async def test_the_allowed_windows_are_one_six_and_twenty_four_hours(api_client, monitoring, hours):
+    response = await api_client.get(f"/monitoring/overview?hours={hours}",
+                                    headers=_as(UserRole.ADMIN))
+    assert response.status_code == 200
+    assert response.json()["window_hours"] == hours

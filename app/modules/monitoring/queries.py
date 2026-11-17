@@ -39,7 +39,9 @@ class Flow:
 
 
 #: A workflow flow's `name` is the registered type (`@workflow.defn(name=...)`), which is what
-#: Temporal puts in `workflow_type`; tests/meta/test_monitoring_flows.py checks it.
+#: Temporal puts in `workflow_type`; tests/meta/test_monitoring_flows.py checks it. A
+#: workflow total counts completed + failed runs only: timed-out, cancelled and terminated
+#: runs are in neither.
 FLOWS: list[Flow] = [
     Flow("booking", "Booking", "workflow", "BookAppointment"),
     Flow("reschedule", "Reschedule", "workflow", "Reschedule"),
@@ -58,17 +60,20 @@ def _sum(expr: str) -> str:
 
 
 def flow_total(flow: Flow, w: str, offset: str = "") -> str:
+    """The runs in the window. With an `offset`, the same window that long ago, with no
+    `or vector(0)`: an unanswered query means "no comparison", not "zero runs"."""
     off = f" offset {offset}" if offset else ""
+    wrap = (lambda expr: f"sum({expr})") if offset else _sum
     if flow.kind == "workflow":
         sel = f'{{workflow_type="{flow.name}"}}'
-        return (f"({_sum(f'increase(temporal_workflow_completed_total{sel}[{w}]{off})')})"
-                f" + ({_sum(f'increase(temporal_workflow_failed_total{sel}[{w}]{off})')})")
+        return (f"({wrap(f'increase(temporal_workflow_completed_total{sel}[{w}]{off})')})"
+                f" + ({wrap(f'increase(temporal_workflow_failed_total{sel}[{w}]{off})')})")
     if flow.kind == "task":
-        return _sum(f'increase(smarthealth_celery_tasks_total{{task="{flow.name}",'
+        return wrap(f'increase(smarthealth_celery_tasks_total{{task="{flow.name}",'
                     f'outcome=~"success|failure"}}[{w}]{off})')
     if flow.kind == "search":
-        return _sum(f"increase(knowledge_searches_total[{w}]{off})")
-    return _sum(f"increase(assistant_turns_total[{w}]{off})")
+        return wrap(f"increase(knowledge_searches_total[{w}]{off})")
+    return wrap(f"increase(assistant_turns_total[{w}]{off})")
 
 
 def flow_failed(flow: Flow, w: str) -> str:

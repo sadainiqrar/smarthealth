@@ -6,39 +6,12 @@ from datetime import UTC, datetime
 import pytest
 
 from app.modules.monitoring import queries
-from app.modules.monitoring.client import Sample, SourceUnavailable
+from app.modules.monitoring.client import Sample
 from app.modules.monitoring.service import MonitoringService
+from tests.harness.monitoring import FakeJaeger, FakePrometheus
 
 pytestmark = pytest.mark.unit
 NOW = 1_763_380_800.0
-
-
-class FakePrometheus:
-    def __init__(self, answers: dict[str, list[Sample]] | None = None, down: bool = False):
-        self.answers = answers or {}
-        self.down = down
-        self.asked: list[str] = []
-
-    async def query(self, promql: str) -> list[Sample]:
-        self.asked.append(promql)
-        if self.down:
-            raise SourceUnavailable("prometheus: refused")
-        return self.answers.get(promql, [])
-
-
-class FakeJaeger:
-    def __init__(self, traces=None, down=False):
-        self.traces = traces or {}
-        self.down = down
-
-    async def ping(self):
-        if self.down:
-            raise SourceUnavailable("jaeger: refused")
-
-    async def error_traces(self, service, start, end, limit):
-        if self.down:
-            raise SourceUnavailable("jaeger: refused")
-        return self.traces.get(service, [])
 
 
 def _one(value: float) -> list[Sample]:
@@ -119,8 +92,126 @@ async def test_answers_are_cached_for_fifteen_seconds():
     assert len(prom.asked) == 2 * asked
 
 
-def test_generated_at_is_the_clock():
-    assert datetime.fromtimestamp(NOW, UTC).year == 2025
+async def test_generated_at_is_the_clock():
+    service = MonitoringService(FakePrometheus(), FakeJaeger(), clock=lambda: NOW)
+    overview = await service.overview(24)
+    assert overview.generated_at == datetime.fromtimestamp(NOW, UTC)
+
+
+W = "24h"
+BOOKING = queries.FLOWS[0]
+ASSISTANT = next(f for f in queries.FLOWS if f.key == "assistant")
+AI = queries.ai(W)
+
+
+def _quiet() -> dict[str, list[Sample]]:
+    """Every flow answered with zero runs, as the real `or vector(0)` queries do."""
+    out = {}
+    for flow in queries.FLOWS:
+        out[queries.flow_total(flow, W)] = _one(0)
+        out[queries.flow_failed(flow, W)] = _one(0)
+    return out
+
+
+def _service(answers=None, **kw):
+    return MonitoringService(FakePrometheus(answers, **kw), FakeJaeger(), clock=lambda: NOW)
+
+
+async def test_one_failed_query_blanks_only_its_own_card():
+    answers = _quiet() | {queries.flow_total(BOOKING, W): _one(40)}
+    reschedule = queries.FLOWS[1]
+    answers.pop(queries.flow_total(reschedule, W))
+    overview = await _service(
+        answers, fail={queries.flow_total(reschedule, W)}).overview(24)
+    by_key = {f.key: f for f in overview.flows}
+    assert by_key["booking"].status == "ok" and by_key["booking"].total == 40
+    assert by_key["reschedule"].status == "unknown"
+    assert by_key["cancellation"].status == "idle"  # answered: nothing ran
+    assert overview.sources.prometheus == "ok"
+    assert {c.status for c in overview.components} == {"bad"}  # no heartbeat answered, not unknown
+
+
+async def test_a_failed_heartbeat_query_makes_every_process_unknown_but_not_the_flows():
+    overview = await _service(_quiet(), fail={queries.HEARTBEAT_AGE}).overview(24)
+    processes = [c for c in overview.components if c.job.startswith("smarthealth/")]
+    assert {c.status for c in processes} == {"unknown"}
+    assert {f.status for f in overview.flows} == {"idle"}
+    assert overview.sources.prometheus == "ok"
+
+
+async def test_every_query_failing_is_unavailable():
+    overview = await _service(down=True).overview(24)
+    assert overview.sources.prometheus == "unavailable"
+
+
+async def test_the_previous_window_has_no_fallback_so_unanswered_means_no_comparison():
+    answers = {queries.flow_total(BOOKING, W): _one(40), queries.flow_failed(BOOKING, W): _one(0)}
+    overview = await _service(answers).overview(24)
+    booking = next(f for f in overview.flows if f.key == "booking")
+    assert booking.total == 40 and booking.previous_total is None
+    assert "vector(0)" not in queries.flow_total(BOOKING, W, W)
+    assert "vector(0)" in queries.flow_total(BOOKING, W)
+
+
+async def test_a_nan_p95_is_no_figure():
+    answers = {queries.flow_p95_ms(BOOKING, W): _one(float("nan"))}
+    overview = await _service(answers).overview(24)
+    assert next(f for f in overview.flows if f.key == "booking").p95_seconds is None
+
+
+async def test_a_missing_outbox_answer_is_unknown_not_ok():
+    overview = await _service().overview(24)
+    outbox = next(b for b in overview.backlogs if b.key == "outbox")
+    assert (outbox.status, outbox.value) == ("unknown", None)
+
+
+async def test_a_slow_first_word_makes_a_healthy_assistant_warn_with_the_latency_reason():
+    answers = {AI["turns"]: _one(100), AI["errors"]: _one(1),
+               AI["first_token_p95_ms"]: _one(7000)}
+    ai = (await _service(answers).overview(24)).ai
+    assert ai.status == "warn"
+    assert ai.reason == "7 s: falling behind"
+    assert ai.first_token_p95_seconds == 7.0 and ai.error_pct == 1.0
+
+
+async def test_an_assistant_with_no_turns_is_idle():
+    ai = (await _service().overview(24)).ai
+    assert (ai.status, ai.reason) == ("idle", "no assistant turns in this window")
+
+
+async def test_one_traced_service_failing_does_not_hide_the_others():
+    def trace(tid):
+        return {"traceID": tid, "processes": {"p": {"serviceName": "x"}}, "spans": [
+            {"spanID": "a", "operationName": "op", "startTime": 9_000_000, "processID": "p",
+             "references": [], "tags": [{"key": "error", "value": True}], "logs": []}]}
+
+    jaeger = FakeJaeger({"assistant": [trace("kept")]}, down_services={"part-a-api"})
+    result = await MonitoringService(FakePrometheus(), jaeger, clock=lambda: NOW).failures(24, 10)
+    assert result.source == "ok" and [f.trace_id for f in result.failures] == ["kept"]
+
+
+async def test_every_traced_service_failing_is_unavailable_and_that_is_cached_too():
+    class Counting(FakeJaeger):
+        calls = 0
+
+        async def error_traces(self, *a):
+            Counting.calls += 1
+            return await super().error_traces(*a)
+
+    service = MonitoringService(FakePrometheus(), Counting(down=True), clock=lambda: NOW)
+    first = await service.failures(24, 10)
+    calls = Counting.calls
+    assert first.source == "unavailable"
+    await service.failures(24, 10)
+    assert Counting.calls == calls
+
+
+async def test_a_trace_missing_a_field_the_reducer_reads_is_skipped():
+    broken = {"traceID": "bad", "spans": None}
+    service = MonitoringService(FakePrometheus(), FakeJaeger({"part-a-api": [broken, "junk"]}),
+                                clock=lambda: NOW)
+    result = await service.failures(24, 10)
+    assert result.source == "ok" and result.failures == []
 
 
 async def test_the_overview_reports_jaeger_as_it_is():

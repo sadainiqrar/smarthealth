@@ -57,3 +57,8 @@ def test_worst_of_picks_the_most_serious():
     assert rules.worst(["ok", "idle", "warn", "ok"]) == "warn"
     assert rules.worst(["ok", "bad", "unknown"]) == "bad"
     assert rules.worst([]) == "unknown"
+
+
+def test_the_reason_rounds_the_counts_as_the_flow_card_does():
+    # 4.6 runs of 9.6 would print 4 of 9 if truncated, and the card shows round() figures.
+    assert rules.failure_share(9.6, 4.6).reason == "5 of 10 failed (50.0%)"

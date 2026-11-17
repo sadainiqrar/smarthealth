@@ -3841,17 +3841,17 @@
             }
           },
           {
-            "description": "Look-back window in hours: 1, 24 or 168",
+            "description": "Look-back window in hours: 1, 6 or 24",
             "in": "query",
             "name": "hours",
             "required": false,
             "schema": {
               "default": 24,
-              "description": "Look-back window in hours: 1, 24 or 168",
+              "description": "Look-back window in hours: 1, 6 or 24",
               "enum": [
                 1,
-                24,
-                168
+                6,
+                24
               ],
               "title": "Hours",
               "type": "integer"
@@ -3893,21 +3893,21 @@
     },
     "/monitoring/overview": {
       "get": {
-        "description": "Every process's liveness, the critical flows, backlogs and AI health over the last\n`hours` (1, 24 or 168), in plain statuses with a reason each.",
+        "description": "Every process's liveness, the critical flows, backlogs and AI health over the last\n`hours` (1, 6 or 24), in plain statuses with a reason each.",
         "operationId": "overview_monitoring_overview_get",
         "parameters": [
           {
-            "description": "Look-back window in hours: 1, 24 or 168",
+            "description": "Look-back window in hours: 1, 6 or 24",
             "in": "query",
             "name": "hours",
             "required": false,
             "schema": {
               "default": 24,
-              "description": "Look-back window in hours: 1, 24 or 168",
+              "description": "Look-back window in hours: 1, 6 or 24",
               "enum": [
                 1,
-                24,
-                168
+                6,
+                24
               ],
               "title": "Hours",
               "type": "integer"

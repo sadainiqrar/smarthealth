@@ -16,14 +16,15 @@ from app.modules.monitoring.schemas import FailuresRead, Overview
 from app.modules.monitoring.service import MonitoringService
 
 router = APIRouter(prefix="/monitoring", tags=["monitoring"])
-WINDOWS = (1, 24, 168)
+#: Prometheus keeps two days (deploy/helm/charts/prometheus), so a week would be misleading.
+WINDOWS = (1, 6, 24)
 
 
 def window_hours(
-    hours: int = Query(default=24, description="Look-back window in hours: 1, 24 or 168",
+    hours: int = Query(default=24, description="Look-back window in hours: 1, 6 or 24",
                        json_schema_extra={"enum": list(WINDOWS)}),
 ) -> int:
-    """FastAPI will not coerce the query string `24` to a `Literal[1, 24, 168]`, so the
+    """FastAPI will not coerce the query string `24` to a `Literal[1, 6, 24]`, so the
     set is checked here and a value outside it is a 422 like any other bad query."""
     if hours not in WINDOWS:
         raise Unprocessable(f"hours must be one of {', '.join(map(str, WINDOWS))}")
@@ -41,7 +42,7 @@ async def overview(
     monitoring: MonitoringService = Depends(get_monitoring),
 ) -> Overview:
     """Every process's liveness, the critical flows, backlogs and AI health over the last
-    `hours` (1, 24 or 168), in plain statuses with a reason each."""
+    `hours` (1, 6 or 24), in plain statuses with a reason each."""
     return await monitoring.overview(hours)
 
 
