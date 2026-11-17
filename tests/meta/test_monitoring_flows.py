@@ -26,7 +26,12 @@ WORKFLOW_TYPES = {_Definition.must_from_class(cls).name for cls in WORKFLOWS}
 TASK_NAMES = set(TASKS.names())
 
 
-@pytest.mark.parametrize("flow", [f for f in FLOWS if f.kind == "workflow"], ids=lambda f: f.key)
+#: Booking counts outcomes with its own counter, but its p95 is still the workflow's.
+_WORKFLOW_NAMED = [f for f in FLOWS if f.kind in ("workflow", "booking")]
+KINDS = {"booking", "workflow", "task", "search", "turn"}
+
+
+@pytest.mark.parametrize("flow", _WORKFLOW_NAMED, ids=lambda f: f.key)
 def test_a_workflow_flow_uses_the_registered_workflow_type(flow):
     assert flow.name in WORKFLOW_TYPES, (
         f"{flow.name} is not a registered workflow type; registered: {sorted(WORKFLOW_TYPES)}")
@@ -35,3 +40,8 @@ def test_a_workflow_flow_uses_the_registered_workflow_type(flow):
 @pytest.mark.parametrize("flow", [f for f in FLOWS if f.kind == "task"], ids=lambda f: f.key)
 def test_a_task_flow_uses_a_registered_celery_task(flow):
     assert flow.name in TASK_NAMES, f"{flow.name} is not in app.celery_app.TASKS"
+
+
+def test_every_flow_has_a_kind_the_queries_know():
+    assert {f.kind for f in FLOWS} <= KINDS
+    assert any(f.kind == "booking" for f in FLOWS)

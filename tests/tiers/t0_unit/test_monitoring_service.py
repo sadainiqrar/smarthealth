@@ -149,18 +149,62 @@ async def test_the_previous_window_has_no_fallback_so_unanswered_means_no_compar
     overview = await _service(answers).overview(24)
     booking = next(f for f in overview.flows if f.key == "booking")
     assert booking.total == 40 and booking.previous_total is None
-    assert "vector(0)" not in queries.flow_total(BOOKING, W, W)
-    assert "vector(0)" in queries.flow_total(BOOKING, W)
+    # Inside, a born-in-window term may fall back to zero; the figure as a whole may not.
+    assert not queries.flow_total(BOOKING, W, W).endswith("or vector(0)")
+    assert queries.flow_total(BOOKING, W).endswith("or vector(0)")
+
+
+RESCHEDULE = next(f for f in queries.FLOWS if f.key == "reschedule")
 
 
 def test_the_previous_workflow_window_survives_a_missing_failed_series():
     """Temporal creates `temporal_workflow_failed_total{workflow_type=...}` only at the
-    first failure; `completed + failed` would then be empty. One selector over both
-    counters answers whenever either exists (proven against Prometheus in T3)."""
-    previous = queries.flow_total(BOOKING, W, W)
-    assert " + " not in previous
-    assert '__name__=~"temporal_workflow_(completed|failed)_total"' in previous
-    assert f'workflow_type="{BOOKING.name}"' in previous and f"offset {W}" in previous
+    first failure, and `completed + <nothing>` is nothing. So the previous window is
+    completed runs + (failed runs or zero): a never-failed workflow still compares, and a
+    missing `completed` still means no comparison. Two metrics added, never one
+    `__name__=~` selector: min_over_time drops the name and the two series would collide."""
+    sel = f'{{workflow_type="{RESCHEDULE.name}"}}'
+    completed = queries.runs(f"temporal_workflow_completed_total{sel}", W, W)
+    failed = queries.runs(f"temporal_workflow_failed_total{sel}", W, W)
+    assert queries.flow_total(RESCHEDULE, W, W) == f"{completed} + ({failed} or vector(0))"
+    assert "__name__" not in queries.flow_total(RESCHEDULE, W, W)
+    completed_now = queries.runs(f"temporal_workflow_completed_total{sel}", W)
+    failed_now = queries.runs(f"temporal_workflow_failed_total{sel}", W)
+    assert queries.flow_total(RESCHEDULE, W) == (
+        f"({completed_now} or vector(0)) + ({failed_now} or vector(0))")
+
+
+def test_a_series_born_inside_the_window_counts_from_zero():
+    """`increase` drops a new series' first sample (the first export of a process, or a
+    restart). Each figure adds the first value of every series absent at the window's
+    start; the start is the window plus its offset."""
+    sel = 'smarthealth_bookings_total{outcome="failed"}'
+    now = queries.runs(sel, "6h")
+    assert f"increase({sel}[6h])" in now
+    assert f"min_over_time({sel}[6h]) unless {sel} offset 6h" in now
+    before = queries.runs(sel, "6h", "6h")
+    assert f"increase({sel}[6h] offset 6h)" in before
+    assert f"min_over_time({sel}[6h] offset 6h) unless {sel} offset 12h" in before
+    with pytest.raises(ValueError):
+        queries.runs(sel, "90m")
+
+
+def test_every_counter_figure_counts_born_in_window_series():
+    """No counter figure is a bare `increase`: flows, the dead-letter backlog, the AI card."""
+    counters = [q for q in queries.every_query(W)
+                if "increase(" in q and "histogram_quantile" not in q]
+    assert counters and all("min_over_time(" in q for q in counters)
+
+
+def test_booking_is_counted_by_outcome_not_by_its_workflow():
+    """A compensated booking ends `failed` while BookAppointmentWorkflow completes
+    normally; the workflow's own counters would say "none failed"."""
+    assert BOOKING.kind == "booking"
+    assert 'smarthealth_bookings_total{outcome=~"confirmed|failed"}' in queries.flow_total(
+        BOOKING, W)
+    assert 'smarthealth_bookings_total{outcome="failed"}' in queries.flow_failed(BOOKING, W)
+    assert "temporal_workflow" not in queries.flow_total(BOOKING, W, W)
+    assert 'workflow_type="BookAppointment"' in queries.flow_p95_ms(BOOKING, W)
 
 
 async def test_a_nan_p95_is_no_figure():
