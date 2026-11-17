@@ -36,9 +36,9 @@ def get_monitoring(request: Request) -> MonitoringService:
 
 @router.get("/overview", response_model=Overview)
 async def overview(
+    _: TokenClaims = Depends(require_role(UserRole.ADMIN)),
     hours: int = Depends(window_hours),
     monitoring: MonitoringService = Depends(get_monitoring),
-    _: TokenClaims = Depends(require_role(UserRole.ADMIN)),
 ) -> Overview:
     """Every process's liveness, the critical flows, backlogs and AI health over the last
     `hours` (1, 24 or 168), in plain statuses with a reason each."""
@@ -47,10 +47,10 @@ async def overview(
 
 @router.get("/failures", response_model=FailuresRead)
 async def failures(
+    _: TokenClaims = Depends(require_role(UserRole.ADMIN)),
     hours: int = Depends(window_hours),
     limit: int = Query(default=20, ge=1, le=50),
     monitoring: MonitoringService = Depends(get_monitoring),
-    _: TokenClaims = Depends(require_role(UserRole.ADMIN)),
 ) -> FailuresRead:
     """The newest error traces across the services, each reduced to its root operation,
     first failed step and message, with a link to the trace."""

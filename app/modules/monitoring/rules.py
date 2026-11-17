@@ -24,7 +24,6 @@ THRESHOLDS: dict[str, tuple[float, float, str, str]] = {
     "consumer_lag": (100, 1000, "events", "keeping up"),
     "queue_ready": (100, 1000, "messages", "normal"),
     "dead_letters": (1, 10, "", "none"),
-    "assistant_error_pct": (5, 20, "%", "normal"),
     "first_token_p95_s": (5, 15, "s", "fast"),
     "retrieval_no_results_pct": (25, 50, "%", "normal"),
 }

@@ -275,12 +275,12 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         # patient or provider record linked to it, through their published interfaces.
         ("app.modules.identity.router", "app.modules.patients.public"),
         ("app.modules.identity.router", "app.modules.providers.public"),
-        # Week 5 (spec 9.5): POST /notifications sends a message staff approved. Role-gated;
-        # a provider only to a patient they treat (care relationship, as for the record).
         # System health: admin-only, so the same three auth edges as every router.
         ("app.modules.monitoring.router", "app.modules.identity.deps"),
         ("app.modules.monitoring.router", "app.modules.identity.models"),
         ("app.modules.monitoring.router", "app.modules.identity.security"),
+        # Week 5 (spec 9.5): POST /notifications sends a message staff approved. Role-gated;
+        # a provider only to a patient they treat (care relationship, as for the record).
         ("app.modules.notifications.router", "app.modules.identity.deps"),
         ("app.modules.notifications.router", "app.modules.identity.models"),
         ("app.modules.notifications.router", "app.modules.identity.security"),

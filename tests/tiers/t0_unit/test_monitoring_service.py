@@ -31,6 +31,10 @@ class FakeJaeger:
         self.traces = traces or {}
         self.down = down
 
+    async def ping(self):
+        if self.down:
+            raise SourceUnavailable("jaeger: refused")
+
     async def error_traces(self, service, start, end, limit):
         if self.down:
             raise SourceUnavailable("jaeger: refused")
@@ -117,3 +121,23 @@ async def test_answers_are_cached_for_fifteen_seconds():
 
 def test_generated_at_is_the_clock():
     assert datetime.fromtimestamp(NOW, UTC).year == 2025
+
+
+async def test_the_overview_reports_jaeger_as_it_is():
+    up = await MonitoringService(FakePrometheus(), FakeJaeger(), clock=lambda: NOW).overview(24)
+    down = await MonitoringService(FakePrometheus(), FakeJaeger(down=True),
+                                   clock=lambda: NOW).overview(24)
+    assert up.sources.jaeger == "ok"
+    assert down.sources.jaeger == "unavailable"
+    assert down.sources.prometheus == "ok"  # one dead source does not blind the other
+
+
+async def test_a_malformed_trace_is_skipped_not_raised():
+    good = {"traceID": "good", "processes": {"p": {"serviceName": "x"}}, "spans": [
+        {"spanID": "a", "operationName": "op", "startTime": 5_000_000, "processID": "p",
+         "references": [], "tags": [{"key": "error", "value": True}], "logs": []}]}
+    broken = {"traceID": "bad", "spans": [{"tags": [{"key": "error", "value": True}]}]}
+    service = MonitoringService(FakePrometheus(), FakeJaeger({"part-a-api": [broken, good]}),
+                                clock=lambda: NOW)
+    result = await service.failures(hours=24, limit=10)
+    assert result.source == "ok" and [f.trace_id for f in result.failures] == ["good"]

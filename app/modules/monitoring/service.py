@@ -48,6 +48,8 @@ class Jaeger(Protocol):
     async def error_traces(self, service: str, start: datetime, end: datetime,
                            limit: int) -> list[dict]: ...
 
+    async def ping(self) -> None: ...
+
 
 class MonitoringService:
     def __init__(
@@ -116,8 +118,18 @@ class MonitoringService:
         asked += [q for group in flow_qs for q in group]
         asked += [q for *_, q in backlog_qs]
         asked += list(ai_qs.values())
-        answers = dict(zip(range(len(asked)), await asyncio.gather(*(ask(q) for q in asked)),
-                           strict=True))
+
+        async def jaeger_status() -> str:
+            if self._jaeger is None:
+                return "not_configured"
+            try:
+                await self._jaeger.ping()
+            except SourceUnavailable:
+                return "unavailable"
+            return "ok"
+
+        *replies, jaeger_source = await asyncio.gather(*(ask(q) for q in asked), jaeger_status())
+        answers = dict(zip(range(len(asked)), replies, strict=True))
         answer = {q: answers[i] for i, q in enumerate(asked) if q is not None}
 
         if self._prometheus is None:
@@ -206,7 +218,7 @@ class MonitoringService:
             window_hours=hours,
             generated_at=datetime.fromtimestamp(self._clock(), UTC),
             sources=Sources(prometheus=source,
-                            jaeger="ok" if self._jaeger is not None else "not_configured"),
+                            jaeger=jaeger_source),
             components=components, flows=flow_reads, backlogs=backlog_reads, ai=ai,
         )
         return self._store(("overview", hours), result)
@@ -227,7 +239,10 @@ class MonitoringService:
             return FailuresRead(window_hours=hours, source="unavailable", failures=[])
         seen: dict[str, FailureRead] = {}
         for trace in (t for batch in batches for t in batch):
-            failure = to_failure(trace)
+            try:
+                failure = to_failure(trace)
+            except (KeyError, TypeError, ValueError):
+                continue  # one malformed trace must not hide the others
             if failure is not None and failure.trace_id not in seen:
                 seen[failure.trace_id] = FailureRead(**asdict(failure))
         ordered = sorted(seen.values(), key=lambda f: f.at, reverse=True)[:limit]

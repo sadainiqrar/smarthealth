@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: A workflow flow's `name` is the registered type (`@workflow.defn(name=...)`), which is what
+#: Temporal puts in `workflow_type`; tests/meta/test_monitoring_flows.py checks it.
 #: (job, what the page calls it). The heartbeat's `job` label is the process's service.name.
 COMPONENTS: list[tuple[str, str]] = [
     ("smarthealth/part-a-api", "API"),
@@ -39,11 +41,11 @@ class Flow:
 
 
 FLOWS: list[Flow] = [
-    Flow("booking", "Booking", "workflow", "BookAppointmentWorkflow"),
-    Flow("reschedule", "Reschedule", "workflow", "RescheduleWorkflow"),
-    Flow("cancellation", "Cancellation follow-up", "workflow", "CancelFollowUpWorkflow"),
-    Flow("billing", "Billing after a visit", "workflow", "PostVisitWorkflow"),
-    Flow("provider_sync", "Provider deactivation", "workflow", "ProviderDeactivationWorkflow"),
+    Flow("booking", "Booking", "workflow", "BookAppointment"),
+    Flow("reschedule", "Reschedule", "workflow", "Reschedule"),
+    Flow("cancellation", "Cancellation follow-up", "workflow", "CancelFollowUp"),
+    Flow("billing", "Billing after a visit", "workflow", "PostVisit"),
+    Flow("provider_sync", "Provider deactivation", "workflow", "ProviderDeactivation"),
     Flow("notifications", "Notifications and reminders", "task", "notifications.send"),
     Flow("documents", "Document text extraction", "task", "clinical.extract_document"),
     Flow("retrieval", "Knowledge search", "search"),

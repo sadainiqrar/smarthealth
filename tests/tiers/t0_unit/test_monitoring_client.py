@@ -78,3 +78,39 @@ async def test_an_unknown_jaeger_service_is_no_traces_not_an_error():
         traces = await JaegerClient("http://jaeger:16686", http).error_traces(
             "knowledge", datetime.now(UTC), datetime.now(UTC), 5)
     assert traces == []
+
+
+@pytest.mark.parametrize("body", [
+    {"status": "success", "data": {}},
+    {"status": "success", "data": {"result": [{"metric": {}, "value": [1.0]}]}},
+    {"status": "success", "data": {"result": [{"metric": {}, "value": [1.0, "not a number"]}]}},
+    {"status": "success", "data": {"result": [{"value": [1.0, "1"]}]}},
+    ["not", "an", "object"],
+])
+async def test_a_malformed_prometheus_answer_is_unavailable(body):
+    async with _client(lambda _r: httpx.Response(200, json=body)) as http:
+        with pytest.raises(SourceUnavailable):
+            await PrometheusClient("http://prom:9090", http).query("up")
+
+
+async def test_ping_asks_for_the_service_list_and_any_failure_is_unavailable():
+    paths = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"data": []})
+
+    async with _client(handler) as http:
+        await JaegerClient("http://jaeger:16686/jaeger", http).ping()
+    assert paths == ["/jaeger/api/services"]
+
+    async with _client(lambda _r: httpx.Response(503)) as http:
+        with pytest.raises(SourceUnavailable):
+            await JaegerClient("http://jaeger:16686", http).ping()
+
+    def refuse(request):
+        raise httpx.ConnectError("refused", request=request)
+
+    async with _client(refuse) as http:
+        with pytest.raises(SourceUnavailable):
+            await JaegerClient("http://jaeger:16686", http).ping()
