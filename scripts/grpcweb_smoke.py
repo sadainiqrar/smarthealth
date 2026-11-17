@@ -63,7 +63,8 @@ def main() -> int:
             status = trailers.get("grpc-status", status).strip()
             continue
         event = assistant_pb2.ChatEvent.FromString(data)
-        print(event.seq, event.WhichOneof("kind"), str(getattr(event, event.WhichOneof("kind"))).strip())
+        kind = event.WhichOneof("kind")
+        print(event.seq, kind, str(getattr(event, kind)).strip())
     print("grpc-status", status)
     return 0 if status in (None, "0") else 1
 

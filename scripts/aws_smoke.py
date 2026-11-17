@@ -8,6 +8,7 @@ login works, gRPC-Web streams, every tool path and /argocd answer 401 without th
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 
@@ -17,8 +18,13 @@ TOOLS = ["/grafana/", "/jaeger/", "/temporal/", "/mailpit/", "/rabbitmq/",
          "/prometheus/graph", "/argocd/"]
 
 
+# shutil.which honours PATH. A bare "bash" on Windows is found in System32 first -- WSL's,
+# not Git Bash -- and fails before tf.sh starts.
+BASH = shutil.which("bash") or "bash"
+
+
 def output(name: str) -> str:
-    return subprocess.run(["bash", "scripts/tf.sh", "output", "-raw", name],
+    return subprocess.run([BASH, "scripts/tf.sh", "output", "-raw", name],
                           capture_output=True, text=True, check=True).stdout.strip()
 
 

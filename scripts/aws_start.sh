@@ -3,19 +3,27 @@
 # app answers through CloudFront, optionally refresh the demo data.
 . "$(dirname "$0")/aws_lib.sh"
 nat="$(tf_output nat_instance_id)"; server="$(tf_output server_instance_id)"
-url="$(tf_output cloudfront_url)"
+url="$(tf_output cloudfront_url 2>/dev/null || true)"   # empty until CloudFront exists (PRD R-35)
 "$AWS" ec2 start-instances --instance-ids "$nat" >/dev/null
 "$AWS" ec2 wait instance-running --instance-ids "$nat"
 "$AWS" ec2 start-instances --instance-ids "$server" >/dev/null
 "$AWS" ec2 wait instance-running --instance-ids "$server"
-echo "instances running; waiting for $url/api/ready (up to 15 min)..."
+ready() {  # through CloudFront when it exists, else from inside the server through Traefik
+  if [ -n "$url" ]; then curl -s -o /dev/null -w '%{http_code}' "$url/api/ready"
+  else ssm_run "$server" "curl -s -o /dev/null -w '%{http_code}' http://localhost/api/ready" 2>/dev/null; fi
+}
+echo "instances running; waiting for ${url:-the server (no CloudFront yet)}/api/ready (up to 15 min)..."
 for _ in $(seq 1 90); do
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' "$url/api/ready")" = 200 ]; then
+  if [ "$(ready)" = 200 ]; then
     if [ "${1:-}" = --refresh ]; then
       ssm_run "$server" "k3s kubectl -n smarthealth create job --from=cronjob/demo-refresh demo-refresh-\$(date +%s)"
       echo "demo refresh started (watch: scripts/aws_shell.sh, kubectl -n smarthealth get jobs)"
     fi
-    echo "SmartHealth is up: $url/  (tools login: reviewer / scripts/tf.sh output -raw tools_password)"
+    if [ -z "$url" ]; then
+      echo "SmartHealth is up inside the server; no CloudFront yet -- check it with scripts/aws_check.sh"
+    else
+      echo "SmartHealth is up: $url/  (tools login: reviewer / scripts/tf.sh output -raw tools_password)"
+    fi
     echo "It stops itself in about 3 hours; scripts/aws_extend.sh adds 3 hours."
     exit 0
   fi
