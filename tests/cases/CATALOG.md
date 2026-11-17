@@ -6,16 +6,16 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 105 |
-| contract | 32 |
+| Total cases | 106 |
+| contract | 33 |
 | integration | 53 |
 | unit | 8 |
 | workflow | 12 |
 | P0 | 57 |
-| P1 | 47 |
+| P1 | 48 |
 | P2 | 1 |
 | declarative | 6 |
-| impl-backed | 99 |
+| impl-backed | 100 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -80,6 +80,7 @@
 | ops-003-seeding-is-idempotent-against-a-real-database | integration | P1 | impl | PART-A-FR-1 | Re-running the seeder against a real database inserts nothing the second time |
 | ops-004-the-cli-links-a-patient-login | integration | P1 | impl | PART-A-FR-1 | link-patient ties a patient login to its record, audited, so GET /patients/me then works |
 | ops-005-demo-history-is-consistent-and-idempotent | integration | P2 | impl | PART-A-FR-5 | Imported demo history holds every database rule, is marked legacy_import, re-runs add nothing, and the analytics reconcile finds no drift |
+| pa-monitoring-001-admin-sees-system-health | contract | P1 | impl | PART-A-OBS-3, PART-B-FR-5 | Only an admin reads system health, and a dead Prometheus or Jaeger is a 200 that says which source is down |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |

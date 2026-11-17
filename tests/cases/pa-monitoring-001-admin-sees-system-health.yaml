@@ -1,0 +1,7 @@
+id: pa-monitoring-001-admin-sees-system-health
+title: "Only an admin reads system health, and a dead Prometheus or Jaeger is a 200 that says which source is down"
+requirement: [PART-A-OBS-3, PART-B-FR-5]
+tier: contract
+priority: P1
+status: ready
+impl: "tests/tiers/t1_contract/test_monitoring_contract.py::test_prometheus_down_is_a_200_that_says_so"

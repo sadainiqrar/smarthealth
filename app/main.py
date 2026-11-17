@@ -28,6 +28,7 @@ from app.modules.clinical.storage import FilesystemDocumentStore
 from app.celery_app import enqueue_send
 from app.modules.clinical.tasks import enqueue_extraction
 from app.modules.identity.sessions import RedisSessionStore
+from app.modules.monitoring.service import MonitoringService
 from app.settings import DEV_SIGNING_KEY, Settings, get_settings
 
 
@@ -57,6 +58,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.sessions = RedisSessionStore(app.state.redis, settings)
     app.state.rate_limiter = RedisRateLimiter(app.state.redis, settings)
     app.state.documents = FilesystemDocumentStore.from_settings(settings)
+    app.state.monitoring = MonitoringService.from_settings(settings)
     app.state.enqueue_extraction = enqueue_extraction
     app.state.enqueue_send = enqueue_send
     # Lazy: the API boots with Temporal down, like every client above. Nothing to
@@ -67,6 +69,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         app.state.telemetry.flush()
+        await app.state.monitoring.aclose()
         await app.state.engine.dispose()
         # `close()` is a coroutine on pymongo's async client, unlike Motor's.
         await app.state.mongo.close()

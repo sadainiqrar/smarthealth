@@ -70,6 +70,7 @@ FRAMEWORK_BOUND: frozenset[str] = frozenset(
         "app.modules.analytics.router",
         "app.modules.clinical.router",
         "app.modules.identity.router",
+        "app.modules.monitoring.router",
         "app.modules.notifications.router",
         "app.modules.patients.router",
         "app.modules.providers.router",
@@ -276,6 +277,10 @@ CROSS_MODULE_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("app.modules.identity.router", "app.modules.providers.public"),
         # Week 5 (spec 9.5): POST /notifications sends a message staff approved. Role-gated;
         # a provider only to a patient they treat (care relationship, as for the record).
+        # System health: admin-only, so the same three auth edges as every router.
+        ("app.modules.monitoring.router", "app.modules.identity.deps"),
+        ("app.modules.monitoring.router", "app.modules.identity.models"),
+        ("app.modules.monitoring.router", "app.modules.identity.security"),
         ("app.modules.notifications.router", "app.modules.identity.deps"),
         ("app.modules.notifications.router", "app.modules.identity.models"),
         ("app.modules.notifications.router", "app.modules.identity.security"),
