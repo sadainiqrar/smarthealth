@@ -229,7 +229,8 @@ visibility), so the server pulls without a secret. Then:
 
 ```bash
 scripts/release.sh                     # builds and pushes five images to ghcr.io/sadainiqrar, records the tag
-                                       # and the CloudFront URL in values-aws.yaml, commits "release: <sha>"
+                                       # and the CloudFront URL in values-aws.yaml, renders the charts with
+                                       # them (tests; needs helm), commits "release: <sha>"
 # fast-forward main to that commit and push it
 scripts/aws_start.sh                   # starts NAT and server, waits for /api/ready (up to 15 min)
 scripts/aws_seed.sh                    # first time only, once Argo CD has synced: the demo data

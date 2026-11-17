@@ -2568,7 +2568,7 @@ One VPC (`10.20.0.0/16`) in one availability zone of `ap-southeast-2`, with two 
 (`network.tf`):
 
 - **public**: the NAT instance (`t4g.micro`, Amazon Linux 2023), with a public IPv4, source/dest
-  check off, and `iptables` masquerade from the private subnet; its security group admits
+  check off, and an `nftables` masquerade rule from the private subnet; its security group admits
   only the private subnet;
 - **private**: the k3s server (`m7i-flex.large`, Ubuntu 24.04, 40 GB encrypted gp3). It has no
   public IP and no key pair. Its security group admits TCP 80 from the AWS-managed
@@ -2614,7 +2614,10 @@ and local-path), and installs `smarthealth-boot.service`. That oneshot unit runs
    `argocd` (D-41);
 4. wait for Argo CD's CRDs, set its admin password (bcrypt) and apply `argocd-extra.yaml`.
 
-Pods whose Secret does not exist yet wait instead of starting with empty passwords. Rotating
+Pods whose Secret does not exist yet wait instead of starting with empty passwords. The server ignores later changes to its `user_data` (`lifecycle.ignore_changes` in
+`server.tf`, so an apply never replaces a running server): **an edit to either template reaches
+only a newly created server** — on the running one, copy the script over through Session
+Manager, or replace the server deliberately. Rotating
 a password is a change in SSM and a reboot. The NAT instance's user-data enables forwarding
 and masquerade and its own timer, 15 minutes after the server's.
 
