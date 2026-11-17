@@ -220,8 +220,11 @@ In `services/assistant/assistant_service/reports.py`:
   failed steps, and what to look at next, using only the given figures.
 - The prompt carries only the JSON above: no patient data. Failure messages are exception
   text, and the PRD records that this text is sent to the LLM provider.
-- **Offline / no model:** a deterministic template writes the same four headings from the
-  statuses and reasons.
+- **Offline / no model:** a deterministic template writes one overall sentence (healthy, N
+  need attention, or can't tell), the "Needs attention" items (bad first) and the most recent
+  failure, from the statuses and reasons.
+- **Never a false all-clear:** when a source is unreachable or items are `unknown`, the report
+  says it can't tell and names the source; it never calls an unmeasured system healthy.
 - Every number shown comes from the cards. The model phrases and never computes, the same
   rule as the existing report kinds.
 
