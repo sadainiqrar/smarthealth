@@ -17,6 +17,8 @@ FastAPI instrumentation lives in `app.main`, not here: `app/core` is framework-f
 from __future__ import annotations
 
 import logging
+import os
+import socket
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -78,6 +80,10 @@ def build_telemetry(
         {
             "service.name": service_name,
             "service.namespace": "smarthealth",
+            # One series per process: two Celery children with an identical resource would
+            # otherwise merge into one Prometheus series that flips between their cumulative
+            # totals. Dashboards aggregate with sum/max by job.
+            "service.instance.id": f"{socket.gethostname()}-{os.getpid()}",
             "deployment.environment": environment,
         }
     )
@@ -121,19 +127,15 @@ def install(telemetry: Telemetry) -> Telemetry:
     return _installed
 
 
-#: Providers that already carry a heartbeat; a second registration would double the series.
-_heartbeats: set[int] = set()
-
-
 def register_heartbeat(meter_provider: MeterProvider) -> None:
     """Export `smarthealth.heartbeat` (the process's current Unix time) on every metric
     export (system health spec §3). Prometheus sees `smarthealth_heartbeat_seconds`; a
     process is alive while `time() - smarthealth_heartbeat_seconds` stays under a minute.
     The value is a timestamp, not 1, because the collector re-serves its last value for
     minutes after a process dies -- a frozen timestamp ages, a constant 1 would not."""
-    if id(meter_provider) in _heartbeats:
+    if getattr(meter_provider, "_smarthealth_heartbeat", False):  # twice would double the series
         return
-    _heartbeats.add(id(meter_provider))
+    meter_provider._smarthealth_heartbeat = True
 
     def beat(_options: CallbackOptions):
         yield Observation(time.time())

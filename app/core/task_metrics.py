@@ -25,8 +25,7 @@ def on_success(sender=None, **_kwargs) -> None:
 
 
 def on_retry(sender=None, request=None, **_kwargs) -> None:
-    # task_retry's sender is the *request*'s task in some Celery versions; the request
-    # always carries the name.
+    # Prefer the request's task name; fall back to the sender.
     name = getattr(request, "task", None) or _name(sender)
     _tasks.add(1, {"task": name, "outcome": "retry"})
 

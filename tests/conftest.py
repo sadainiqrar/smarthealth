@@ -42,7 +42,7 @@ def spans() -> InMemorySpanExporter:
 @pytest.fixture
 def metric_reader() -> InMemoryMetricReader:
     """The suite's metric reader. Metrics are cumulative across the session, so assert
-    on presence, not on counts."""
+    on presence or on a before/after delta, never on absolute counts."""
     return test_telemetry.METRIC_READER
 
 

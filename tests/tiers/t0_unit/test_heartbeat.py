@@ -39,3 +39,11 @@ def test_registering_twice_on_one_provider_keeps_one_series():
     register_heartbeat(telemetry.meter_provider)
     register_heartbeat(telemetry.meter_provider)
     assert len(_points(reader, "smarthealth.heartbeat")) == 1
+
+
+def test_each_process_gets_its_own_series_identity():
+    import os
+
+    telemetry = build_telemetry("part-a-test", "test")
+    instance = telemetry.tracer_provider.resource.attributes["service.instance.id"]
+    assert str(os.getpid()) in instance

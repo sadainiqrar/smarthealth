@@ -49,3 +49,16 @@ def test_an_unknown_sender_is_counted_as_unknown(metric_reader):
     before = _count(metric_reader, "unknown", "failure")
     task_metrics.on_failure(sender=None)
     assert _count(metric_reader, "unknown", "failure") == before + 1
+
+
+def test_the_handlers_are_connected_to_celerys_signals():
+    from celery import signals
+
+    import app.celery_app  # noqa: F401 - connects the handlers on import
+
+    for signal, handler in [
+        (signals.task_success, task_metrics.on_success),
+        (signals.task_retry, task_metrics.on_retry),
+        (signals.task_failure, task_metrics.on_failure),
+    ]:
+        assert any(receiver is handler for receiver in signal._live_receivers(None)), handler

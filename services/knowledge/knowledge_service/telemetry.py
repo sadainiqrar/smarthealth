@@ -8,6 +8,8 @@ sides: the server extracts the caller's trace context from metadata, the client 
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 
 from opentelemetry import metrics, trace
@@ -46,6 +48,8 @@ def setup(endpoint: str, environment: str) -> TracerProvider | None:
     provider = TracerProvider(resource=Resource.create({
         "service.name": "knowledge", "service.namespace": "smarthealth",
         "deployment.environment": environment,
+        # One series per process (see app/core/telemetry.py).
+        "service.instance.id": f"{socket.gethostname()}-{os.getpid()}",
     }))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
     trace.set_tracer_provider(provider)
