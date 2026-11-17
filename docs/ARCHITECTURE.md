@@ -2186,6 +2186,19 @@ minute, an event dead-lettered, notifications in the dead-letter queue, a consum
 behind, API 5xx above 5%, booking workflows failing, assistant turns failing, and the
 assistant slow to start answering.
 
+**Liveness and the flows that had no metrics** (system health, PRD D-55, 2026-11-17). Every
+process — the five above plus Celery beat (`beat_init`), knowledge and assistant — exports
+`smarthealth.heartbeat`, an observable gauge whose value is the process's Unix time at each
+export (`smarthealth_heartbeat_seconds` in Prometheus). A process is alive while
+`time() - smarthealth_heartbeat_seconds` stays under a minute; the value is a timestamp, not
+1, because the collector re-serves a dead process's last sample for minutes. Celery task runs
+are counted by task and outcome from Celery's signals (`app/core/task_metrics.py`,
+`smarthealth_celery_tasks_total{task, outcome=success|retry|failure}`), which makes
+notifications, reminders and document extraction visible beyond queue depth; and the
+knowledge service counts each `Search` by outcome with its duration
+(`knowledge_searches_total{outcome=hit|no_results|error}`,
+`knowledge_search_duration_milliseconds`) — retrieval previously had traces only.
+
 **Known limits, stated plainly.**
 
 - **SQL spans do not reach Jaeger.** `instrument_engine` attaches SQLAlchemy instrumentation
