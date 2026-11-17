@@ -232,7 +232,7 @@ In `services/assistant/assistant_service/reports.py`:
 
 - *Async backbone* gains Celery task outcomes.
 - *Assistant* gains retrieval searches by outcome and search p95.
-- *Service overview* gains a heartbeat table (seconds since last seen per job).
+- *Service overview* gains a timeseries of seconds since each job was last seen (`time() - max by (job) (smarthealth_heartbeat_seconds)`), so a gap shows when a process died.
 - `scripts/sync_chart_files.py` copies the dashboards into the charts, as today.
 
 ## 8. Testing
