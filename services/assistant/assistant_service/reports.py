@@ -105,6 +105,11 @@ create table if not exists reports (
 """
 
 
+def _hhmm(iso: str) -> str:
+    """HH:MM, UTC, of an ISO timestamp from Part A (which may end in "Z")."""
+    return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(UTC).strftime("%H:%M")
+
+
 @dataclass
 class Report:
     id: str
@@ -546,26 +551,36 @@ class ReportRunner:
         )
         attention = [i for i in items if i[1] in ("bad", "warn")]
         attention.sort(key=lambda i: i[1] != "bad")  # bad first
+        unknown = sum(1 for i in items if i[1] == "unknown")
+        failed = len(failures["failures"])
         await emit({**tool, "status": "done",
-                    "summary": f"{len(attention)} need attention, "
-                               f"{len(failures['failures'])} recent failures"})
-        unseen = [k for k, v in overview["sources"].items() if v != "ok"]
+                    "summary": f"{len(attention)} need attention, {failed} recent "
+                               f"failure{'' if failed == 1 else 's'}"})
+        unseen = [f"{k} {v.replace('_', ' ')}" for k, v in overview["sources"].items()
+                  if v != "ok"]
+        blind = bool(unseen or unknown)
+        fields = [{"label": n, "value": r} for n, _s, r in attention]
+        if blind:
+            # Never "healthy" when part of the picture could not be measured.
+            detail = f"{unknown} items not measured" if unknown else "not all data visible"
+            fields.append({"label": "Can't tell",
+                           "value": detail + (f": {', '.join(unseen)}" if unseen else "")})
+        elif not attention:
+            fields = [{"label": "Everything", "value": "healthy"}]
         await emit({
             "kind": "card", "card_kind": "metrics", "title": "Needs attention",
             "subtitle": ("Last 24 hours" if not unseen
                          else f"Last 24 hours — not visible: {', '.join(unseen)}"),
-            "fields": [{"label": n, "value": r} for n, _s, r in attention]
-            or [{"label": "Everything", "value": "healthy"}],
-            "badge": f"{len(attention)}", "link": "/health",
+            "fields": fields, "badge": f"{len(attention)}", "link": "/health",
         })
         recent = failures["failures"][:5]
         if recent:
             await emit({
                 "kind": "card", "card_kind": "metrics", "title": "Recent failures",
-                "subtitle": "Newest first; the trace link needs the tools login",
-                "fields": [{"label": f"{f['at'][11:16]} {f['service']}",
+                "subtitle": "Newest first; times in UTC",
+                "fields": [{"label": f"{_hhmm(f['at'])} {f['service']}",
                             "value": f"{f['failed_step']}: {f['message']}"} for f in recent],
-                "badge": f"{len(failures['failures'])}", "link": "/health",
+                "badge": f"{failed}", "link": "/health",
             })
         material = "Statuses (name | status | reason):\n" + "\n".join(
             f"{n} | {s} | {r}" for n, s, r in items
@@ -575,7 +590,26 @@ class ReportRunner:
         )
         if unseen:
             material += f"\nNot visible (source down): {', '.join(unseen)}"
-        await self._narrative(emit, usage, material, attention, recent, kind="health")
+        # The same facts, plainly, for when there is no model.
+        if unseen:
+            lines = [f"Can't tell whether everything is healthy: "
+                     f"{', '.join(k.split(' ')[0] for k in unseen)} not reachable."]
+        elif attention:
+            lines = [f"{len(attention)} need attention."]
+        elif unknown:
+            lines = [f"Can't tell whether everything is healthy: {unknown} items "
+                     "could not be measured."]
+        else:
+            lines = ["Everything the health page watches is healthy."]
+        if attention:
+            lines += ["", "**Needs attention**", ""]
+            lines += [f"- **{n}**: {r}" for n, _s, r in attention]
+        if recent:
+            lines += ["", "**Most recent failure**", "",
+                      f"- {recent[0]['operation']} failed at "
+                      f"{recent[0]['failed_step']}: {recent[0]['message']}"]
+        await self._narrative(emit, usage, material, [], None, kind="health",
+                              fallback="\n".join(lines) + "\n")
 
     async def _write_utilisation(
         self, caller: Caller, report: Report, emit, usage: TurnUsage
@@ -645,7 +679,8 @@ class ReportRunner:
         await self._narrative(emit, usage, material, [], None, kind="utilisation")
 
     async def _narrative(
-        self, emit, usage: TurnUsage, material: str, figures, busiest, kind: str = "operations"
+        self, emit, usage: TurnUsage, material: str, figures, busiest, kind: str = "operations",
+        fallback: str | None = None,
     ) -> None:
         if self._model is not None:
             try:
@@ -670,17 +705,8 @@ class ReportRunner:
                     return
             except Exception:  # noqa: BLE001 - the report still states its figures
                 logger.info("report narrative failed; writing it plainly", exc_info=True)
-        if kind == "health":
-            attention, recent = figures, busiest
-            lines = (["**Needs attention**", ""]
-                     + [f"- **{n}**: {r}" for n, _s, r in attention]
-                     if attention else ["Everything the health page watches is healthy."])
-            if recent:
-                lines += ["", "**Most recent failure**", "",
-                          f"- {recent[0]['operation']} failed at "
-                          f"{recent[0]['failed_step']}: {recent[0]['message']}"]
-            text = "\n".join(lines) + "\n"
-            for word in text.split(" "):
+        if fallback is not None:
+            for word in fallback.split(" "):
                 await emit({"kind": "token", "text": word + " "})
             return
         if kind == "engagement":

@@ -952,6 +952,92 @@ async def test_a_system_health_report_lets_the_model_phrase_the_same_figures():
     assert "9 of 40 failed" in prompt and "gateway unavailable" in prompt
 
 
+def _blind_overview() -> dict:
+    """Prometheus unreachable: every figure is `unknown`, so nothing can be called healthy."""
+    return {
+        "window_hours": 24, "generated_at": "2026-11-17T10:00:00Z",
+        "sources": {"prometheus": "unavailable", "jaeger": "ok"},
+        "components": [{"name": "API", "job": "j", "status": "unknown", "reason": "no data"}],
+        "flows": [{"key": "booking", "label": "Booking", "total": None, "failed": None,
+                   "failure_pct": None, "p95_seconds": None, "previous_total": None,
+                   "status": "unknown", "reason": "no data"}],
+        "backlogs": [],
+        "ai": {"turns": None, "errors": None, "error_pct": None,
+               "first_token_p95_seconds": None, "retrieval_no_results_pct": None,
+               "tokens": None, "status": "unknown", "reason": "no data"},
+    }
+
+
+async def _health_report(fake: FakePartA, model=None):
+    async with Harness(fake, model=model) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="system_health"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+    return [e.card for e in events if e.WhichOneof("kind") == "card"], text(events), events
+
+
+async def test_a_system_health_report_never_says_healthy_when_it_could_not_look():
+    fake = FakePartA.seeded()
+    fake.monitoring_overview = _blind_overview()
+    cards, body, _events = await _health_report(fake)
+    fields = {f.label: f.value for f in cards[0].fields}
+    assert "Everything" not in fields
+    assert "prometheus" in fields["Can't tell"] and "3 items not measured" in fields["Can't tell"]
+    assert body.startswith("Can't tell whether everything is healthy: prometheus")
+    assert "Everything the health page" not in body
+
+
+async def test_a_system_health_report_lists_bad_before_warn_and_leaves_out_ok_items():
+    fake = FakePartA.seeded()
+    fake.monitoring_overview["backlogs"].append(
+        {"key": "dlq", "label": "Dead letters", "value": 3.0, "status": "warn",
+         "reason": "3 messages"})
+    cards, body, _events = await _health_report(fake)
+    labels = [f.label for f in cards[0].fields]
+    assert labels == ["Background jobs", "Booking", "Largest job queue", "Dead letters"]
+    assert "API" not in labels and "Assistant" not in labels
+    assert body.index("Background jobs") < body.index("Dead letters")
+    assert "4 need attention" in body
+
+
+async def test_a_system_health_report_with_no_failures_has_one_card():
+    fake = FakePartA.seeded()
+    fake.monitoring_failures = {"window_hours": 24, "source": "ok", "failures": []}
+    cards, body, events = await _health_report(fake)
+    assert [c.title for c in cards] == ["Needs attention"]
+    assert "Most recent failure" not in body
+    assert events[-1].done.reason == "complete"
+
+
+async def test_a_system_health_report_labels_failure_times_utc_and_counts_one_failure():
+    cards, _body, events = await _health_report(FakePartA.seeded())
+    recent = cards[1]
+    assert "UTC" in recent.subtitle and "tools login" not in recent.subtitle
+    assert recent.fields[0].label == "09:58 part-a-worker"
+    tool = [e.tool for e in events if e.WhichOneof("kind") == "tool"][-1]
+    assert tool.summary == "3 need attention, 1 recent failure"
+
+
+async def test_the_health_instructions_are_the_system_message_the_model_gets():
+    from assistant_service.reports import HEALTH_INSTRUCTIONS
+
+    model = Scripted(script=[AIMessage(content="Fine.")])
+    await _health_report(FakePartA.seeded(), model=model)
+    assert model.calls[-1][0].content == HEALTH_INSTRUCTIONS
+
+
+async def test_a_system_health_report_is_refused_to_front_desk():
+    async with Harness(FakePartA.seeded()) as h:
+        with pytest.raises(grpc.aio.AioRpcError) as raised:
+            await h.stub.StartReport(
+                assistant_pb2.StartReportRequest(kind="system_health"),
+                metadata=_auth(_token(UserRole.FRONT_DESK, user="u-desk")),
+            )
+    assert raised.value.code() is grpc.StatusCode.PERMISSION_DENIED
+
+
 def test_only_the_passages_an_answer_uses_are_cited():
     """Regression, caught by the offline judge (ai-001, groundedness): every retrieved
     passage used to be cited, so knee-pain advice showed the chest-pain guide as a source
