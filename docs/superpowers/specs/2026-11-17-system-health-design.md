@@ -92,7 +92,7 @@ No import of any other `app/modules/*`; the import-boundary meta-test stays gree
 | `queries.py` | The PromQL strings, one named constant per figure, parameterised by the window (`[24h]` and so on) |
 | `rules.py` | Pure functions from numbers to `Status` (`ok \| warn \| bad \| idle \| unknown`) plus a one-line reason; the thresholds table below |
 | `traces.py` | Pure: Jaeger trace JSON to `Failure` |
-| `service.py` | Runs every query in parallel (`asyncio.gather`), applies the rules, builds the response; 15 s Redis cache keyed on endpoint and window |
+| `service.py` | Runs every query in parallel (`asyncio.gather`), applies the rules, builds the response; 15 s in-process cache (per replica; the contract tier has no Redis) keyed on endpoint and window |
 | `schemas.py` | Pydantic response models |
 | `router.py` | `GET /monitoring/overview?hours=` and `GET /monitoring/failures?hours=&limit=`; `require_role(admin)` |
 
@@ -109,14 +109,14 @@ No import of any other `app/modules/*`; the import-boundary meta-test stays gree
               "p95_seconds": 1.8, "previous_total": 37, "status": "ok", "reason": "..."} ... ],
   "backlogs": [ {"key": "outbox", "label": "Unpublished events", "value": 3, "unit": "s oldest",
                  "status": "ok", "reason": "..."} ... ],
-  "ai": {"turns": 120, "first_token_p50_seconds": 0.9, "error_pct": 0.8,
+  "ai": {"turns": 120, "first_token_p95_seconds": 0.9, "error_pct": 0.8,
          "retrieval_no_results_pct": 6.0, "tokens": 81234, "status": "ok", "reason": "..."}
 }
 ```
 
 **Components:** API, Temporal worker, event relay, event consumers, Celery worker, Celery beat,
 knowledge, assistant (from heartbeats); RabbitMQ and Kafka (from `up{job=...}` of their scrape
-jobs); LLM provider (from LLM call errors).
+jobs). The LLM provider is judged in the AI card, by the assistant's error share.
 
 **Flows:**
 
@@ -127,8 +127,7 @@ jobs); LLM provider (from LLM call errors).
 | cancellation | `CancelFollowUpWorkflow` |
 | billing | `PostVisitWorkflow` |
 | provider sync | `ProviderDeactivationWorkflow` and the `providers.state` consumers |
-| notifications | the Celery send task |
-| reminders | `VisitWorkflow`'s reminder activity, or the send task with `kind=reminder` if the activity label is not separable (decided when built, stated in the doc) |
+| notifications and reminders | Celery `notifications.send`; a reminder is a notification the visit timer queued, so the two share one task and one flow |
 | document extraction | Celery `clinical.extract_document` |
 | retrieval | knowledge searches |
 | assistant chat | assistant turns |
@@ -175,6 +174,8 @@ endpoint still answers 200.
 
 A failure share needs at least 5 events before it can be `warn` or `bad`, so one failure in
 two bookings is not "bad".
+
+Every threshold is *at or above*: a value equal to `warn` is `warn`.
 
 ## 5. Frontend: `frontend/src/pages/Health.tsx`
 
@@ -226,7 +227,7 @@ In `services/assistant/assistant_service/reports.py`:
 | T1 contract (assistant) | `system_health` against `tests/harness/fake_part_a.py` extended with the two endpoints: scripted model and offline template; non-admin refused |
 | T1 / meta | The new metrics: knowledge Search increments `knowledge_searches_total` by outcome; Celery signal handlers increment by outcome; every process entry point installs the heartbeat (a meta-test enumerates entry points) |
 | Frontend (Vitest) | `Health.tsx` renders all sections from a fixture; the unavailable banner; non-admin cannot reach it |
-| T3 docker | Against the compose stack: the heartbeat for `part-a-api` appears; a forced billing decline (`payments-mock /_chaos`) shows in `/monitoring/failures` with the failed step |
+| T3 docker | Against the test stack's real Prometheus and Jaeger: every PromQL query in `queries.py` is accepted (no `SourceUnavailable`); an error span exported over OTLP under a unique service name comes back from `JaegerClient.error_traces` and reduces to a `Failure` with its message |
 | Smoke | `k3d_smoke.py` and `aws_check.sh` call `/monitoring/overview` as admin and require `sources.prometheus == "ok"` and every component `ok` |
 
 New core-path code under `app/modules/**` gets a validated case in `tests/cases/`
