@@ -54,6 +54,7 @@ scrapes of RabbitMQ and kafka-exporter. Traces are in Jaeger.
 | Flow / component | Source | Status before this work |
 | --- | --- | --- |
 | Booking, reschedule, cancel follow-up, billing (post-visit), provider deactivation | `temporal_workflow_completed_total` / `temporal_workflow_failed_total` by `workflow_type`; `temporal_activity_execution_failed_total` | exists |
+| Booking outcomes | none: a compensated booking (declined payment, lost slot) ends `failed` while `BookAppointmentWorkflow` completes normally, so the workflow counters said "none failed" | **added (after a live run):** `smarthealth_bookings_total{outcome=confirmed\|failed}` (`app/modules/scheduling/metrics.py`), recorded after the commit by `booking.confirm`, `booking.fail_booking` and the stale-pending reconciler, only when the call changed the appointment (`confirm_booking` / `fail_booking` return whether they did), so a retried activity counts nothing |
 | API | `http_server_duration_milliseconds_*` by `http_target`, `http_status_code` | exists |
 | Events | `smarthealth_outbox_oldest_unpublished_age_seconds`, `smarthealth_outbox_published_total` / `_failed_total`, `smarthealth_consumer_events_total{consumer,outcome}`, `kafka_consumergroup_lag` | exists |
 | Queues | `rabbitmq_queue_messages_ready` / `_unacked` | exists |
@@ -127,7 +128,7 @@ knowledge, assistant (from heartbeats); RabbitMQ (`up{job="rabbitmq"}`) and Kafk
 
 | Flow | Source |
 | --- | --- |
-| booking | workflow type `BookAppointment` |
+| booking | `smarthealth_bookings_total`: runs = confirmed + failed, failed = `outcome="failed"`; p95 from the `BookAppointment` workflow's end-to-end histogram |
 | reschedule | `Reschedule` |
 | cancellation | `CancelFollowUp` |
 | billing | `PostVisit` |
@@ -141,6 +142,17 @@ knowledge, assistant (from heartbeats); RabbitMQ (`up{job="rabbitmq"}`) and Kafk
 `previous_total` is the same figure for the window before, for the trend arrow. Temporal labels
 `workflow_type` with the **registered** name (`@workflow.defn(name=...)`), not the class name;
 a meta-test ties every workflow and task flow to a registered name.
+
+**Counting runs.** `increase()` never counts a series' first sample, so a series born inside
+the window -- a process's first export, or a restart that gives it a new `instance` -- would
+lose its first value (live: four bookings completed inside the first export interval and
+`increase` said 0). Every counter figure is `queries.runs(S, w, offset)`:
+`sum(increase(S[w] off) or min_over_time(S[w] off) * 0) + (sum(min_over_time(S[w] off) unless S offset <w+off>) or vector(0))`
+-- each series absent at the window's start adds its first value (`min_over_time` of a
+counter). A workflow's runs are completed runs + failed runs, two metrics added (one
+`__name__=~` selector would collide once `min_over_time` drops the name); the previous window
+is `completed + (failed or vector(0))`, so a never-failed workflow still compares and a
+missing `completed` means no comparison. Current-window figures end `or vector(0)`.
 
 **Backlogs:**
 - outbox age;

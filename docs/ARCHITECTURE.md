@@ -595,7 +595,7 @@ writes nothing. Spec: `docs/superpowers/specs/2026-11-17-system-health-design.md
 | File | Responsibility |
 | --- | --- |
 | `client.py` | `PrometheusClient` (`/api/v1/query`) and `JaegerClient` (`/api/traces` with `tags={"error":"true"}`, and `/api/services` as a ping), 3 s timeout each; any transport or HTTP error is `SourceUnavailable` |
-| `queries.py` | Every PromQL string: the eight processes by heartbeat (`COMPONENTS`), RabbitMQ and Kafka up, the nine flows (`FLOWS`: five Temporal workflows by registered type, two Celery tasks, knowledge searches, assistant turns), the five backlogs and the AI figures. `every_query()` lists them all for the T3 test |
+| `queries.py` | Every PromQL string: the eight processes by heartbeat (`COMPONENTS`), RabbitMQ and Kafka up, the nine flows (`FLOWS`: booking by outcome from `smarthealth_bookings_total`, four Temporal workflows by registered type, two Celery tasks, knowledge searches, assistant turns), the five backlogs and the AI figures. Every counter figure goes through `runs()`, which also counts a series born inside the window from zero (`increase` drops a series' first sample). `every_query()` lists them all for the T3 test |
 | `rules.py` | `Verdict(status, reason)` and the thresholds below; pure |
 | `traces.py` | A Jaeger trace → `Failure`: root operation and service, first failed span, its `exception.message` (or status description), and a relative `/jaeger/trace/<id>` link; pure |
 | `service.py` | `MonitoringService`: every query in parallel, the rules applied, the answer cached 15 s |
@@ -2317,7 +2317,11 @@ export (`smarthealth_heartbeat_seconds` in Prometheus). A process is alive while
 1, because the collector re-serves a dead process's last sample for minutes. Celery task runs
 are counted by task and outcome from Celery's signals (`app/core/task_metrics.py`,
 `smarthealth_celery_tasks_total{task, outcome=success|retry|failure}`), which makes
-notifications, reminders and document extraction visible beyond queue depth; and the
+notifications, reminders and document extraction visible beyond queue depth; bookings are
+counted by final outcome (`app/modules/scheduling/metrics.py`,
+`smarthealth_bookings_total{outcome=confirmed|failed}`, recorded after the commit by the
+confirm and compensation activities and the stale-pending reconciler, once per booking),
+because a compensated booking's workflow completes normally; and the
 knowledge service counts each `Search` by outcome with its duration
 (`knowledge_searches_total{outcome=hit|no_results|error}`,
 `knowledge_search_duration_milliseconds`) — retrieval previously had traces only.
