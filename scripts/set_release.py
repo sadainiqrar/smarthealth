@@ -10,7 +10,8 @@ import sys
 
 
 def set_release(text: str, tag: str, url: str = "") -> str:
-    text, n = re.subn(r"(?m)^(    tag: ).*$", lambda m: m.group(1) + tag, text)
+    # Quoted: a short SHA can be all digits, which YAML would read as a number.
+    text, n = re.subn(r"(?m)^(    tag: ).*$", lambda m: f'{m.group(1)}"{tag}"', text)
     if n != 1:
         raise ValueError(f"expected one 'tag:' under global.image, found {n}")
     if url:
