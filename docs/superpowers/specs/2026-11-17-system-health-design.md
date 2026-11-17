@@ -265,6 +265,6 @@ New core-path code under `app/modules/**` gets a validated case in `tests/cases/
 - **Jaeger's `/api/traces` is its UI's internal API**, not a stable public contract. It is
   pinned to the deployed Jaeger image (1.62) and covered by the T3 test.
 - **Jaeger all-in-one keeps traces in memory.** After a restart the failure list starts
-  empty; the page says "since <Jaeger start>" when it can't look back the full window.
+  empty, so a quiet list right after a restart is not proof that nothing failed (PRD R-37).
 - **Exception text goes to the LLM provider** in the AI report. It carries no clinical field
   names by convention, but it is free text; recorded in the PRD.
