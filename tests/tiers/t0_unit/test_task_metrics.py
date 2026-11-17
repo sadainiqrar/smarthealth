@@ -60,5 +60,24 @@ def test_the_handlers_are_connected_to_celerys_signals():
         (signals.task_success, task_metrics.on_success),
         (signals.task_retry, task_metrics.on_retry),
         (signals.task_failure, task_metrics.on_failure),
+        (signals.task_postrun, task_metrics.on_postrun),
     ]:
         assert any(receiver is handler for receiver in signal._live_receivers(None)), handler
+
+
+def test_a_rejected_run_counts_as_a_failure(metric_reader):
+    """`notifications.send` dead-letters with Reject(requeue=False): Celery then sends
+    neither task_success nor task_failure, only task_postrun with state REJECTED. Without
+    this, the flow row would say "none failed" while the dead-letter queue fills."""
+    before = _count(metric_reader, "notifications.send", "failure")
+    task_metrics.on_postrun(sender=_Task(), state="REJECTED")
+    assert _count(metric_reader, "notifications.send", "failure") == before + 1
+
+
+@pytest.mark.parametrize("state", ["SUCCESS", "FAILURE", "RETRY", "IGNORED"])
+def test_postrun_counts_nothing_the_other_signals_already_count(metric_reader, state):
+    before = {o: _count(metric_reader, "notifications.send", o)
+              for o in ("success", "failure", "retry")}
+    task_metrics.on_postrun(sender=_Task(), state=state)
+    assert {o: _count(metric_reader, "notifications.send", o)
+            for o in ("success", "failure", "retry")} == before

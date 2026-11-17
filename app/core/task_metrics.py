@@ -32,3 +32,11 @@ def on_retry(sender=None, request=None, **_kwargs) -> None:
 
 def on_failure(sender=None, **_kwargs) -> None:
     _tasks.add(1, {"task": _name(sender), "outcome": "failure"})
+
+
+def on_postrun(sender=None, state=None, **_kwargs) -> None:
+    """A run that ended in `Reject` (a dead-lettered notification) gets no task_failure
+    signal from Celery, only task_postrun with state REJECTED -- count it as a failure.
+    Every other state is already counted by the handlers above."""
+    if state == "REJECTED":
+        _tasks.add(1, {"task": _name(sender), "outcome": "failure"})

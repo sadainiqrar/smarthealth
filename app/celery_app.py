@@ -160,6 +160,7 @@ from app.core import task_metrics  # noqa: E402 - after the app, beside its othe
 signals.task_success.connect(task_metrics.on_success, weak=False)
 signals.task_retry.connect(task_metrics.on_retry, weak=False)
 signals.task_failure.connect(task_metrics.on_failure, weak=False)
+signals.task_postrun.connect(task_metrics.on_postrun, weak=False)
 
 
 configure(get_settings())
