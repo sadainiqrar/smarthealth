@@ -78,12 +78,13 @@ export default function Reports() {
             Written in the background from the analytics figures; you can leave and come back.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
             ["operations_7", "Weekly report"],
             ["operations_30", "Monthly report"],
             ["utilisation_30", "Department utilisation"],
             ["engagement_30", "Engagement summary"],
+            ["system_health", "System health"],
           ].map(([kind, label]) => (
             <Button key={kind} onClick={() => void start(kind)} disabled={starting !== null}>
               {starting === kind ? <Spinner /> : <FileBarChartIcon />} {label}
