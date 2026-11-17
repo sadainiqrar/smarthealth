@@ -14,7 +14,7 @@ import sys
 
 import httpx
 
-TOOLS = ["/grafana/", "/jaeger/", "/temporal/", "/mailpit/", "/rabbitmq/",
+TOOLS = ["/grafana/", "/jaeger/", "/temporal/", "/mailpit/",
          "/prometheus/graph", "/argocd/"]
 
 
@@ -64,6 +64,15 @@ def main() -> int:
                             follow_redirects=True)
         if authed.status_code != 200:
             raise SystemExit(f"{path}: expected 200 with login, got {authed.status_code}")
+
+    # RabbitMQ: its own login, not the tools one (they share the Authorization header).
+    step("rabbitmq: page opens, its API refuses no login and the tools login")
+    if (code := client.get(f"{base}/rabbitmq/").status_code) != 200:
+        raise SystemExit(f"/rabbitmq/: expected 200, got {code}")
+    for auth in (None, ("reviewer", tools_pw)):
+        if (code := client.get(f"{base}/rabbitmq/api/overview", auth=auth).status_code) != 401:
+            who = auth[0] if auth else "no login"
+            raise SystemExit(f"/rabbitmq/api/overview, {who}: expected 401, got {code}")
 
     step("caching: assets cached, API not")
     index = client.get(f"{base}/").text

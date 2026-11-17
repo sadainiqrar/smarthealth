@@ -38,10 +38,16 @@ if [ "${n:-0}" -gt 0 ] 2>/dev/null; then ok "appointments listed ($n)"; else bad
 want "/api/.well-known/jwks.json" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/api/.well-known/jwks.json)"
 want "frontend /" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/)"
 
-for p in /grafana/ /jaeger/ /temporal/ /mailpit/ /rabbitmq/ /prometheus/graph /argocd/; do
+for p in /grafana/ /jaeger/ /temporal/ /mailpit/ /prometheus/graph /argocd/; do
   want "$p without login" 401 "$(curl -s -o /dev/null -w '%{http_code}' $B$p)"
   want "$p with login" 200 "$(curl -s -o /dev/null -w '%{http_code}' -u "reviewer:$TOOLS" $B$p)"
 done
+# RabbitMQ: guarded by its own login (it and the tools login share the Authorization header).
+RABBIT="$(pw rabbitmq-password)"
+want "/rabbitmq/ page opens" 200 "$(curl -s -o /dev/null -w '%{http_code}' $B/rabbitmq/)"
+want "/rabbitmq/api without login" 401 "$(curl -s -o /dev/null -w '%{http_code}' $B/rabbitmq/api/overview)"
+want "/rabbitmq/api with the tools login" 401 "$(curl -s -o /dev/null -w '%{http_code}' -u "reviewer:$TOOLS" $B/rabbitmq/api/overview)"
+want "/rabbitmq/api with its own login" 200 "$(curl -s -o /dev/null -w '%{http_code}' -u "smarthealth:$RABBIT" $B/rabbitmq/api/overview)"
 
 down="$(curl -s -u "reviewer:$TOOLS" $B/prometheus/api/v1/targets | python3 -c 'import json,sys;t=json.load(sys.stdin)["data"]["activeTargets"];print(sum(x["health"]!="up" for x in t),len(t))')"
 want "prometheus targets down (of total)" "0" "${down%% *}"; echo "      ${down#* } targets scraped"

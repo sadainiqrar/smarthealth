@@ -17,7 +17,9 @@ import time
 import httpx
 
 NS = "smarthealth"
-TOOLS = ["/grafana/", "/jaeger/", "/temporal/", "/mailpit/", "/rabbitmq/", "/prometheus/graph"]
+TOOLS = ["/grafana/", "/jaeger/", "/temporal/", "/mailpit/", "/prometheus/graph"]
+# RabbitMQ is guarded by its own login, not the tools login (the two share one header).
+RABBITMQ_API = "/rabbitmq/api/overview"
 
 
 def kubectl(*args: str, check: bool = True) -> str:
@@ -94,6 +96,17 @@ def tools(base: str, user: str, password: str) -> None:
                            follow_redirects=True)
         if authed.status_code != 200:
             raise SystemExit(f"{path}: expected 200 with login, got {authed.status_code}")
+    rabbit = {
+        "page, no login": httpx.get(f"{base}/rabbitmq/", timeout=10).status_code == 200,
+        "api, no login": httpx.get(f"{base}{RABBITMQ_API}", timeout=10).status_code == 401,
+        "api, tools login": httpx.get(f"{base}{RABBITMQ_API}", auth=(user, password),
+                                      timeout=10).status_code == 401,
+        "api, its own login": httpx.get(f"{base}{RABBITMQ_API}",
+                                        auth=("smarthealth", "smarthealth"),  # dev default
+                                        timeout=10).status_code == 200,
+    }
+    if not all(rabbit.values()):
+        raise SystemExit(f"rabbitmq: {rabbit}")
 
 
 def demo_seed() -> None:

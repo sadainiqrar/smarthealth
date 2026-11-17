@@ -275,11 +275,15 @@ def test_the_ingress_routes_by_path_and_guards_the_tools():
     assert routes["/api"][0] == "app" and "strip-api" in routes["/api"][1]
     assert routes["/smarthealth.assistant.v1.Assistant"][0] == "envoy"
     for path, svc in {"/grafana": "grafana", "/jaeger": "jaeger", "/temporal": "temporal-ui",
-                      "/mailpit": "mailpit", "/rabbitmq": "rabbitmq",
-                      "/prometheus": "prometheus"}.items():
+                      "/mailpit": "mailpit", "/prometheus": "prometheus"}.items():
         assert routes[path][0] == svc
         assert "tools-auth" in routes[path][1], path
     assert "tools-auth" not in routes["/api"][1]
+    # RabbitMQ's UI sends its own Basic credentials in the same Authorization header, so
+    # behind the tools login no request could pass both (an endless popup on AWS). Its own
+    # login, with the SSM password, guards it instead (PRD D-39).
+    assert routes["/rabbitmq"][0] == "rabbitmq"
+    assert "tools-auth" not in routes["/rabbitmq"][1]
 
 
 @needs_helm
@@ -373,7 +377,8 @@ def test_the_aws_values_render_without_secrets_and_from_ghcr():
                 assert c["image"].startswith("ghcr.io/sadainiqrar/smarthealth-"), c["image"]
                 assert c["image"].endswith(f":{tag}")
     routes = _routes(docs)
-    for path in ("/grafana", "/jaeger", "/temporal", "/mailpit", "/rabbitmq", "/prometheus"):
+    for path in ("/grafana", "/jaeger", "/temporal", "/mailpit", "/prometheus"):
         assert "tools-auth" in routes[path][1], path
+    assert "tools-auth" not in routes["/rabbitmq"][1]
     assert aws["global"]["publicUrl"].startswith("https://")
     assert aws["global"]["publicUrl"].endswith(".cloudfront.net")

@@ -40,6 +40,19 @@ spec:
           {{- include "smarthealth.path" (dict "path" "/jaeger" "svc" "jaeger" "port" 16686) | nindent 10 }}
           {{- include "smarthealth.path" (dict "path" "/temporal" "svc" "temporal-ui" "port" 8080) | nindent 10 }}
           {{- include "smarthealth.path" (dict "path" "/mailpit" "svc" "mailpit" "port" 8025) | nindent 10 }}
+---
+# RabbitMQ is NOT behind the tools login: its UI sends its own Basic credentials in the same
+# Authorization header, so no request could satisfy both (the browser re-prompts forever).
+# RabbitMQ's own login -- the rabbitmq-password Secret -- guards it, state changes included.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smarthealth-rabbitmq
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
           {{- include "smarthealth.path" (dict "path" "/rabbitmq" "svc" "rabbitmq" "port" 15672) | nindent 10 }}
 ---
 apiVersion: networking.k8s.io/v1
