@@ -4,6 +4,7 @@ terraform on the path."""
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -19,19 +20,22 @@ TERRAFORM = shutil.which("terraform")
 needs_terraform = pytest.mark.skipif(TERRAFORM is None, reason="terraform is not installed")
 
 
-def _tf(directory: Path, *args: str) -> subprocess.CompletedProcess:
+def _tf(directory: Path, data_dir: Path, *args: str) -> subprocess.CompletedProcess:
+    # Its own TF_DATA_DIR: once the stack has been deployed, deploy/terraform/.terraform
+    # names the S3 backend, and an offline init there would ask for AWS credentials.
+    env = {**os.environ, "TF_DATA_DIR": str(data_dir)}
     return subprocess.run([TERRAFORM, f"-chdir={directory.as_posix()}", *args],
-                          capture_output=True, text=True, check=False)
+                          capture_output=True, text=True, check=False, env=env)
 
 
 @needs_terraform
 @pytest.mark.parametrize("directory", [TF, TF / "bootstrap"], ids=["stack", "bootstrap"])
-def test_terraform_is_formatted_and_valid(directory):
-    fmt = _tf(directory, "fmt", "-check", "-recursive")
+def test_terraform_is_formatted_and_valid(directory, tmp_path):
+    fmt = _tf(directory, tmp_path, "fmt", "-check", "-recursive")
     assert fmt.returncode == 0, f"terraform fmt would change:\n{fmt.stdout}"
-    init = _tf(directory, "init", "-backend=false", "-input=false")
+    init = _tf(directory, tmp_path, "init", "-backend=false", "-input=false")
     assert init.returncode == 0, init.stderr
-    valid = _tf(directory, "validate")
+    valid = _tf(directory, tmp_path, "validate")
     assert valid.returncode == 0, valid.stderr
 
 
