@@ -915,6 +915,43 @@ async def test_a_utilisation_report_lists_departments_busiest_first_from_part_a(
     assert events[-1].done.reason == "complete"
 
 
+async def test_a_system_health_report_states_the_problems_from_part_a_offline():
+    """System health spec §6: the cards carry Part A's figures; with no model the
+    narrative is a deterministic template naming what is wrong."""
+    async with Harness(FakePartA.seeded()) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="system_health"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+    assert job.title == "System health snapshot"
+    cards = [e.card for e in events if e.WhichOneof("kind") == "card"]
+    attention = {f.label: f.value for f in cards[0].fields}
+    assert attention["Background jobs"] == "not reporting"
+    assert attention["Booking"] == "9 of 40 failed (22.5%)"
+    assert attention["Largest job queue"] == "240 messages: falling behind"
+    failures = {f.label: f.value for f in cards[1].fields}
+    assert "RunActivity:billing.precheck" in next(iter(failures.values()))
+    body = text(events)
+    assert "Needs attention" in body and "Background jobs" in body
+    assert events[-1].done.reason == "complete"
+
+
+async def test_a_system_health_report_lets_the_model_phrase_the_same_figures():
+    narrative = "Booking is failing at the billing pre-check; the Celery worker is down."
+    model = Scripted(script=[AIMessage(content=narrative)])
+    async with Harness(FakePartA.seeded(), model=model) as h:
+        admin = _token(UserRole.ADMIN, user="u-admin")
+        job = await h.stub.StartReport(
+            assistant_pb2.StartReportRequest(kind="system_health"), metadata=_auth(admin)
+        )
+        events = await _watch(h, admin, job.report_id)
+    assert narrative in text(events)
+    # The model was given the figures, not asked to find them.
+    prompt = model.calls[-1][-1].content
+    assert "9 of 40 failed" in prompt and "gateway unavailable" in prompt
+
+
 def test_only_the_passages_an_answer_uses_are_cited():
     """Regression, caught by the offline judge (ai-001, groundedness): every retrieved
     passage used to be cited, so knee-pain advice showed the chest-pain guide as a source

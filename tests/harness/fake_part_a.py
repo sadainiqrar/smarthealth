@@ -47,6 +47,36 @@ class FakePartA:
     down: bool = False
     #: Status a new booking ends in ("confirmed", or "failed" to simulate a decline).
     outcome: str = "confirmed"
+    #: GET /monitoring/overview and /monitoring/failures (system health report).
+    monitoring_overview: dict = field(default_factory=lambda: {
+        "window_hours": 24, "generated_at": "2026-11-17T10:00:00Z",
+        "sources": {"prometheus": "ok", "jaeger": "ok"},
+        "components": [
+            {"name": "API", "job": "smarthealth/part-a-api", "status": "ok",
+             "reason": "alive, seen 4 s ago"},
+            {"name": "Background jobs", "job": "smarthealth/part-a-celery", "status": "bad",
+             "reason": "not reporting"},
+        ],
+        "flows": [
+            {"key": "booking", "label": "Booking", "total": 40, "failed": 9,
+             "failure_pct": 22.5, "p95_seconds": 1.8, "previous_total": 35, "status": "bad",
+             "reason": "9 of 40 failed (22.5%)"},
+        ],
+        "backlogs": [
+            {"key": "queue_ready", "label": "Largest job queue", "value": 240.0,
+             "status": "warn", "reason": "240 messages: falling behind"},
+        ],
+        "ai": {"turns": 50, "errors": 1, "error_pct": 2.0, "first_token_p95_seconds": 1.1,
+               "retrieval_no_results_pct": 8.0, "tokens": 9000, "status": "ok",
+               "reason": "1 of 50 failed (2.0%)"},
+    })
+    monitoring_failures: dict = field(default_factory=lambda: {
+        "window_hours": 24, "source": "ok", "failures": [
+            {"trace_id": "t1", "at": "2026-11-17T09:58:00Z", "service": "part-a-worker",
+             "operation": "RunWorkflow:BookAppointmentWorkflow",
+             "failed_step": "RunActivity:billing.precheck",
+             "message": "gateway unavailable (chaos)", "trace_path": "/jaeger/trace/t1"},
+        ]})
 
     @classmethod
     def seeded(cls) -> FakePartA:
@@ -244,6 +274,10 @@ class FakePartA:
                     ],
                 },
             )
+        if (method, path) == ("GET", "/monitoring/overview"):
+            return httpx.Response(200, json=self.monitoring_overview)
+        if (method, path) == ("GET", "/monitoring/failures"):
+            return httpx.Response(200, json=self.monitoring_failures)
         if (method, path) == ("GET", "/analytics/timeseries"):
             return httpx.Response(
                 200,

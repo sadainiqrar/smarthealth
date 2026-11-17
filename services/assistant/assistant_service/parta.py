@@ -217,6 +217,16 @@ class PartA:
                                    params={"metric": metric, "from": start, "to": end})
         return reply["points"]
 
+    async def monitoring_overview(self, token: str, *, hours: int = 24) -> dict:
+        """Part A's health page figures (system health spec §4.1). Admin only."""
+        return await self.request("GET", "/monitoring/overview", token,
+                                  params={"hours": hours})
+
+    async def monitoring_failures(self, token: str, *, hours: int = 24, limit: int = 10) -> dict:
+        """The most recent failed traces with the step that failed (spec §4.2)."""
+        return await self.request("GET", "/monitoring/failures", token,
+                                  params={"hours": hours, "limit": limit})
+
     # -- writes (each only after the user confirmed, spec 9.2) --------------------------
 
     def _write_headers(self, idempotency_key: str, conversation_ref: str) -> dict[str, str]:

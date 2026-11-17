@@ -46,6 +46,7 @@ KINDS = {
     "operations_30": ("Monthly operations report", 30),
     "utilisation_30": ("Department utilisation report", 30),
     "engagement_30": ("Engagement summary", 30),
+    "system_health": ("System health snapshot", 1),
 }
 METRICS = ("booked", "completed", "cancelled", "no_show")
 
@@ -74,6 +75,17 @@ UTILISATION_INSTRUCTIONS = (
     "quietest and where capacity might be moved, using only the figures given -- never invent "
     "a number or a cause. Say plainly when the data is too thin to conclude. Markdown, no "
     "headings, no tables."
+)
+
+HEALTH_INSTRUCTIONS = (
+    "You write a system health snapshot for the administrator of MediNova's scheduling "
+    "platform, who is not an engineer. You are given the health page's figures: each "
+    "component, flow and backlog with a status (ok, warn, bad, idle, unknown) and a reason, "
+    "and the most recent failures with the step that failed and its error message. Write: "
+    "one sentence on overall health; then 'Needs attention' with each warn or bad item and "
+    "its likely cause, using the failed steps; then 'Healthy' in one line; then 2-3 "
+    "concrete things to check next. Use only the figures given: never invent a number, "
+    "service or cause. Plain words; no PromQL."
 )
 
 SCHEMA = """
@@ -312,6 +324,9 @@ class ReportRunner:
                 await self._on_usage(caller, report.id, usage, events)
 
     async def _write(self, caller: Caller, report: Report, emit, usage: TurnUsage) -> None:
+        if report.kind == "system_health":
+            await self._write_health(caller, emit, usage)
+            return
         if report.kind.startswith("utilisation"):
             await self._write_utilisation(caller, report, emit, usage)
             return
@@ -512,6 +527,56 @@ class ReportRunner:
         )
         await self._narrative(emit, usage, material, [], None, kind="engagement")
 
+    async def _write_health(self, caller: Caller, emit, usage: TurnUsage) -> None:
+        """System health snapshot (system health spec §6): Part A's health page, read with
+        the admin's own token, then explained. Every figure comes from Part A."""
+        call = "health-1"
+        tool = {"kind": "tool", "call_id": call, "name": "monitoring",
+                "label": "Reading the health page"}
+        await emit({**tool, "status": "running", "summary": ""})
+        overview, failures = await asyncio.gather(
+            self._parta.monitoring_overview(caller.token, hours=24),
+            self._parta.monitoring_failures(caller.token, hours=24, limit=10),
+        )
+        items = (
+            [(c["name"], c["status"], c["reason"]) for c in overview["components"]]
+            + [(f["label"], f["status"], f["reason"]) for f in overview["flows"]]
+            + [(b["label"], b["status"], b["reason"]) for b in overview["backlogs"]]
+            + [("Assistant", overview["ai"]["status"], overview["ai"]["reason"])]
+        )
+        attention = [i for i in items if i[1] in ("bad", "warn")]
+        attention.sort(key=lambda i: i[1] != "bad")  # bad first
+        await emit({**tool, "status": "done",
+                    "summary": f"{len(attention)} need attention, "
+                               f"{len(failures['failures'])} recent failures"})
+        unseen = [k for k, v in overview["sources"].items() if v != "ok"]
+        await emit({
+            "kind": "card", "card_kind": "metrics", "title": "Needs attention",
+            "subtitle": ("Last 24 hours" if not unseen
+                         else f"Last 24 hours — not visible: {', '.join(unseen)}"),
+            "fields": [{"label": n, "value": r} for n, _s, r in attention]
+            or [{"label": "Everything", "value": "healthy"}],
+            "badge": f"{len(attention)}", "link": "/health",
+        })
+        recent = failures["failures"][:5]
+        if recent:
+            await emit({
+                "kind": "card", "card_kind": "metrics", "title": "Recent failures",
+                "subtitle": "Newest first; the trace link needs the tools login",
+                "fields": [{"label": f"{f['at'][11:16]} {f['service']}",
+                            "value": f"{f['failed_step']}: {f['message']}"} for f in recent],
+                "badge": f"{len(failures['failures'])}", "link": "/health",
+            })
+        material = "Statuses (name | status | reason):\n" + "\n".join(
+            f"{n} | {s} | {r}" for n, s, r in items
+        ) + "\nRecent failures (service | operation | failed step | message):\n" + "\n".join(
+            f"{f['service']} | {f['operation']} | {f['failed_step']} | {f['message']}"
+            for f in recent
+        )
+        if unseen:
+            material += f"\nNot visible (source down): {', '.join(unseen)}"
+        await self._narrative(emit, usage, material, attention, recent, kind="health")
+
     async def _write_utilisation(
         self, caller: Caller, report: Report, emit, usage: TurnUsage
     ) -> None:
@@ -588,6 +653,7 @@ class ReportRunner:
                 instructions = {
                     "utilisation": UTILISATION_INSTRUCTIONS,
                     "engagement": ENGAGEMENT_INSTRUCTIONS,
+                    "health": HEALTH_INSTRUCTIONS,
                 }.get(kind, NARRATIVE_INSTRUCTIONS)
                 with model_span(self._model) as span:
                     async for chunk in self._model.astream(
@@ -604,6 +670,19 @@ class ReportRunner:
                     return
             except Exception:  # noqa: BLE001 - the report still states its figures
                 logger.info("report narrative failed; writing it plainly", exc_info=True)
+        if kind == "health":
+            attention, recent = figures, busiest
+            lines = (["**Needs attention**", ""]
+                     + [f"- **{n}**: {r}" for n, _s, r in attention]
+                     if attention else ["Everything the health page watches is healthy."])
+            if recent:
+                lines += ["", "**Most recent failure**", "",
+                          f"- {recent[0]['operation']} failed at "
+                          f"{recent[0]['failed_step']}: {recent[0]['message']}"]
+            text = "\n".join(lines) + "\n"
+            for word in text.split(" "):
+                await emit({"kind": "token", "text": word + " "})
+            return
         if kind == "engagement":
             text = (
                 "Every figure above is counted from the assistant's own records: its "
