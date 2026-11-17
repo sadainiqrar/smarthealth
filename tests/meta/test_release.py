@@ -34,7 +34,9 @@ def test_set_release_rewrites_tag_and_url_only():
 def test_set_release_without_url_keeps_the_url():
     original = VALUES.read_text(encoding="utf-8")
     out = _module().set_release(original, "abc1234")
-    assert "d0000000000000.cloudfront.net" in out
+    # Whatever address is recorded (the placeholder, or the real distribution's) stays.
+    url = next(line for line in original.splitlines() if line.startswith("  publicUrl: "))
+    assert url + "\n" in out
 
 
 def test_set_release_cli_writes_lf(tmp_path):
