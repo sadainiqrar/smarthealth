@@ -148,4 +148,11 @@ def _telemetry(**_kwargs) -> None:
     setup_telemetry(task_settings(), "part-a-celery")
 
 
+@signals.beat_init.connect
+def _beat_telemetry(**_kwargs) -> None:
+    from app.core.telemetry import setup_telemetry
+
+    setup_telemetry(task_settings(), "part-a-celery-beat")
+
+
 configure(get_settings())

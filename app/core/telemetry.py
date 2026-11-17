@@ -17,6 +17,7 @@ FastAPI instrumentation lives in `app.main`, not here: `app/core` is framework-f
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -24,6 +25,7 @@ from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import MetricReader, PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
@@ -119,6 +121,29 @@ def install(telemetry: Telemetry) -> Telemetry:
     return _installed
 
 
+#: Providers that already carry a heartbeat; a second registration would double the series.
+_heartbeats: set[int] = set()
+
+
+def register_heartbeat(meter_provider: MeterProvider) -> None:
+    """Export `smarthealth.heartbeat` (the process's current Unix time) on every metric
+    export (system health spec §3). Prometheus sees `smarthealth_heartbeat_seconds`; a
+    process is alive while `time() - smarthealth_heartbeat_seconds` stays under a minute.
+    The value is a timestamp, not 1, because the collector re-serves its last value for
+    minutes after a process dies -- a frozen timestamp ages, a constant 1 would not."""
+    if id(meter_provider) in _heartbeats:
+        return
+    _heartbeats.add(id(meter_provider))
+
+    def beat(_options: CallbackOptions):
+        yield Observation(time.time())
+
+    meter_provider.get_meter("smarthealth.heartbeat").create_observable_gauge(
+        "smarthealth.heartbeat", callbacks=[beat], unit="s",
+        description="Unix time at the process's last metric export: its liveness",
+    )
+
+
 def setup_telemetry(settings: Settings, service_name: str) -> Telemetry:
     """Install this process's providers from settings, or return the installed ones.
 
@@ -132,6 +157,7 @@ def setup_telemetry(settings: Settings, service_name: str) -> Telemetry:
             service_name, settings.environment, otlp_http_endpoint=settings.otel_endpoint_http
         )
     )
+    register_heartbeat(telemetry.meter_provider)
     # Celery: spans for publishing and running tasks, and the trace context carried in
     # task headers, so a consumer's span is the parent of the send task's. In every process
     # -- producers inject, workers extract.
