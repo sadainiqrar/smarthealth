@@ -52,6 +52,10 @@ workloads:
     env:
       <<: [*common, *mongo, *redis, *temporal, *rabbit]
       SMARTHEALTH_OTEL_ENDPOINT_GRPC: http://otel-collector:4317
+      # The admin health page reads these. Prometheus serves at / (route-prefix), Jaeger under
+      # its QUERY_BASE_PATH -- the same URLs Grafana uses.
+      SMARTHEALTH_PROMETHEUS_URL: http://prometheus:9090
+      SMARTHEALTH_JAEGER_QUERY_URL: http://jaeger:16686/jaeger
       SMARTHEALTH_DOCUMENTS_PATH: /var/smarthealth/documents
       UVICORN_ROOT_PATH: /api       # the ingress strips /api; Swagger then fetches /api/openapi.json
     readinessProbe:
