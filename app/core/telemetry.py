@@ -20,6 +20,7 @@ import logging
 import os
 import socket
 import time
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -66,6 +67,23 @@ class Telemetry:
         self.meter_provider.shutdown()
 
 
+#: One per-start token per process id: computed on first use, so a forked Celery child
+#: gets its own instead of inheriting its parent's.
+_START_TOKENS: dict[int, str] = {}
+
+
+def process_id() -> str:
+    """This process's identity for metrics: host, pid and a token new on every start.
+
+    Host and pid alone repeat across an in-place container restart (the app runs as PID 1
+    and the hostname survives), and a restarted counter would then continue the old series
+    and hide the runs in between. Each start must be a new series.
+    """
+    pid = os.getpid()
+    token = _START_TOKENS.setdefault(pid, uuid.uuid4().hex[:8])
+    return f"{socket.gethostname()}-{pid}-{token}"
+
+
 def build_telemetry(
     service_name: str,
     environment: str,
@@ -82,8 +100,9 @@ def build_telemetry(
             "service.namespace": "smarthealth",
             # One series per process: two Celery children with an identical resource would
             # otherwise merge into one Prometheus series that flips between their cumulative
-            # totals. Dashboards aggregate with sum/max by job.
-            "service.instance.id": f"{socket.gethostname()}-{os.getpid()}",
+            # totals. A new id on every start, too (see process_id). Dashboards aggregate
+            # with sum/max by job.
+            "service.instance.id": process_id(),
             "deployment.environment": environment,
         }
     )

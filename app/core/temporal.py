@@ -11,8 +11,6 @@ nobody registered is a workflow no worker runs, and its starts would hang silent
 
 from __future__ import annotations
 
-import os
-import socket
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import timedelta
@@ -25,6 +23,7 @@ from temporalio.service import RPCError
 from temporalio.worker import Worker
 
 from app.core.registry import Registry
+from app.core.telemetry import process_id
 from app.core.temporal_canary import CANARY_REPLY, CanaryWorkflow
 from app.settings import Settings
 
@@ -80,7 +79,8 @@ def telemetry_config(settings: Settings) -> TelemetryConfig | None:
 
     The Rust core reports no process identity of its own, so without the tag a restarted
     worker's series came back with the same labels and `increase()` lost the runs in
-    between (system health spec §3; Part A's own metrics use `service.instance.id`).
+    between (system health spec §3; Part A's own metrics use the same `process_id()` as
+    `service.instance.id`).
     """
     if not settings.otel_endpoint_grpc:
         return None
@@ -88,7 +88,7 @@ def telemetry_config(settings: Settings) -> TelemetryConfig | None:
         metrics=OpenTelemetryConfig(
             url=settings.otel_endpoint_grpc, metric_periodicity=TEMPORAL_METRIC_PERIOD
         ),
-        global_tags={"smarthealth_process": f"{socket.gethostname()}-{os.getpid()}"},
+        global_tags={"smarthealth_process": process_id()},
     )
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import socket
 import time
+import uuid
 
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
@@ -41,6 +42,11 @@ def TRACED(call_details) -> bool:  # noqa: N802 - a constant-like filter, named 
     return not method.startswith(HEALTH)
 
 
+#: New on every start: host and pid repeat across an in-place container restart, and a
+#: restarted counter would then continue the old series and hide the runs in between.
+_START_TOKEN = uuid.uuid4().hex[:8]
+
+
 def setup(endpoint: str, environment: str) -> TracerProvider | None:
     """Install tracing if an endpoint is configured; otherwise do nothing at all."""
     if not endpoint:
@@ -49,7 +55,7 @@ def setup(endpoint: str, environment: str) -> TracerProvider | None:
         "service.name": "knowledge", "service.namespace": "smarthealth",
         "deployment.environment": environment,
         # One series per process (see app/core/telemetry.py).
-        "service.instance.id": f"{socket.gethostname()}-{os.getpid()}",
+        "service.instance.id": f"{socket.gethostname()}-{os.getpid()}-{_START_TOKEN}",
     }))
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=f"{endpoint}/v1/traces")))
     trace.set_tracer_provider(provider)

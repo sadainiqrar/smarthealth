@@ -6,7 +6,7 @@ import time
 import pytest
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
-from app.core.telemetry import build_telemetry, register_heartbeat
+from app.core.telemetry import process_id, build_telemetry, register_heartbeat
 
 pytestmark = pytest.mark.unit
 
@@ -47,3 +47,4 @@ def test_each_process_gets_its_own_series_identity():
     telemetry = build_telemetry("part-a-test", "test")
     instance = telemetry.tracer_provider.resource.attributes["service.instance.id"]
     assert str(os.getpid()) in instance
+    assert instance == process_id()  # host-pid-token: new on every start
