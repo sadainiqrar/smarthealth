@@ -466,6 +466,12 @@ services:
       # Off (Weeks 3-5 spec section 3.2): compaction and partitions must be declared, and
       # a misspelt topic must fail loudly. `python -m app.relay --setup` creates them.
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      # Kafka's own defaults (7 days, 1 GiB segments) unless overridden. The test stack
+      # (.env.test) keeps 6 hours in 16 MiB segments: every test run namespaces its own
+      # topics, and a run that dies before its cleanup (tests/harness/kafka_cleanup.py)
+      # must not leave data behind forever -- the volume once reached 41.7 GB.
+      KAFKA_LOG_RETENTION_HOURS: ${KAFKA_LOG_RETENTION_HOURS:-168}
+      KAFKA_LOG_SEGMENT_BYTES: ${KAFKA_LOG_SEGMENT_BYTES:-1073741824}
     ports: ["${KAFKA_PORT:-9092}:9092"]
     volumes: ["kafka-data:/var/lib/kafka/data"]
     healthcheck:

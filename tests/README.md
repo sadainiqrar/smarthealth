@@ -95,6 +95,14 @@ Every run gets its own database, topic prefix, consumer group, vhost, and task q
 `isolation` fixture for names; never hardcode them, and never add teardown that truncates
 shared tables.
 
+**A run cleans up after itself.** When the session ends, `db_settings` drops the run's
+database and `tests/harness/kafka_cleanup.py` deletes the run's Kafka topics, Schema Registry
+subjects and consumer groups (everything under its `t_<run>_<worker>_` prefix; it refuses
+any other prefix). Nothing did before, and the test stack's Kafka volume reached 41.7 GB.
+A run that dies before its cleanup is covered by the test stack's broker settings in
+`.env.test`: data expires after 6 hours, in 16 MiB segments. The dev stack keeps Kafka's
+defaults.
+
 ## The `Stop` hook
 
 `.claude/hooks/feature_test_stop.py` blocks a session from stopping when a file matching a

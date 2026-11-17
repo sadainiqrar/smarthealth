@@ -32,6 +32,7 @@ from app.settings import Settings
 from tests.harness.db import create_database_sync, drop_database_sync, run_migrations
 from tests.harness.auth import open_session_token
 from tests.harness.isolation import RunIsolation
+from tests.harness.kafka_cleanup import remove_run_resources
 
 
 def _test_stack_settings(isolation: RunIsolation) -> Settings:
@@ -69,7 +70,9 @@ def _test_stack_settings(isolation: RunIsolation) -> Settings:
 
 @pytest.fixture(scope="session")
 def db_settings(isolation: RunIsolation, stack) -> Iterator[Settings]:
-    """A migrated database of this run's own, dropped when the session ends."""
+    """A migrated database of this run's own, dropped when the session ends -- together
+    with the run's Kafka topics, schema subjects and consumer groups, which otherwise
+    piled up in the shared test stack (41.7 GB by 2026-11-18)."""
     settings = _test_stack_settings(isolation)
     create_database_sync(settings.postgres_admin_url, settings.postgres_db)
     try:
@@ -85,6 +88,7 @@ def db_settings(isolation: RunIsolation, stack) -> Iterator[Settings]:
         yield settings
     finally:
         drop_database_sync(settings.postgres_admin_url, settings.postgres_db)
+        remove_run_resources(settings)
 
 
 @pytest.fixture
