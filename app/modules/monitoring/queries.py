@@ -4,8 +4,9 @@ Names are as Prometheus sees them after the OTel collector: dots become undersco
 suffix is added (`_milliseconds`, `_seconds`), counters end `_total`, and every series has
 `job="smarthealth/<service.name>"`. The T3 test sends every query here to the real
 Prometheus and proves each is valid PromQL, so a *syntax* typo fails there. A wrong metric
-name is still valid: it returns empty and shows on the page as "no data" or idle. The
-metric-name checks in tests/meta/test_monitoring_flows.py and the smoke runs catch that.
+name is still valid: it returns empty and shows on the page as "no data" or idle; the k3d
+and AWS smoke runs catch that (every component must be ok). tests/meta/test_monitoring_flows.py
+checks the label values -- each workflow type and Celery task name is a registered one.
 """
 
 from __future__ import annotations

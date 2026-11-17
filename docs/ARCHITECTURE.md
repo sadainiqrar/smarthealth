@@ -661,8 +661,9 @@ Tests: T0 `test_monitoring_rules.py`, `_traces.py`, `_client.py`, `_service.py`,
 `test_heartbeat.py` and `test_task_metrics.py` for the instrumentation; T1
 `test_monitoring_contract.py` (fake sources); T3 `test_monitoring_sources.py` proves every
 query is valid PromQL on the real Prometheus and reads an error trace back from the real
-Jaeger (a misspelt metric name is still valid PromQL; `tests/meta/test_monitoring_flows.py`
-and the smoke runs catch those).
+Jaeger. A misspelt metric name is still valid PromQL and returns nothing, so the k3d and AWS
+smoke runs (every component must be ok) catch those; `tests/meta/test_monitoring_flows.py`
+checks that each workflow type and Celery task name the flows use is a registered one.
 
 #### `app/modules/clinical` — the clinical record (Week 4)
 
