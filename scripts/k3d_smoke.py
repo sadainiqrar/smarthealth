@@ -76,6 +76,30 @@ def api(base: str, email: str, password: str) -> None:
     r.raise_for_status()
 
 
+def health_page(base: str, password: str) -> None:
+    """The admin System health page must see every process and Prometheus itself."""
+    step("System health page (every component ok)")
+    admin = "smoke.admin@medinova.example"
+    kubectl("exec", "deploy/core-api", "--", "python", "-m", "app.cli", "create-user",
+            "--email", admin, "--password", password, "--role", "admin", check=False)
+    login = httpx.post(f"{base}/api/auth/login", json={"email": admin, "password": password},
+                       timeout=10)
+    login.raise_for_status()
+    token = login.json()["access_token"]
+    # Heartbeats arrive every few seconds; give a fresh install a minute to show them all.
+    deadline = time.monotonic() + 60
+    while True:
+        overview = httpx.get(f"{base}/api/monitoring/overview?hours=1",
+                             headers={"Authorization": f"Bearer {token}"}, timeout=20).json()
+        down = [c["name"] for c in overview["components"] if c["status"] != "ok"]
+        if overview["sources"]["prometheus"] == "ok" and not down:
+            return
+        if time.monotonic() > deadline:
+            raise SystemExit(
+                f"health page: prometheus={overview['sources']['prometheus']}, down={down}")
+        time.sleep(5)
+
+
 def grpc_web(base: str, email: str, password: str) -> None:
     step("gRPC-Web (assistant) through the ingress")
     result = subprocess.run([sys.executable, "scripts/grpcweb_smoke.py", "--edge", base,
@@ -132,6 +156,7 @@ def main() -> int:
     email, password = "smoke.desk@medinova.example", "smoke-password-123"
     pods_ready()
     api(args.base, email, password)
+    health_page(args.base, password)
     grpc_web(args.base, email, password)
     tools(args.base, args.tools_user, args.tools_password)
     if not args.skip_demo:
