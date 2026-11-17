@@ -60,10 +60,12 @@ scrapes of RabbitMQ and kafka-exporter. Traces are in Jaeger.
 | Assistant / LLM | `assistant_turns_total{outcome}`, `assistant_first_token_milliseconds`, `assistant_turn_duration_milliseconds`, `assistant_llm_calls_total`, `assistant_llm_tokens_total` | exists |
 | Retrieval | none (traces only) | **added:** `knowledge_searches_total{outcome=hit\|no_results\|error}`, `knowledge_search_duration_milliseconds` (histogram), recorded in the Search RPC |
 | Notifications, reminders, document extraction | queue depth only | **added:** `smarthealth_celery_tasks_total{task,outcome=success\|retry\|failure}`, recorded from Celery's `task_success` / `task_retry` / `task_failure` signals |
-| Liveness of each process | none uniform (an idle process exports nothing) | **added:** `smarthealth_heartbeat`, an observable gauge (value 1) exported every interval by api, worker, relay, consumers, celery-worker, celery-beat, knowledge, assistant |
+| Liveness of each process | none uniform (an idle process exports nothing) | **added:** `smarthealth.heartbeat` (`smarthealth_heartbeat_seconds` in Prometheus), an observable gauge whose value is the process's Unix time, exported every interval by api, worker, relay, consumers, celery-worker, celery-beat, knowledge, assistant |
 
 A process is **alive** when its heartbeat was seen in the last 60 s. The rule:
-`time() - max by (job) (timestamp(smarthealth_heartbeat)) < 60`.
+`time() - max by (job) (smarthealth_heartbeat_seconds) < 60`. The value is a timestamp, not 1,
+because the collector re-serves a dead process's last sample for minutes: a frozen timestamp
+ages, a constant would not.
 
 **Traces:** Jaeger's query API, `GET {jaeger}/api/traces?service=<s>&tags={"error":"true"}&start=&end=&limit=`,
 for each of `part-a-api`, `part-a-worker`, `knowledge`, `assistant`. The exact service names
@@ -225,7 +227,7 @@ In `services/assistant/assistant_service/reports.py`:
 | T0 unit | `rules.py`: every threshold boundary, the 5-event minimum, `idle`; `traces.py`: recorded Jaeger JSON (success, nested error, no message) to `Failure` |
 | T1 contract | Both endpoints with fake Prometheus/Jaeger (`respx` or a fake client): happy path; Prometheus down (200, cards `unknown`); Jaeger down; not configured; 403 for patient, provider and front desk; cache hit within 15 s |
 | T1 contract (assistant) | `system_health` against `tests/harness/fake_part_a.py` extended with the two endpoints: scripted model and offline template; non-admin refused |
-| T1 / meta | The new metrics: knowledge Search increments `knowledge_searches_total` by outcome; Celery signal handlers increment by outcome; every process entry point installs the heartbeat (a meta-test enumerates entry points) |
+| T1 / meta | The new metrics: knowledge Search increments `knowledge_searches_total` by outcome; Celery signal handlers increment by outcome; the heartbeat is registered once per provider by `setup_telemetry`, which every Part A entry point calls |
 | Frontend (Vitest) | `Health.tsx` renders all sections from a fixture; the unavailable banner; non-admin cannot reach it |
 | T3 docker | Against the test stack's real Prometheus and Jaeger: every PromQL query in `queries.py` is accepted (no `SourceUnavailable`); an error span exported over OTLP under a unique service name comes back from `JaegerClient.error_traces` and reduces to a `Failure` with its message |
 | Smoke | `k3d_smoke.py` and `aws_check.sh` call `/monitoring/overview` as admin and require `sources.prometheus == "ok"` and every component `ok` |
