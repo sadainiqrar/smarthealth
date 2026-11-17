@@ -1,6 +1,6 @@
 # System health: an admin view of monitoring, and an AI health report
 
-Date: 2026-11-17 · Status: approved design, not yet built · Decision: PRD D-55
+Date: 2026-11-17 · Status: built 2026-11-17 · Decision: PRD D-55
 
 ## 1. Why
 
@@ -109,7 +109,7 @@ The previous-window figure is `null` when Prometheus has no data that far back.
 {
   "window_hours": 24, "generated_at": "...",
   "sources": {"prometheus": "ok|unavailable|not_configured", "jaeger": "..."},
-  "components": [ {"name": "API", "job": "part-a-api", "status": "ok", "reason": "heartbeat 8 s ago"} ... ],
+  "components": [ {"name": "API", "job": "smarthealth/part-a-api", "status": "ok", "reason": "heartbeat 8 s ago"} ... ],
   "flows": [ {"key": "booking", "label": "Booking", "total": 42, "failed": 1, "failure_pct": 2.4,
               "p95_seconds": 1.8, "previous_total": 37, "status": "ok", "reason": "..."} ... ],
   "backlogs": [ {"key": "outbox", "label": "Oldest unpublished event", "value": 3,
@@ -242,7 +242,7 @@ In `services/assistant/assistant_service/reports.py`:
 | T0 unit | `rules.py`: every threshold boundary, the 5-event minimum, `idle`; `traces.py`: recorded Jaeger JSON (success, nested error, no message) to `Failure` |
 | T1 contract | Both endpoints with fake Prometheus/Jaeger (`respx` or a fake client): happy path; Prometheus down (200, cards `unknown`); Jaeger down; not configured; 403 for patient, provider and front desk; cache hit within 15 s |
 | T1 contract (assistant) | `system_health` against `tests/harness/fake_part_a.py` extended with the two endpoints: scripted model and offline template; non-admin refused |
-| T1 / meta | The new metrics: knowledge Search increments `knowledge_searches_total` by outcome; Celery signal handlers increment by outcome; the heartbeat is registered once per provider by `setup_telemetry`, which every Part A entry point calls |
+| T1 / meta | The new metrics: knowledge Search increments `knowledge_searches_total` by outcome; Celery signal handlers increment by outcome; `register_heartbeat` exports one series per provider (tested directly: the suite installs its own telemetry first, so `setup_telemetry` returns before registering); every Part A entry point calls `setup_telemetry`, which calls it |
 | Frontend (Vitest) | `Health.tsx` renders all sections from a fixture; the unavailable banner; non-admin cannot reach it |
 | T3 docker | Against the test stack's real Prometheus and Jaeger: every PromQL query in `queries.py` is accepted (no `SourceUnavailable`); an error span exported over OTLP under a unique service name comes back from `JaegerClient.error_traces` and reduces to a `Failure` with its message |
 | Smoke | `k3d_smoke.py` and `aws_check.sh` call `/monitoring/overview` as admin and require `sources.prometheus == "ok"` and every component `ok` |

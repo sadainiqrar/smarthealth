@@ -119,7 +119,7 @@ Default host ports; each can be moved with the variable named in
 | URL | What | Profile |
 | --- | --- | --- |
 | <http://localhost:5173> | Demo client (nginx: `/api/*` to the API, the assistant's gRPC-Web path to Envoy) | `app` |
-| <http://localhost:5173/health> | System health (admin login) — every process, the critical flows, backlogs and the assistant as ok / warn / bad with a reason, and recent failures from Jaeger | `app` |
+| <http://localhost:5173/health> | System health (admin login) — every process, the critical flows, backlogs and the assistant as ok / warn / bad with a reason, and recent failures from Jaeger (their "View trace" link needs the `/jaeger` route of k3d or AWS; under compose open Jaeger at :16686 and paste the trace id) | `app` |
 | <http://localhost:8000/docs> | Part A API — Swagger UI (also `/redoc`, `/openapi.json`, `/health`, `/ready`) | `app` |
 | <http://localhost:8088> | Envoy, the front door — gRPC-Web to `assistant` and `knowledge`, `/api/*` to Part A | `partb` |
 | <http://localhost:8080> | Temporal UI — every workflow's history (`booking-<id>`, `visit-<id>`, …) | `app` |
