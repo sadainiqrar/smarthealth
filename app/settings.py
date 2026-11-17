@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # no collector and no connection errors. Compose points both at the collector.
     otel_endpoint_http: str = ""  # OTLP/HTTP base URL, e.g. http://otel-collector:4318
     otel_endpoint_grpc: str = ""  # OTLP/gRPC URL, for Temporal core's own SDK metrics
+    #: Where the health page reads metrics and traces (system health spec §3). Empty means
+    #: "not configured", and the page says so instead of failing.
+    prometheus_url: str = ""  # e.g. http://prometheus:9090
+    jaeger_query_url: str = ""  # e.g. http://jaeger:16686 (in k8s: .../jaeger, its base path)
 
     # Namespaces every Kafka topic, RabbitMQ queue, and Temporal task queue.
     # The isolation layer sets this per test run; production leaves it empty.
