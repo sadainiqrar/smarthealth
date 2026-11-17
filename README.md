@@ -165,7 +165,7 @@ bash scripts/k3d_down.sh        # delete the cluster
 | <http://localhost:8080/rabbitmq> | RabbitMQ management |
 | <http://localhost:8080/prometheus> | Prometheus |
 
-The tool paths (everything except `/` and `/api`) sit behind one basic-auth login,
+The tool paths (everything except `/`, `/api` and `/rabbitmq`, which has its own login) sit behind one basic-auth login,
 `reviewer` / `smarthealth` (k3d only; set `toolsAuth` in `values-local.yaml`), stored as
 the one key (`users`) of the Secret `smarthealth-tools-auth`, which the Traefik middleware
 reads. Qdrant stays
@@ -246,7 +246,8 @@ so allow up to 15 minutes.
 
 | For | Command |
 | --- | --- |
-| The tool login (`reviewer`: Grafana, Jaeger, Temporal UI, Mailpit, RabbitMQ, Prometheus, `/argocd`) | `scripts/tf.sh output -raw tools_password` |
+| The tool login (`reviewer`: Grafana, Jaeger, Temporal UI, Mailpit, Prometheus, `/argocd`) | `scripts/tf.sh output -raw tools_password` |
+| RabbitMQ's own login (`smarthealth`, at `/rabbitmq`; it is not behind the tool login) | the `/smarthealth/rabbitmq-password` parameter in SSM |
 | Every demo login (see Demo data) | `scripts/tf.sh output -raw demo_password` |
 | Argo CD's `admin` | `scripts/tf.sh output -raw argocd_admin_password` |
 

@@ -2511,7 +2511,7 @@ response timeout, and `/grafana`, `/jaeger`, `/temporal`, `/mailpit`, `/rabbitmq
 one Traefik basic-auth middleware (D-39), which reads the one-key Secret `smarthealth-tools-auth`
 (key `users`; Traefik 2.x refuses a Secret with more keys, so it cannot share
 `smarthealth-secrets`; no `lookup`, so `helm template` renders it for Argo CD); a request without
-the login gets 401. The Temporal UI is read-only (`TEMPORAL_DISABLE_WRITE_ACTIONS`). Qdrant's
+the login gets 401. **`/rabbitmq` is the exception**, its own Ingress without the middleware: RabbitMQ's UI sends its own Basic credentials in the same `Authorization` header, so behind both logins no request could pass (an endless login popup, found on AWS on 2026-11-17); RabbitMQ's own login guards it, state changes included. The Temporal UI is read-only (`TEMPORAL_DISABLE_WRITE_ACTIONS`). Qdrant's
 dashboard does not serve under a sub-path and stays internal (`kubectl port-forward`).
 
 ### 7.3 Secrets

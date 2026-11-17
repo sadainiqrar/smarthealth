@@ -835,11 +835,11 @@ flowchart LR
   EN --> AS["assistant"]
   EN --> KN["knowledge"]
   T -->|"basic-auth login"| BA{{"tool login"}}
+  T -->|"/rabbitmq, its own login"| RM["rabbitmq"]
   BA -->|"/grafana"| GR["grafana"]
   BA -->|"/jaeger"| JA["jaeger"]
   BA -->|"/temporal"| TU["temporal-ui"]
   BA -->|"/mailpit"| MP["mailpit"]
-  BA -->|"/rabbitmq"| RM["rabbitmq"]
   BA -->|"/prometheus"| PR["prometheus"]
   </pre></div>
   <h3>The charts</h3>
@@ -852,7 +852,7 @@ flowchart LR
   <p>Persistent data lives in PVCs kept on <code>helm uninstall</code> and on Argo CD deletion (<code>helm.sh/resource-policy: keep</code>, <code>argocd.argoproj.io/sync-options: Delete=false,Prune=false</code>), mounted by one-replica
   Deployments with <code>strategy: Recreate</code>. Measured on k3d (k3s 1.30.6) after the demo seed: memory limits
   total 6.36 GiB, requests 3.2 GiB. Tool UIs are public under sub-paths behind one basic-auth login
-  (<code>reviewer</code> / <code>smarthealth</code>, k3d only), read from the one-key Secret <code>smarthealth-tools-auth</code>; the Temporal UI is read-only; Qdrant stays internal.</p>
+  (<code>reviewer</code> / <code>smarthealth</code>, k3d only), read from the one-key Secret <code>smarthealth-tools-auth</code> (RabbitMQ excepted: its UI sends its own login in the same header, so it is guarded by that login alone); the Temporal UI is read-only; Qdrant stays internal.</p>
   <div class="table-wrap"><table>
     <tr><th>Command</th><th>What</th></tr>
     <tr><td><code>bash scripts/k3d_up.sh</code></td><td>Create the 8 GB k3d cluster, build and import the five images, install the umbrella</td></tr>
