@@ -217,6 +217,7 @@ Commands that work today:
 | `scripts/aws_start.sh [--refresh]` / `aws_stop.sh` / `aws_extend.sh` | start the NAT instance and server and wait for `/api/ready` through CloudFront (`--refresh` re-runs `demo-refresh`) / stop both / re-arm both 3-hour auto-stops |
 | `scripts/aws_secrets.sh` / `aws_seed.sh` / `aws_shell.sh` | JWT key and Groq key into SSM / first-time `demo-seed` Job / SSM shell on the server (needs the Session Manager plugin) |
 | `scripts/release.sh` | push the five images to GHCR, write the tag and CloudFront URL into `values-aws.yaml`, commit `release: <sha>` (then fast-forward `main` and push; Argo CD syncs) |
+| `bash scripts/aws_check.sh` | the same from **inside** the server over SSM Run Command (works before CloudFront): Argo CD, pods, a booking round trip and its emails, Jaeger traces, Prometheus targets, tool logins, the assistant over gRPC-Web |
 | `python scripts/aws_smoke.py` | HTTP smoke through CloudFront: ready, login, gRPC-Web, tool logins, `/argocd`, caching |
 | `python -m app.worker [--check]` | run the Temporal worker; `--check` executes the canary workflow and exits 0/1 (the compose healthcheck, connect and canary bounded to 8 s) |
 | `docker compose --profile app -f docker-compose.infra.yml up -d --wait` | the whole system in containers |

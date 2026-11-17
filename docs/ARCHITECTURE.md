@@ -2668,7 +2668,12 @@ credentials exported as environment variables, because the provider may not read
 `aws login` cache), each documented in the README's "Deploying to AWS". `python
 scripts/aws_smoke.py` checks the deployment over HTTP through CloudFront: ready, a demo
 login, a gRPC-Web stream, every tool path and `/argocd` answering 401 without the login and
-200 with it, hashed assets cached and the API not.
+200 with it, hashed assets cached and the API not. `scripts/aws_check.sh` is the inside view,
+over Run Command through Traefik on `localhost` (so it works before CloudFront exists, and splits
+a failure into "behind CloudFront" or "CloudFront itself"): Argo CD Synced/Healthy, every pod
+running, a demo login, a real booking confirmed and cancelled with both emails in Mailpit, traces
+from the API and the worker in Jaeger, Prometheus targets up, the seven tool paths, the assistant
+over gRPC-Web from inside its pod, disk and memory headroom.
 
 ### 8.8 The first deploy (2026-11-17)
 
@@ -2685,6 +2690,10 @@ The plan above was applied once, step by step, with every `terraform plan` read 
 | Seed | `aws_seed.sh`: 800 patients, 130 days of history (3,139 appointments) and live bookings through the API, none failed |
 | Checks | From inside the server, through Traefik on `localhost` (Run Command, passwords read from SSM there): `/api/ready` 200 with every dependency, a demo login, the appointment list, the JWKS, the seven tool paths 401 without and 200 with the login, the frontend. The gRPC-Web stream and caching wait for CloudFront (`aws_smoke.py`) |
 
-Until CloudFront exists, `scripts/aws_start.sh` cannot finish (it waits for `/api/ready`
-through CloudFront); start the instances with `aws ec2 start-instances` and check from inside
-with `scripts/aws_shell.sh` or Run Command.
+Until CloudFront exists, `scripts/aws_start.sh` waits for `/api/ready` from inside the server
+instead (Run Command, through Traefik), and `scripts/aws_check.sh` runs the full check from there.
+Testing before CloudFront found four more script faults, all fixed with a meta-test
+(`tests/meta/test_aws_scripts.py`): `aws_start.sh` stopped at the missing CloudFront URL;
+`ssm_run` used the CLI's waiter, which gives up after about 100 seconds; `aws_shell.sh` `exec`ed
+the `aws` wrapper function, which `exec` cannot run; and `aws_smoke.py` called a bare `bash`,
+which Windows resolves to WSL's before Git Bash.

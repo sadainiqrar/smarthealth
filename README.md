@@ -234,7 +234,9 @@ scripts/release.sh                     # builds and pushes five images to ghcr.i
 # fast-forward main to that commit and push it
 scripts/aws_start.sh                   # starts NAT and server, waits for /api/ready (up to 15 min)
 scripts/aws_seed.sh                    # first time only, once Argo CD has synced: the demo data
-python scripts/aws_smoke.py            # ready, login, gRPC-Web, tool logins, /argocd, caching
+bash scripts/aws_check.sh              # from inside the server: pods, login, a booking round trip and its emails,
+                                       # traces, tool logins, the assistant over gRPC-Web (works before CloudFront)
+python scripts/aws_smoke.py            # the same from outside, through CloudFront, plus caching
 ```
 
 `scripts/aws_start.sh` prints the URL. The first start installs k3s and pulls every image,

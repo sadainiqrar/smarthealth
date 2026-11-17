@@ -900,6 +900,7 @@ flowchart LR
     <tr><td><code>scripts/aws_extend.sh</code>, <code>scripts/aws_stop.sh</code></td><td>Three more hours, or stop now</td></tr>
     <tr><td><code>scripts/aws_seed.sh</code></td><td>First time only: seed the demo data</td></tr>
     <tr><td><code>scripts/aws_shell.sh</code></td><td>Shell on the server through Session Manager</td></tr>
+    <tr><td><code>scripts/aws_check.sh</code></td><td>From inside the server: pods, a booking round trip with its emails, traces, tool logins, the assistant over gRPC-Web</td></tr>
     <tr><td><code>python scripts/aws_smoke.py</code></td><td>HTTP checks through CloudFront: login, gRPC-Web, tool logins, <code>/argocd</code>, caching</td></tr>
   </table></div>
   <p>Cost, at about 10 hours a week: server and NAT about $6, 48 GB of disk about $4.60 (also while stopped), a public IPv4 about $0.20; CloudFront, S3 and SSM are inside the free tiers. About $11 a month, roughly nine months of the $100 credits.</p>
