@@ -181,7 +181,7 @@ flowchart LR
 
   <div class="table-wrap"><table>
     <tr><th></th><th>Part A — modular monolith</th><th>Part B — microservices</th></tr>
-    <tr><td>Code</td><td>One package <code>app/</code>, split into 8 modules</td><td><code>services/knowledge</code>, <code>services/assistant</code> — no shared imports</td></tr>
+    <tr><td>Code</td><td>One package <code>app/</code>, split into 9 modules</td><td><code>services/knowledge</code>, <code>services/assistant</code> — no shared imports</td></tr>
     <tr><td>Deployable</td><td>One image, run as 6 processes (API, worker, relay, consumers, Celery worker, Beat)</td><td>One image per service</td></tr>
     <tr><td>Data</td><td>One PostgreSQL — invariants are database constraints and single transactions</td><td>Each owns its stores; never reads Part A's</td></tr>
     <tr><td>Talks by</td><td>In-process calls through published interfaces (<code>public.py</code>)</td><td>gRPC (contracts in <code>contracts/proto</code>), Part A's public HTTP API, Kafka events</td></tr>
@@ -563,7 +563,7 @@ flowchart LR
     <li><b>Dashboards:</b> Service overview, Async backbone (outbox age, consumer outcomes and lag, queue depths), Platform analytics (business figures), Assistant (turns, first-token time, tokens).</li>
     <li><b>Alerts:</b> outbox backlog older than a minute, an event dead-lettered, notifications in the DLQ, a consumer falling behind, API 5xx above 5%, booking workflows failing, assistant turns failing, slow first token.</li>
     <li><b>Model calls</b> are <code>llm chat</code> spans with the model name and token counts.</li>
-    <li><b>Liveness:</b> every process (beat, knowledge and assistant included) exports a <code>smarthealth.heartbeat</code> gauge holding its current Unix time; more than 60 s old means the process is down. Celery task outcomes (<code>smarthealth_celery_tasks_total</code>) and knowledge searches (<code>knowledge_searches_total</code>, duration) are metrics too.</li>
+    <li><b>Liveness:</b> every process (beat, knowledge and assistant included) exports a <code>smarthealth.heartbeat</code> gauge holding its current Unix time; 60 s or older means the process is down. Celery task outcomes (<code>smarthealth_celery_tasks_total</code>) and knowledge searches (<code>knowledge_searches_total</code>, duration) are metrics too.</li>
     <li><b>System health (admin):</b> Part A's <code>monitoring</code> module asks Prometheus and Jaeger and answers <code>GET /monitoring/overview</code> and <code>/monitoring/failures</code> in plain statuses with a reason, cached 15 s; it answers 200 when a source is down and says which. The demo client's System health page and the assistant's snapshot report read it.</li>
   </ul>
   <div class="note">Business analytics (cancellation rate, bookings per day) are <i>not</i> telemetry: they come from Kafka into the <code>analytics_daily</code> table, exact and permanent. Telemetry tells you whether the machinery feeding them is healthy; a nightly reconcile checks the counts against the source tables.</div>

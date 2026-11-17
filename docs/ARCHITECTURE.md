@@ -86,7 +86,7 @@ flowchart LR
 
 | | Part A — modular monolith | Part B — microservices |
 | --- | --- | --- |
-| Code | One package `app/`, eight modules (§1) | `services/knowledge`, `services/assistant`, no shared imports |
+| Code | One package `app/`, nine modules (§1) | `services/knowledge`, `services/assistant`, no shared imports |
 | Deployable | One image run as six processes, each scaled on its own | One image per service |
 | Data | One PostgreSQL: the invariants are constraints and single transactions | Each owns its stores; never reads Part A's |
 | Talks by | Published interfaces (`public.py`) in-process, and domain events | gRPC (`contracts/proto`), Part A's public HTTP API, Kafka |
@@ -342,7 +342,7 @@ Six modules publish one:
 | `clinical/public.py` | `has_signed_note` | `POST /appointments/{id}/complete` (a visit completes only with a signed note) |
 
 Every `service.py` imports only `app/core`, `app/db`, `app/events` (to `emit`) and its own
-module (identity's also reads `app/settings.py`) — no exceptions, `scheduling/service.py`
+module (identity's and monitoring's also read `app/settings.py`) — no exceptions, `scheduling/service.py`
 included. Week 1 expected that file to be the first with a real
 reason to cross the boundary; it was not, because the cross-module work was pushed up a
 layer. The activity performs the patient and provider checks and then calls the service
@@ -604,7 +604,7 @@ writes nothing. Spec: `docs/superpowers/specs/2026-11-17-system-health-design.md
 **Sources.** Prometheus at `SMARTHEALTH_PROMETHEUS_URL` and Jaeger's query service at
 `SMARTHEALTH_JAEGER_QUERY_URL` (compose `http://prometheus:9090`, `http://jaeger:16686`; the
 chart adds Jaeger's `/jaeger` base path). Either left empty is reported `not_configured`.
-`create_app` builds one `MonitoringService` in the lifespan (`app.state.monitoring`) and
+The `lifespan` (`app/main.py`) builds one `MonitoringService` (`app.state.monitoring`) and
 closes its HTTP client on shutdown.
 
 **Endpoints.** `GET /monitoring/overview?hours=1|6|24` (default 24) answers `sources`
@@ -613,7 +613,7 @@ and Kafka), `flows` (runs, failed, failure share, p95 where a histogram exists, 
 count of the window before), `backlogs` and `ai`. `GET /monitoring/failures?hours=&limit=`
 (`limit` 1–50, default 20) asks Jaeger for error traces of the six traced services, reduces
 each to a `Failure`, drops duplicates and returns the newest. Any other `hours` is a 422.
-The windows stop at 24 hours because Prometheus keeps two days. Every item carries a
+The windows stop at 24 hours because the deployed Prometheus (the chart) keeps two days. Every item carries a
 `status` — `ok`, `warn`, `bad`, `idle` (nothing ran) or `unknown` (not measured) — and a
 `reason` in words.
 
@@ -623,7 +623,7 @@ The windows stop at 24 hours because Prometheus keeps two days. Every item carri
 | Figure | warn | bad |
 | --- | --- | --- |
 | Heartbeat age (a process) | — | ≥ 60 s, or no heartbeat at all |
-| Failure share of a flow (needs ≥ 5 runs; fewer is `ok`) | ≥ 5 % | ≥ 20 % |
+| Failure share of a flow (needs ≥ 5 runs; 1–4 runs is `ok`, none is `idle`) | ≥ 5 % | ≥ 20 % |
 | Oldest unpublished outbox event | ≥ 60 s | ≥ 300 s |
 | Largest consumer-group lag | ≥ 100 events | ≥ 1000 events |
 | Largest RabbitMQ queue (ready, DLQs excluded) | ≥ 100 messages | ≥ 1000 messages |
@@ -2575,8 +2575,8 @@ connection; a finished report is served from its row in `assistant-db`.
 `GET /monitoring/overview?hours=24` and `GET /monitoring/failures` with the admin's own token,
 emits a "Needs attention" card (bad first) and a "Recent failures" card (up to five), and
 the model only phrases those statuses and reasons. It never gives a false all-clear: if a
-source is unreachable or any item is `unknown`, the card and the text say it can't tell and
-name what was not visible. With no model, a fixed template states the same facts. The
+source is unreachable or any item is `unknown`, the card says it can't tell and names what
+was not visible, and the text never calls the system healthy. With no model, a fixed template states the same facts. The
 failures' messages are exception text and go to the LLM provider (PRD R-36).
 
 **As built, a report is an asyncio task in the assistant process** (D-36), not a separate

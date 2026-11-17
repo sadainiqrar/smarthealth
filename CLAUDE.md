@@ -293,8 +293,8 @@ These are the requirements most likely to be violated by an obvious implementati
   the HTTP layer may reach FastAPI/Starlette, directly or transitively. *Horizontal:*
   `app/modules/<x>` may not import `app/modules/<y>` — `service.py`, `models.py` and
   `schemas.py` take no exception at all, and every other edge is an explicit pair in
-  `CROSS_MODULE_ALLOWED`: nine router-layer auth edges onto `identity`, two onto
-  `patients.public` and two onto `providers.public`. When a module needs another's data,
+  `CROSS_MODULE_ALLOWED`: mostly router-layer auth edges onto `identity`, the rest onto a
+  module's published `public.py` (all 41 listed in `docs/ARCHITECTURE.md` §1.3). When a module needs another's data,
   the answer is a published interface or a domain event, never a direct import. Booking was
   the first real test, and it held: `scheduling.activities` (the patient check, and the
   inactive-provider check) and `scheduling.router` (patient ownership, and hiding an inactive
