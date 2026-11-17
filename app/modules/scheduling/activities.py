@@ -34,6 +34,7 @@ import app.modules.notifications.public as notifications
 from app.celery_app import enqueue_send
 from app.modules.patients.public import ensure_bookable_patient
 from app.modules.providers.public import ensure_bookable_provider
+from app.modules.scheduling import metrics as booking_metrics
 from app.modules.scheduling import service
 from app.modules.scheduling.contracts import (
     BookingRequest,
@@ -190,10 +191,14 @@ class SchedulingActivities:
     async def confirm(self, request: BookingRequest) -> None:
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
-            await service.confirm_booking(
+            confirmed = await service.confirm_booking(
                 session, self._audit, appointment_id=appointment_id,
                 now=self._clock.now(), actor_user_id=request.actor_user_id,
             )
+        # After the commit, and only when this call made the change: a retry that finds
+        # the booking already confirmed counts nothing.
+        if confirmed:
+            booking_metrics.booking_confirmed()
 
     @activity.defn(name="booking.fail_booking")
     async def fail_booking(self, request: BookingRequest) -> None:
@@ -202,10 +207,12 @@ class SchedulingActivities:
         is released and committed, and only the billing half retries."""
         appointment_id = parse_id(request.appointment_id, "appointment_id")
         async with self._unit_of_work() as session:
-            await service.fail_booking(
+            failed = await service.fail_booking(
                 session, self._audit, appointment_id=appointment_id,
                 actor_user_id=request.actor_user_id,
             )
+        if failed:  # committed, and this call's doing: a retry (billing half) finds it done
+            booking_metrics.booking_failed()
         async with self._unit_of_work() as session:
             await billing.release(session, self._gateway, appointment_id=appointment_id)
 

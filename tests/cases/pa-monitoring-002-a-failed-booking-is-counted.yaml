@@ -1,0 +1,7 @@
+id: pa-monitoring-002-a-failed-booking-is-counted
+title: "A compensated booking counts as failed on smarthealth.bookings (its workflow completes normally), once, and a retried no-op counts nothing"
+requirement: [PART-A-OBS-3]
+tier: unit
+priority: P1
+status: ready
+impl: "tests/tiers/t0_unit/test_booking_activities.py::test_a_failed_booking_is_counted_once"

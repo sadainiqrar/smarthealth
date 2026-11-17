@@ -6,16 +6,16 @@
 
 | Metric | Count |
 | --- | --- |
-| Total cases | 106 |
+| Total cases | 107 |
 | contract | 33 |
 | integration | 53 |
-| unit | 8 |
+| unit | 9 |
 | workflow | 12 |
 | P0 | 57 |
-| P1 | 48 |
+| P1 | 49 |
 | P2 | 1 |
 | declarative | 6 |
-| impl-backed | 100 |
+| impl-backed | 101 |
 | engine-unsupported | 0 |
 | blocked | 0 |
 
@@ -81,6 +81,7 @@
 | ops-004-the-cli-links-a-patient-login | integration | P1 | impl | PART-A-FR-1 | link-patient ties a patient login to its record, audited, so GET /patients/me then works |
 | ops-005-demo-history-is-consistent-and-idempotent | integration | P2 | impl | PART-A-FR-5 | Imported demo history holds every database rule, is marked legacy_import, re-runs add nothing, and the analytics reconcile finds no drift |
 | pa-monitoring-001-admin-sees-system-health | contract | P1 | impl | PART-A-OBS-3, PART-B-FR-5 | Only an admin reads system health, and a dead Prometheus or Jaeger is a 200 that says which source is down |
+| pa-monitoring-002-a-failed-booking-is-counted | unit | P1 | impl | PART-A-OBS-3 | A compensated booking counts as failed on smarthealth.bookings (its workflow completes normally), once, and a retried no-op counts nothing |
 | pat-001-front-desk-registers-a-patient | integration | P0 | impl | PART-A-FR-1 | Front-desk staff register a walk-in patient with no user account |
 | pat-002-a-patch-returns-a-fresh-updated-at | integration | P0 | impl | PART-A-FR-1 | A patient PATCH returns the updated_at the database actually holds |
 | pat-003-a-patient-reads-their-own-record | integration | P1 | impl | PART-A-FR-1 | A patient login reads its own linked patient record through GET /patients/me |

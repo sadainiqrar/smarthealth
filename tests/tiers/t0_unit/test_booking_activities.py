@@ -1,4 +1,5 @@
-"""Activity input parsing: a malformed id fails once, permanently."""
+"""Activity input parsing: a malformed id fails once, permanently. And booking outcomes
+are counted once each, after the commit."""
 
 import uuid
 from datetime import timedelta
@@ -8,7 +9,10 @@ from temporalio.api.common.v1 import Payload
 from temporalio.converter import DataConverter
 from temporalio.exceptions import ApplicationError
 
+import app.modules.scheduling.activities as activities_module
 from app.components import build_activities
+from app.core.clock import Clock
+from app.modules.scheduling import service
 from app.modules.scheduling.activities import SchedulingActivities, parse_id
 from app.modules.scheduling.contracts import BookingRequest, FollowUpRequest, RescheduleRequest
 
@@ -101,3 +105,82 @@ def test_a_booking_request_recorded_before_the_reschedule_field_still_decodes():
         [Payload(metadata={"encoding": b"json/plain"}, data=payload)], [BookingRequest]
     )
     assert decoded[0].rescheduled_from_id is None
+
+
+# --- booking outcomes as a metric (system health spec §4.1) ---------------------------
+
+
+class _Session:
+    async def commit(self):
+        pass
+
+    async def rollback(self):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+
+def _bookings(metric_reader, outcome: str) -> float:
+    data = metric_reader.get_metrics_data()
+    total = 0.0
+    if data is None:  # nothing recorded yet
+        return total
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                if metric.name == "smarthealth.bookings":
+                    total += sum(p.value for p in metric.data.data_points
+                                 if p.attributes == {"outcome": outcome})
+    return total
+
+
+def _counting_activities() -> SchedulingActivities:
+    return SchedulingActivities(
+        _Session, None, Clock(), timedelta(minutes=1), gateway=None, amount_minor=1,
+        currency="USD", reminder_lead=timedelta(hours=24),
+    )
+
+
+@pytest.mark.parametrize("changed", [True, False], ids=["transitioned", "retried-no-op"])
+async def test_a_confirmed_booking_is_counted_once(metric_reader, monkeypatch, changed):
+    async def confirm_booking(*_a, **_kw):
+        return changed
+
+    monkeypatch.setattr(service, "confirm_booking", confirm_booking)
+    before = {o: _bookings(metric_reader, o) for o in ("confirmed", "failed")}
+    await _counting_activities().confirm(BookingRequest(GOOD, GOOD, GOOD, None, None))
+    assert _bookings(metric_reader, "confirmed") == before["confirmed"] + int(changed)
+    assert _bookings(metric_reader, "failed") == before["failed"]
+
+
+@pytest.mark.parametrize("changed", [True, False], ids=["transitioned", "retried-no-op"])
+async def test_a_failed_booking_is_counted_once(metric_reader, monkeypatch, changed):
+    """A compensated booking: `BookAppointmentWorkflow` itself completes normally, so
+    this counter is the only place the health page can see the failure."""
+    async def fail_booking(*_a, **_kw):
+        return changed
+
+    async def release(*_a, **_kw):
+        return None
+
+    monkeypatch.setattr(service, "fail_booking", fail_booking)
+    monkeypatch.setattr(activities_module.billing, "release", release)
+    before = {o: _bookings(metric_reader, o) for o in ("confirmed", "failed")}
+    await _counting_activities().fail_booking(BookingRequest(GOOD, GOOD, GOOD, None, None))
+    assert _bookings(metric_reader, "failed") == before["failed"] + int(changed)
+    assert _bookings(metric_reader, "confirmed") == before["confirmed"]
+
+
+async def test_a_booking_whose_confirm_does_not_commit_is_not_counted(metric_reader, monkeypatch):
+    async def confirm_booking(*_a, **_kw):
+        raise ConnectionError("database went away")
+
+    monkeypatch.setattr(service, "confirm_booking", confirm_booking)
+    before = _bookings(metric_reader, "confirmed")
+    with pytest.raises(ConnectionError):
+        await _counting_activities().confirm(BookingRequest(GOOD, GOOD, GOOD, None, None))
+    assert _bookings(metric_reader, "confirmed") == before

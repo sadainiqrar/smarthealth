@@ -28,6 +28,7 @@ from app.core.audit import AuditLog
 from app.core.clock import Clock
 from app.core.temporal import connect_client
 from app.db.mongo import create_mongo_client, get_audit_collection
+from app.modules.scheduling import metrics as booking_metrics
 from app.modules.scheduling import service
 from app.modules.scheduling.contracts import booking_workflow_id
 from app.modules.scheduling.models import Appointment, AppointmentStatus
@@ -73,10 +74,12 @@ async def reconcile(settings: Settings, *, release_billing=None) -> list[str]:
             if await _workflow_running(client, appointment_id):
                 continue
             async with sessions() as session:
-                await service.fail_booking(
+                failed = await service.fail_booking(
                     session, audit, appointment_id=appointment_id, actor_user_id=ACTOR
                 )
                 await session.commit()
+            if failed:
+                booking_metrics.booking_failed()
             if release_billing is not None:
                 async with sessions() as session:
                     await release_billing(session, appointment_id)

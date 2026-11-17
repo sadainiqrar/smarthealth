@@ -531,11 +531,13 @@ async def claim_slot(
 async def confirm_booking(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     now: datetime, actor_user_id: str | None,
-) -> None:
-    """pending -> confirmed and held -> booked, in one transaction."""
+) -> bool:
+    """pending -> confirmed and held -> booked, in one transaction. True when this call
+    confirmed it, False when it already was (a retried activity) -- so a caller counts
+    each booking once."""
     appointment = await _require(session, appointment_id)
     if appointment.status is AppointmentStatus.CONFIRMED:
-        return
+        return False
     require_transition(appointment.status, AppointmentStatus.CONFIRMED)
     if appointment.slot_id is None:
         raise Conflict(f"appointment {appointment_id} holds no slot")
@@ -567,12 +569,13 @@ async def confirm_booking(
         "conversation_ref": appointment.conversation_ref,
     })
     await _audit(audit, appointment, "confirmed", actor_user_id, before)
+    return True
 
 
 async def fail_booking(
     session: AsyncSession, audit: AuditLog, *, appointment_id: uuid.UUID,
     actor_user_id: str | None,
-) -> None:
+) -> bool:
     """Compensation: appointment -> failed, and its held slot -> free, together.
 
     A no-op when there is nothing to undo: no row (create_pending never ran), already
@@ -583,10 +586,12 @@ async def fail_booking(
     A failed appointment keeps its `slot_id`. That is harmless for the partial index, which
     ignores failed rows, but the FK's `ON DELETE RESTRICT` then blocks deleting a slot that
     has failed bookings -- slot regeneration must account for it.
+
+    True when this call failed the booking, False for every no-op above.
     """
     appointment = await get_appointment(session, appointment_id, for_update=True)
     if appointment is None or appointment.status is not AppointmentStatus.PENDING:
-        return
+        return False
     before = _snapshot(appointment)
     if appointment.slot_id is not None:
         await session.execute(
@@ -601,6 +606,7 @@ async def fail_booking(
     appointment.status = AppointmentStatus.FAILED
     await session.flush()
     await _audit(audit, appointment, "booking_failed", actor_user_id, before)
+    return True
 
 
 # --- visit lifecycle (spec 4.2) -------------------------------------------------------
