@@ -10,8 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: A workflow flow's `name` is the registered type (`@workflow.defn(name=...)`), which is what
-#: Temporal puts in `workflow_type`; tests/meta/test_monitoring_flows.py checks it.
 #: (job, what the page calls it). The heartbeat's `job` label is the process's service.name.
 COMPONENTS: list[tuple[str, str]] = [
     ("smarthealth/part-a-api", "API"),
@@ -40,6 +38,8 @@ class Flow:
     name: str = ""
 
 
+#: A workflow flow's `name` is the registered type (`@workflow.defn(name=...)`), which is what
+#: Temporal puts in `workflow_type`; tests/meta/test_monitoring_flows.py checks it.
 FLOWS: list[Flow] = [
     Flow("booking", "Booking", "workflow", "BookAppointment"),
     Flow("reschedule", "Reschedule", "workflow", "Reschedule"),

@@ -86,7 +86,8 @@ Failures are de-duplicated by trace id and sorted newest first.
 
 ## 4. Part A module `app/modules/monitoring/`
 
-No import of any other `app/modules/*`; the import-boundary meta-test stays green unchanged.
+No import of any other `app/modules/*` except `identity` in `router.py`, for `require_role`, through
+three declared pairs in the import-boundary meta-test, like every other router.
 
 | File | Purpose |
 | --- | --- |
