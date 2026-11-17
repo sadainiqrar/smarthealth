@@ -66,3 +66,5 @@ deploy/terraform/**/*.tfstate
 deploy/terraform/**/*.tfstate.*
 deploy/terraform/backend.hcl
 deploy/terraform/**/.terraform.lock.hcl.bak
+deploy/terraform/**/*.tfplan
+deploy/terraform/**/tfplan
