@@ -747,11 +747,34 @@ flowchart LR
     <tr><td>Long jobs</td><td class="ours">Reports as in-process background tasks streamed through Redis</td><td>Celery or Temporal jobs (survive a restart, at the cost of more machinery)</td></tr>
   </table></div>
 
+
+  <h3>Deployment and cloud</h3>
+  <p>Each row is one decision taken to put the same system on AWS for a reviewer: on a $100 Free-plan credit, in one
+  locked Region (<code>ap-southeast-2</code>), with nothing created before the owner has read a plan. Decision ids
+  are the PRD's.</p>
+  <div class="table-wrap"><table>
+    <tr><th>Decision</th><th>Ours</th><th>Alternatives</th></tr>
+    <tr><td>Where it runs</td><td class="ours">One k3s server &mdash; single-node Kubernetes, the same charts proven on k3d (D-50)</td><td>EKS (about $73 a month for the control plane alone); ECS on Fargate (charts rewritten as task definitions, no Helm); Docker Compose on a VM (runs, but no Helm or GitOps to show); Render or Fly.io (no room for Kafka, Temporal and 29 services)</td></tr>
+    <tr><td>Local cluster</td><td class="ours">k3d &mdash; k3s in Docker, capped at 8 GB to stand in for the server (D-37 to D-41)</td><td>kind; minikube; Docker Desktop's Kubernetes &mdash; all fine; k3d runs the exact distribution the server runs</td></tr>
+    <tr><td>Packaging</td><td class="ours">Our own Helm charts: an umbrella, a library chart <code>sh-lib</code>, 21 components, aliases for repeated stores (D-37, D-43)</td><td>Bitnami or official charts (paid images since 2025, sized for big clusters); Kustomize (overlays, no templating or packaging); raw manifests; Helmfile; charts published to an OCI registry</td></tr>
+    <tr><td>Delivery</td><td class="ours">Pull-based GitOps: Argo CD in the cluster polls <code>main</code> every 3 minutes and makes the cluster match it; UI at <code>/argocd</code> (D-45, D-51)</td><td>CI pushing <code>helm upgrade</code> (needs a way into a private server, and credentials in CI); Flux (same idea, no built-in UI); Rancher Fleet; Spinnaker</td></tr>
+    <tr><td>Images</td><td class="ours">GHCR, public packages, tagged with the git SHA, built and pushed from the laptop (D-40, D-44)</td><td>Amazon ECR (pulls need IAM credentials on the server); Docker Hub (pull limits); GitHub Actions builds (declined by the owner); private images with a pull secret</td></tr>
+    <tr><td>Infrastructure as code</td><td class="ours">Terraform; state in S3, private, encrypted, versioned, with a native lock file, from a tiny <code>bootstrap/</code> stack (D-48, D-49)</td><td>Clicking in the console (no record, no plan); CloudFormation or CDK (AWS-only); Pulumi (a program, not a declaration); OpenTofu (the open fork &mdash; would work unchanged); HCP Terraform for state</td></tr>
+    <tr><td>Front door</td><td class="ours">CloudFront with a VPC origin to a private server: HTTPS at the edge, AWS's own network behind it (D-42)</td><td>Application Load Balancer (about $18 a month idle); a public server with HTTPS (needs a domain and a fixed IP); a public server locked to CloudFront's addresses (passwords cross the internet in clear text); Cloudflare Tunnel; API Gateway</td></tr>
+    <tr><td>Edge protection</td><td class="ours">CloudFront's built-in Shield Standard; the API's own auth and rate limits; no WAF (D-47)</td><td>AWS WAF with managed rules (about $6 a month minimum)</td></tr>
+    <tr><td>Outbound internet</td><td class="ours">A <code>t4g.micro</code> NAT instance that starts and stops with the server (D-42, D-54)</td><td>Managed NAT Gateway (about $35 a month even idle); the server in a public subnet; IPv6 egress-only (GitHub and GHCR answer only on IPv4)</td></tr>
+    <tr><td>Server size</td><td class="ours"><code>m7i-flex.large</code>, 2 vCPU, 8 GB, x86 &mdash; the largest free-tier-eligible type; fits the measured 6.36 GiB of limits (D-54)</td><td><code>t3.large</code>; Graviton <code>m7g</code> (needs multi-architecture images); two smaller servers (a real cluster to run)</td></tr>
+    <tr><td>Secrets</td><td class="ours">SSM Parameter Store SecureString, copied into one Kubernetes Secret at every boot (D-41, D-52)</td><td>Secrets Manager (about $0.40 per secret a month; rotation not needed); External Secrets Operator, Sealed Secrets, Vault (another component in an 8 GB budget)</td></tr>
+    <tr><td>Getting in</td><td class="ours">No SSH: SSM Session Manager for a shell, Run Command for scripts and checks (D-53)</td><td>A key pair and SSH through a bastion (an open port, keys to manage); EC2 Instance Connect Endpoint (SSH only)</td></tr>
+    <tr><td>Cost control</td><td class="ours">A <code>shutdown -h</code> timer set at every boot; the instance stops, not terminates; <code>aws_extend.sh</code> re-arms it (D-46)</td><td>EventBridge Scheduler and a Lambda; AWS Instance Scheduler; leaving it running (about $90 a month)</td></tr>
+    <tr><td>Backups</td><td class="ours">None &mdash; the demo is rebuilt by <code>aws_seed.sh</code> (R-34)</td><td>Amazon Data Lifecycle Manager snapshots of the root volume (one resource); AWS Backup; managed databases (RDS)</td></tr>
+  </table></div>
+
   <h3>Packaging and the demo client</h3>
   <div class="table-wrap"><table>
     <tr><th>Option</th><th>Trade-off</th></tr>
     <tr class="ours"><td><b>Docker Compose with profiles</b> (ours, prescribed)</td><td>One file for the whole system; profiles <code>app</code> and <code>partb</code>; an offset-port test stack runs beside the dev stack</td></tr>
-    <tr><td>Kubernetes (kind/minikube), Tilt</td><td>Production-like; much more setup for a five-week assignment</td></tr>
+    <tr><td>Kubernetes for development (kind/minikube, Tilt)</td><td>Production-like; much more setup for everyday work &mdash; Kubernetes is used for deployment instead (above)</td></tr>
     <tr class="ours"><td><b>React + TypeScript (Vite), shadcn/ui + AI Elements, Connect gRPC-Web</b> (ours)</td><td>A demo client only — not a graded deliverable; the backend does not depend on it</td></tr>
     <tr><td>Next.js, Vue, server-rendered templates</td><td>Any would do; Connect's generated client is what makes the typed gRPC-Web chat easy</td></tr>
   </table></div>
@@ -840,7 +863,15 @@ flowchart LR
   </table></div>
   <p>Stop the compose stacks before running k3d (Docker Desktop memory); see the README's "Kubernetes (k3d)" section.</p>
   <h3>On AWS</h3>
-  <p>The same umbrella chart runs on one private k3s server in <code>ap-southeast-2</code>, built by Terraform and kept equal to git by Argo CD. A reviewer opens one CloudFront address; the owner starts it before a review and it stops itself after 3 hours. <b>Not deployed yet</b>: this is what <code>terraform apply</code> builds (README, "Deploying to AWS"; ARCHITECTURE section 8; decisions D-42 to D-48).</p>
+  <p>The same umbrella chart runs on one private k3s server in <code>ap-southeast-2</code>, built by Terraform and kept equal to git by Argo CD. A reviewer opens one CloudFront address; the owner starts it before a review and it stops itself after 3 hours (README, "Deploying to AWS"; ARCHITECTURE section 8; decisions D-42 to D-54).</p>
+  <div class="good"><b>Deployed on 2026-11-17 &mdash; all but CloudFront.</b> Terraform created 41 of 42 resources; Argo CD synced <code>main</code> to <b>Synced / Healthy</b> with 39 pods; the demo seed imported 800 patients and 130 days of history and booked live through the API with no failures. Checked from inside the server, through Traefik: <code>/api/ready</code> 200 with Postgres, Mongo, Redis and Temporal, a demo login, the appointment list, the JWKS, the seven tool paths (401 without the login, 200 with it) and the frontend.</div>
+  <div class="warn"><b>Waiting on AWS:</b> the CloudFront distribution was refused &mdash; <i>"Your account must be verified before you can add new CloudFront resources"</i>, a hold on new accounts that only AWS Support lifts (PRD R-35). Once lifted, the same <code>terraform plan</code> shows one resource to add, then <code>release.sh</code> records the URL and <code>aws_smoke.py</code> checks the gRPC-Web stream and caching through it. The instances are stopped between reviews.</div>
+  <details><summary>What the first deploy found, and fixed</summary><div class="inner"><ul>
+    <li><b>Git Bash rewrote SSM names.</b> <code>/smarthealth/jwt-private-key</code> reached <code>aws.exe</code> as a Windows path; <code>scripts/aws_lib.sh</code> now turns that off for <code>aws</code> calls only.</li>
+    <li><b>Saved plans were not ignored.</b> A plan file can hold secret values; <code>*.tfplan</code> and <code>tfplan</code> are git-ignored.</li>
+    <li><b>An all-digit tag became a number.</b> The release <code>3244061</code> rendered as <code>smarthealth-core:3.244061e+06</code> (<code>InvalidImageName</code> on five pods); <code>set_release.py</code> quotes the tag, and a meta-test covers it.</li>
+    <li><b>GHCR's first push of a new package</b> answered <code>denied</code> once after the layers uploaded; a retry succeeded. New packages start private.</li>
+  </ul><p>The full step table is ARCHITECTURE 8.8.</p></div></details>
   <div class="diagram"><pre class="mermaid">
 flowchart LR
   B(["Browser"]) -->|"HTTPS"| CF["CloudFront"]
@@ -937,6 +968,7 @@ python -m ruff check app tests services</code></pre>
     <div class="card"><h4>A visit is not an appointment</h4><p>Appointment = the booking; visit = what happened. A no-show is an appointment with no visit.</p></div>
     <div class="card"><h4>The outbox, not "publish after commit"</h4><p>An event is written in the change's own transaction, so it cannot be lost if Kafka or the process dies.</p></div>
     <div class="card"><h4>The model never writes</h4><p>Two read-only tools; every change is a deterministic flow plus a confirmation.</p></div>
+    <div class="card"><h4>A private server, a public edge</h4><p>On AWS the server has no public address and no SSH; CloudFront reaches it over AWS's network, Argo CD pulls from git, secrets come from SSM.</p></div>
     <div class="card"><h4>No shared stores</h4><p>Part B owns its data, reads Part A only through its API and events, verifies tokens with JWKS.</p></div>
   </div>
   <h3>Open items (known, stated, not hidden)</h3>
@@ -945,6 +977,7 @@ python -m ruff check app tests services</code></pre>
     <li>The analytics drift metric (<code>smarthealth_analytics_drift</code>) has no Grafana panel or alert; drift shows only as a log line.</li>
     <li>Reports run as in-process tasks in the assistant; one interrupted by a restart is marked failed rather than resumed.</li>
     <li>Not built by decision: a provider availability generator, clinic/department management endpoints.</li>
+    <li>On AWS, the CloudFront distribution waits on AWS Support verifying the account (R-35), and the server has no backups (R-34).</li>
   </ul></div>
   <p>The full list — every decision with its rejected alternatives (D-1…), every risk with its disposition (R-1…) —
   is in the <a href="https://github.com/sadainiqrar/smarthealth/blob/main/docs/PRD.md">PRD</a>.</p>

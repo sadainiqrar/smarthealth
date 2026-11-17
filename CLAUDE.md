@@ -155,7 +155,7 @@ span, over-generous citations (R-28, `5f91d39`). Open, stated in the PRD: no SQL
 Jaeger (R-29), the analytics drift metric is unwatched (R-30), reports are in-process tasks
 (R-31).
 
-**Deployment: k3d locally, AWS via Terraform + Argo CD** (`deploy/terraform/`, `scripts/aws_*.sh`; spec `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`, decisions D-42 … D-48, risk R-34 no backups) — written and reviewed, **not yet applied to any AWS account**.
+**Deployment: k3d locally, AWS via Terraform + Argo CD** (`deploy/terraform/`, `scripts/aws_*.sh`; spec `docs/superpowers/specs/2026-11-17-aws-deploy-design.md`, decisions D-42 … D-54, risks R-34 no backups and R-35 CloudFront) — **applied 2026-11-17 to account 260342191767 (ap-southeast-2), all but the CloudFront distribution**, which waits on AWS Support verifying the account. Argo CD Synced/Healthy at `cc33a8d`, demo seeded, checked from inside the server; instances stopped between reviews. First-deploy notes: `docs/ARCHITECTURE.md` 8.8.
 
 **Documentation is a deliverable and is kept in step with the code.** The site
 `docs/index.html` (GitHub Pages from `/docs` on `main`; `docs/assets/`, `docs/.nojekyll`)
