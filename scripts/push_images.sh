@@ -29,7 +29,13 @@ case "${1:-}" in
     registry="${2:?usage: push_images.sh --push REGISTRY}"
     for name in "${!IMAGES[@]}"; do
       docker tag "$name:$TAG" "$registry/$name:$TAG"
-      docker push "$registry/$name:$TAG"
+      # GHCR can answer `denied` once on a package's first push after the layers uploaded;
+      # the retry succeeds (first AWS deploy, docs/ARCHITECTURE.md 8.8).
+      for attempt in 1 2 3; do
+        docker push "$registry/$name:$TAG" && break
+        [ "$attempt" = 3 ] && { echo "push of $name failed 3 times" >&2; exit 1; }
+        echo "push of $name failed; retrying ($attempt/3)" >&2; sleep 5
+      done
     done
     echo "pushed tag $TAG -- set global.image.registry=$registry global.image.tag=$TAG"
     ;;
