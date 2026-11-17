@@ -109,39 +109,48 @@ No import of any other `app/modules/*`; the import-boundary meta-test stays gree
   "components": [ {"name": "API", "job": "part-a-api", "status": "ok", "reason": "heartbeat 8 s ago"} ... ],
   "flows": [ {"key": "booking", "label": "Booking", "total": 42, "failed": 1, "failure_pct": 2.4,
               "p95_seconds": 1.8, "previous_total": 37, "status": "ok", "reason": "..."} ... ],
-  "backlogs": [ {"key": "outbox", "label": "Unpublished events", "value": 3, "unit": "s oldest",
-                 "status": "ok", "reason": "..."} ... ],
+  "backlogs": [ {"key": "outbox", "label": "Oldest unpublished event", "value": 3,
+                 "status": "ok", "reason": "3 s: normal"} ... ],
   "ai": {"turns": 120, "first_token_p95_seconds": 0.9, "error_pct": 0.8,
          "retrieval_no_results_pct": 6.0, "tokens": 81234, "status": "ok", "reason": "..."}
 }
 ```
 
 **Components:** API, Temporal worker, event relay, event consumers, Celery worker, Celery beat,
-knowledge, assistant (from heartbeats); RabbitMQ and Kafka (from `up{job=...}` of their scrape
-jobs). The LLM provider is judged in the AI card, by the assistant's error share.
+knowledge, assistant (from heartbeats); RabbitMQ (`up{job="rabbitmq"}`) and Kafka
+(`kafka_brokers` from kafka-exporter: the exporter being up says nothing about the brokers). The LLM provider is judged in the AI card, by the assistant's error share.
 
 **Flows:**
 
 | Flow | Source |
 | --- | --- |
-| booking | `BookAppointmentWorkflow` |
-| reschedule | `RescheduleWorkflow` |
-| cancellation | `CancelFollowUpWorkflow` |
-| billing | `PostVisitWorkflow` |
-| provider sync | `ProviderDeactivationWorkflow` and the `providers.state` consumers |
+| booking | workflow type `BookAppointment` |
+| reschedule | `Reschedule` |
+| cancellation | `CancelFollowUp` |
+| billing | `PostVisit` |
+| provider sync | `ProviderDeactivation` (consumer outcomes are covered by the dead-letter backlog) |
 | notifications and reminders | Celery `notifications.send`; a reminder is a notification the visit timer queued, so the two share one task and one flow |
 | document extraction | Celery `clinical.extract_document` |
 | retrieval | knowledge searches |
 | assistant chat | assistant turns |
 
 `p95_seconds` comes from the matching duration histogram where one exists, else `null`.
-`previous_total` is the same figure for the window before, for the trend arrow.
+`previous_total` is the same figure for the window before, for the trend arrow. Temporal labels
+`workflow_type` with the **registered** name (`@workflow.defn(name=...)`), not the class name;
+a meta-test ties every workflow and task flow to a registered name.
 
 **Backlogs:**
 - outbox age;
-- the largest consumer lag per group;
-- RabbitMQ ready and unacked per queue;
-- dead letters (the `*.dlt` consumer outcomes and the notifications dead-letter queue).
+- the largest consumer lag (the worst group);
+- the largest RabbitMQ ready count (the worst queue, dead-letter queues excluded);
+- events dead-lettered in the window (consumer outcome `dead_lettered`);
+- notifications waiting in the dead-letter queue now (its depth).
+
+Each backlog is the worst case, not a breakdown: the page answers "is anything behind?", and
+Grafana's *Async backbone* dashboard has the per-queue and per-group detail. The value's unit is
+in the reason ("240 messages: falling behind").
+
+`sources.jaeger` comes from a cheap probe (`GET /api/services`) run with the queries.
 
 Each card carries its own status. If Prometheus is unreachable, every Prometheus-backed card
 says `unknown` / "metrics unavailable", `sources.prometheus` says `unavailable`, and the
@@ -152,7 +161,7 @@ endpoint still answers 200.
 ```
 { "window_hours": 24, "source": "ok|unavailable|not_configured",
   "failures": [ {"trace_id": "...", "at": "...", "service": "part-a-worker",
-                 "operation": "RunWorkflow:BookAppointmentWorkflow",
+                 "operation": "RunWorkflow:BookAppointment",
                  "failed_step": "RunActivity:billing.precheck", "message": "card declined",
                  "trace_path": "/jaeger/trace/<id>"} ... ] }
 ```
@@ -169,8 +178,8 @@ endpoint still answers 200.
 | Outbox oldest unpublished | > 60 s | > 300 s |
 | Consumer lag (any group) | > 100 | > 1000 |
 | RabbitMQ ready (any queue) | > 100 | > 1000 |
-| Dead letters in window | ≥ 1 | ≥ 10 |
-| Assistant error share | > 5 % | > 20 % |
+| Dead letters (in window, or waiting) | ≥ 1 | ≥ 10 |
+| Assistant error share | > 5 % | > 20 % (the flow failure-share rule) |
 | Time to first word p95 | > 5 s | > 15 s |
 | Retrieval no-results share | > 25 % | > 50 % |
 
