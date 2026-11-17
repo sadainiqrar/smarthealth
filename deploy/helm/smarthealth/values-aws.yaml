@@ -4,11 +4,11 @@
 # smarthealth-secrets and smarthealth-tools-auth from SSM Parameter Store.
 global:
   # The CloudFront address; written by scripts/release.sh from `terraform output`.
-  publicUrl: https://d0000000000000.cloudfront.net
+  publicUrl: https://d2xy34d2kn7e5f.cloudfront.net
   image:
     registry: ghcr.io/sadainiqrar
     # The release; written by scripts/release.sh (the git SHA the images were built from).
-    tag: "3244061"
+    tag: "2dfb81f"
     pullPolicy: IfNotPresent
 secrets:
   create: false
